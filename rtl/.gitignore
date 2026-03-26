@@ -1,0 +1,13 @@
+# VCS generated files
+simv*
+csrc/
+*.daidir/
+ucli.key
+*.log
+*.vpd
+*.fsdb
+*.vcd
+inter.vpd
+DVEfiles/
+verdiLog/
+novas.*
