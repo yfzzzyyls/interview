@@ -338,13 +338,21 @@ Do not call it a logic bug. First check whether the program eventually reaches t
   - `256 x 22` tag+valid storage per way
   - implemented as `2 x 128 x 32` depth banks with width padding
 - Dirty and replacement arrays are still left on generic inferred RAM for now because they are tiny
-- The real macro path is guarded by synthesis defines, while functional simulation still falls back to the original `BlockDualPortRAM`
+- Verilator now uses dedicated functional models of the same TSMC16 SRAM macro interfaces, so cache simulation stays on the SRAM-macro path without reverting to the original `BlockDualPortRAM`
 
 ### Current Validation Status
-- Verilator successfully parsed and elaborated the new wrapper-integrated RTL
-- Full generated C++ build on this server is currently limited by a host-side Verilator PCH issue, not by a new RTL parse/elaboration error
-- The next ASIC-facing step is to re-enable the dedicated DC flow with SRAM library setup and then turn on the cache-SRAM define for real macro use
-- Restored the earlier `ICache` SRAM wrapper onto `master`, so both `ICache` and `DCache` now have SRAM-wrapper source files in the main tree
+- Added a local Verilator-only SRAM model file that implements the exact cache macro interfaces used by RSD:
+  - `TS6N16ADFPCLLLVTA128X64M4FWSHOD`
+  - `TS6N16ADFPCLLLVTA128X32M4FWSHOD`
+- Updated the Verilator build flow to use the SRAM-macro path directly and fixed the host-side PCH build quirk in the generated make flow
+- Full `test-1` now passes with the SRAM-backed cache path enabled in simulation
+- Focused macro-path checks also pass:
+  - `DCache`
+  - `MemoryDependencyPrediction`
+  - `ReplayQueueTest`
+- The next ASIC-facing step is to resume the physical-design flow knowing that the cache macro path is now verified on both:
+  - DC macro mapping
+  - functional regression
 
 ### Real TSMC16 Cache Macro Integration
 - Enabled the real cache macro path in the dedicated DC flow with:
