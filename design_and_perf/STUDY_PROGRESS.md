@@ -476,3 +476,53 @@ Do not call it a logic bug. First check whether the program eventually reaches t
   - issue queue
   - register file
   - rename / active-list structures
+
+### Full DC Rerun After Cache + Predictor SRAM Work
+- Reran full `Core` synthesis in TSMC16nm after integrating SRAM-backed `ICache`, `DCache`, `BTB`, `Gshare`, and `MemoryDependencyPredictor`
+- Used the updated DC flow with `set_host_options -max_cores 16`
+- Run directory:
+  - `/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c`
+
+### Final Synthesis Results
+- Wall-clock runtime:
+  - `real 3064.62s` which is about `51m 05s`
+- QoR summary from [qor.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/reports/qor.rpt):
+  - `Macro Count`: `28`
+  - `Leaf Cell Count`: `500140`
+  - `Combinational Cell Count`: `341451`
+  - `Sequential Cell Count`: `158689`
+  - `Design Area`: `386213.269227`
+  - `Critical Path Length`: `2.20`
+  - `Critical Path Slack`: `7.68`
+  - `Total Negative Slack`: `0.00`
+  - `No. of Violating Paths`: `0`
+  - `Worst Hold Violation`: `-0.26`
+  - `Total Hold Violation`: `-8109.75`
+  - `No. of Hold Violations`: `160755`
+- Generated outputs:
+  - [Core.ddc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/mapped/Core.ddc)
+  - [Core.v](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/mapped/Core.v)
+  - [area.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/reports/area.rpt)
+  - [timing.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/reports/timing.rpt)
+
+### What The Numbers Mean
+- Setup is clean at the current `10ns` synthesis target
+- Hold is still very noisy, which is expected before CTS and physical implementation
+- The macro count increased from the earlier cache-only baseline because `BTB`, `Gshare`, and `MDP` are now also using real SRAM-backed storage
+- The mapped netlist contains:
+  - `8` instances of `TS6N16ADFPCLLLVTA128X64M4FWSHOD`
+  - `20` instances of `TS6N16ADFPCLLLVTA128X32M4FWSHOD`
+
+### Main Remaining Bottlenecks
+- From [area.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/reports/area.rpt), the next dominant structures are now:
+  - `registerFile`: `151451.2884` area, about `39.2%`
+  - `dCache`: `38894.0077` area, about `10.1%`
+  - `iCache`: `37285.4124` area, about `9.7%`
+  - `issueQueue`: `31024.5817` area, about `8.0%`
+  - `btb`: `27340.2134` area, about `7.1%`
+  - `activeList`: `25732.8062` area, about `6.7%`
+  - `brPred`: `7349.4098` area, about `1.9%`
+- This confirms that the remaining heavy problem is not the cache/predictor tables anymore. It is the OoO core state structures, especially:
+  - register file
+  - issue queue
+  - active list / rename-related multiported state
