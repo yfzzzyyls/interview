@@ -526,3 +526,101 @@ Do not call it a logic bug. First check whether the program eventually reaches t
   - register file
   - issue queue
   - active list / rename-related multiported state
+
+## Day 8: First Innovus Bring-Up On RSD Core
+
+### Goal
+- Start the real physical-design flow on the SRAM-backed `Core` netlist from:
+  - [Core.v](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/mapped/Core.v)
+  - [Core.sdc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/DesignCompiler/runtime_full_sram_16c/mapped/Core.sdc)
+- Use a loose first target:
+  - `10ns` clock period
+  - equivalent to `100 MHz`
+
+### New Innovus Flow
+- Added a dedicated Innovus project under:
+  - `/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus`
+- Added:
+  - [Makefile](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/Makefile)
+  - [innovus_mmmc_qrc.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_mmmc_qrc.tcl)
+  - [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl)
+  - [rsd_core_apr.sdc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/rsd_core_apr.sdc)
+- Used:
+  - TSMC16nm tech LEF
+  - stdcell LEF/lib
+  - SRAM LEF/lib
+  - QRC tech file
+
+### What Worked
+- `init` completed cleanly and saved:
+  - `/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/init.enc`
+- `place` completed cleanly and saved:
+  - `/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/place.enc`
+- `cts` completed cleanly and saved:
+  - `/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/cts.enc`
+
+### Placement Snapshot
+- Early global-route congestion after placement was effectively clean:
+  - `0.00%` horizontal overflow
+  - `0.00%` vertical overflow
+- The main pre-CTS setup problem was concentrated in `ReplayQueue`
+- Placement reports:
+  - [place_area.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/place_area.rpt)
+  - [place_timing.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/place_timing.rpt)
+
+### CTS Snapshot
+- CTS runtime:
+  - about `19m 15s` real time
+- Clock-tree summary:
+  - `2325` clock buffers
+  - `158717` sinks
+  - insertion delay about `0.212ns` average
+  - skew about `0.019ns` vs `0.013ns` target
+- CTS completed with no tool errors and saved:
+  - [cts_timing.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/cts_timing.rpt)
+- Main remaining CTS setup issue:
+  - `ReplayQueue` paths around `-0.50ns`
+
+### First Route Attempt: Important Findings
+- Clock-only / early route portion looked healthy:
+  - only `4` route DRCs at one stage
+  - antenna `0` at that point
+- Full signal routing showed two important issues:
+  1. The flow had not globally connected standard-cell body-bias pins
+     - `VPP`
+     - `VBB`
+     - This caused repeated `NRIG-34` warnings for CTS-created cells in the route log
+  2. The long timing-driven route cleanup became expensive and did not converge cleanly in the first pass before I stopped it
+     - one stage reached `6675` DRC violations
+     - first optimization iteration reduced that to `2504`
+     - antenna also rose into the `~1900-2100` range during that route optimization
+
+### Flow Fix Already Applied
+- Patched [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl) to globally connect:
+  - `VPP -> VDD`
+  - `VBB -> VSS`
+- Also made the PG connection helper run after checkpoint restore, not just during initial import
+- Verified with a short rerun:
+  - the old `NRIG-34` body-bias warnings no longer appeared at the same route stage
+
+### Current Physical-Design Status
+- Real APR flow is alive and usable
+- Clean milestones achieved:
+  - import
+  - floorplan
+  - placement
+  - CTS
+- Route is not closed yet
+- The next work is route-strategy cleanup, not more front-end/RTL change
+
+### Immediate Next Steps
+- Rerun route with the fixed `VPP/VBB` global-net connection
+- Let the full signal-route optimization finish once with the corrected PG setup
+- Examine:
+  - final route DRC count
+  - antenna count
+  - connectivity/LVS-style report
+  - post-route timing
+- If route is still unstable, adjust route strategy before pushing toward the final target of:
+  - `0 DRC`
+  - `0 LVS/connectivity`
