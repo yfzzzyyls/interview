@@ -329,6 +329,89 @@ EX/MEM holds the **newer** (younger) instruction's result. If two in-flight inst
 **Q59. In OoO designs, why can't we use a single global stall wire?**
 Different structures (issue queue, ROB, load queue, store queue) stall independently. A cache miss stalls only that memory instruction while ALU instructions keep issuing. Queues between stages absorb timing mismatches. Each structure uses its own valid/ready handshake or credit-based flow control instead of a global stall.
 
+### Skid Buffer + Valid/Ready Handshake (2026-04-02)
+
+#### Module Completed
+- `skid_buffer.sv` + testbench — compiled, simulated (5/5 tests pass)
+
+#### Concept Q&A
+
+**Q60. What problem does a skid buffer solve?**
+It breaks the combinational `ready` path between modules. Without it, each module's `ready` depends on the next module's `ready`, creating a long combinational chain across every hop. The skid buffer replaces this with `up_ready = !buf_valid` — a local register output with no dependency on downstream.
+
+**Q61. How does a skid buffer achieve zero latency?**
+When the buffer is empty, `dn_data = up_data` is a combinational wire through a mux (selected by `buf_valid=0`). No register in the data path — data passes straight through in the same cycle. The register only activates during backpressure.
+
+**Q62. What are the 4 operating cases of a skid buffer?**
+| `buf_valid` | `up_valid` | `dn_ready` | Action |
+|---|---|---|---|
+| 0 | 1 | 1 | **Pass-through** — wire, no buffering |
+| 0 | 1 | 0 | **Catch** — save `up_data` into buffer |
+| 1 | X | 1 | **Drain** — downstream takes buffered data |
+| 1 | X | 0 | **Hold** — nothing moves, wait |
+When `buf_valid=1`, `up_valid` doesn't matter because `up_ready=0` — upstream is blocked.
+
+**Q63. How does upstream get stalled when the buffer is full?**
+`up_ready = !buf_valid`. When buffer is full, `up_ready=0`. The valid/ready protocol requires the sender to hold `valid` and `data` stable when `ready=0`. No special stall logic needed — the protocol enforces it.
+
+**Q64. Why can't we do "drain + catch" (swap) on the same cycle?**
+To swap, `up_ready` must be `!buf_valid | (buf_valid & dn_ready)` — now `dn_ready` appears combinationally in `up_ready`, which is exactly the timing path the skid buffer was designed to break. The swap gives full throughput but re-introduces the problem.
+
+**Q65. What is the throughput under sustained backpressure? How to fix?**
+1 transfer per 2 cycles — one cycle to drain, one cycle to accept. Fix: use a 2-entry FIFO, which can accept and drain simultaneously (writing to different entries). `up_ready = (count != 2)` is purely registered, no combinational ready path, full throughput.
+
+**Q66. How does the `ready` signal propagate without a skid buffer?**
+Each module has its own combinational logic to generate `ready` (AND, OR, etc.), and each module's `ready` depends on the next module's `ready`. Across 5-10 hops, this creates one long combinational chain. It's not specifically muxes — it's whatever logic each module uses to decide "can I accept?" A skid buffer cuts this chain entirely.
+
+**Q67. When do you need more than 2 entries (i.e., a real FIFO)?**
+Deeper FIFOs solve a different problem — **rate mismatch** or **burst absorption**, not timing decoupling. Examples: async FIFO for clock domain crossing, depth >= burst length for AXI burst absorption, buffering when producer is faster than consumer. For pure timing decoupling (breaking the ready path), 1-2 entries is sufficient.
+
+**Q68. Pipeline stall vs valid/ready handshake — when to use which?**
+| | CPU Pipeline | AXI / Bus |
+|---|---|---|
+| Mechanism | Stall + bubble | Valid/ready handshake |
+| Control | Global stall wire | Per-link, independent |
+| Data loss prevention | Hold upstream register | Sender holds data until ready |
+| Gap insertion | Bubble (flush to zero) | Sender deasserts valid |
+| Coupling | Tight — stages move in lockstep | Loose — each link independent |
+| Why | Stages need to see each other's data (forwarding) | Modules are independent, just moving data |
+
+### AXI-Lite Slave + Interconnect (2026-04-02)
+
+#### Modules Completed
+- `axi_lite_slave.sv` + testbench — 5/5 tests pass (write/read REG0, all 4 regs, byte strobe byte 0, byte strobe byte 2, reset clears)
+- `axi_lite_interconnect.sv` + testbench — 5/5 tests pass (slave 0 w/r, slave 1 w/r, slaves 2+3, slave isolation, byte strobe through IC)
+
+#### Quiz Q&A (Review Before Interview) — Score: 5.5/8
+
+**Q69. Name the 5 AXI-Lite channels and their direction (master→slave or slave→master).**
+- **AW** (Write Address): master→slave — carries write address
+- **W** (Write Data): master→slave — carries write data + byte strobes (wstrb)
+- **B** (Write Response): slave→master — carries write response (bresp)
+- **AR** (Read Address): master→slave — carries read address
+- **R** (Read Data): slave→master — carries read data + response (rresp)
+
+**Q70. What is `wstrb` and why is it needed?**
+Byte-enable mask (4 bits for 32-bit data). Each bit enables writing one byte lane. Allows partial writes — e.g., `wstrb = 4'h1` writes only byte 0. Uses indexed part-select `regs[idx][b*8 +: 8]` because SystemVerilog forbids variable indices on both sides of `:`.
+
+**Q71. What does `s_awready = !s_bvalid | s_bready` mean?**
+The slave can accept a new write address when either: (1) no pending B response (`!s_bvalid`), or (2) the pending B response is being consumed this cycle (`s_bvalid & s_bready`). Same pattern as skid buffer — "I'm free, or I'm about to be free."
+
+**Q72. In AXI-Lite, why is the slave's perspective "output ready, input valid" — opposite of what you'd expect?**
+The slave is the *responder*. On AW/W/AR channels, the master drives valid (it has a request) and the slave drives ready (it can accept). On B/R channels, the slave drives valid (it has a response) and the master drives ready (it can accept). Valid = "I have data for you", ready = "I can take data."
+
+**Q73. What is the address decoding in an AXI-Lite interconnect?**
+Top bits of the address select which slave, lower bits are the offset within that slave's register space. For 4 slaves with 8-bit address: `wr_sel = m_awaddr[7:6]` (top 2 bits select slave 0-3), `s_awaddr = m_awaddr[3:0]` (lower 4 bits = register offset).
+
+**Q74. Is the interconnect combinational or sequential?**
+Purely combinational — just muxes. It routes valid/data from master to selected slave, and routes ready/response from selected slave back to master. No registers, no state. Skid buffers are placed at interconnect boundaries (not inside) when timing requires it.
+
+**Q75. What is the difference between AXI-Lite and AXI4 full?**
+AXI4 adds: burst transfers (AWLEN/ARLEN — up to 256 beats), transaction IDs (AWID/BID/ARID/RID for out-of-order responses and multiple outstanding), cache/lock/QoS signals, and wider address/data. AXI-Lite is one transaction at a time, no bursts, no IDs — for simple register-mapped peripherals.
+
+**Q76. Why does AXI separate write address and write data into different channels?**
+So they can be accepted independently — the slave might accept the address before the data or vice versa. In AXI4 full, this enables pipelining: the address can arrive before data, and data can stream in bursts. In AXI-Lite, the practical benefit is simpler handshaking (each channel has its own valid/ready).
+
 ---
 
 ## Day 6: RSD DCache 1R1W Redesign (2026-04-02)
@@ -624,3 +707,348 @@ Do not call it a logic bug. First check whether the program eventually reaches t
 - If route is still unstable, adjust route strategy before pushing toward the final target of:
   - `0 DRC`
   - `0 LVS/connectivity`
+
+## Day 11: RSD Innovus Route Debugging and Floorplan Iteration
+
+### What We Learned From The Full Route Flow
+- The PG/body-bias fixes were real and necessary:
+  - `VPP/VBB/VDDM` connection warnings are gone
+- Restricting signal routing to `M1..M10` and turning off aggressive SI/timing routing cleaned up the first major route phase:
+  - no AP-layer routing
+  - antenna reached `0`
+  - one routed phase dropped to only `4` remaining M2 DRCs
+- But the full `routeDesign` still has a second major signal-routing phase, and that phase is still the real blocker
+  - it climbed to thousands of DRCs again
+  - it was worse than the earlier `~1150` plateau in the interrupted experiments
+
+### Conclusion
+- The remaining problem is no longer a simple route-option bug
+- The remaining problem is physical structure:
+  - floorplan
+  - macro spacing
+  - local routing access around macros and dense logic
+
+### Structural Fix Applied
+- Reworked the Innovus init stage in:
+  - [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl)
+- Changes:
+  - floorplan target changed from `0.40` to `0.30`
+  - core margins increased from `60` to `80`
+  - added `5um` halo around all hard macros with `addHaloToBlock 5 5 5 5 -allMacro`
+
+### Rebuilt Checkpoints
+- `init` reran cleanly with the larger floorplan
+- `place` reran cleanly from scratch and saved a new:
+  - [place.enc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/place.enc)
+
+### New Placement Snapshot
+- placement runtime:
+  - about `19m 14s` real time
+- early global-route congestion is still essentially clean:
+  - `Overflow: 1 = 0 (0.00% H) + 1 (0.00% V)`
+  - see [place_congestion.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/place_congestion.rpt)
+- the main timing hotspot is still `ReplayQueue`
+  - pre-CTS setup is about `-0.533ns`
+  - see [place_timing.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/place_timing.rpt)
+
+### Current Status
+- APR bring-up remains healthy through:
+  - init
+  - place
+  - CTS on the earlier checkpoint
+- The route flow is alive, but full route is still not converged
+- We now know the next backend work is structural APR tuning, not more SRAM/RTL work
+
+### Next Step
+- Rerun `CTS -> route` on the rebuilt larger-floorplan checkpoint
+- Compare whether the new geometry reduces the second full-route DRC explosion
+- If not, move to deliberate macro placement rather than more router-option tuning
+
+## Day 12: RSD PG Connectivity Root-Cause Debug
+
+### What Changed In The Innovus Flow
+- Updated [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl) to strengthen the power-grid strategy:
+  - added `M8/M9` PG stripes during init
+  - reran `sroute` after CTS and again before route
+  - disabled post-route wire spreading so the router does not reintroduce cleanable DRC after a zero-DRC detailed-route phase
+  - added a bounded `ecoRoute -fix_drc` loop in the route stage
+
+### Important Backend Diagnosis
+- The remaining special-connectivity failures are not just generic PG-routing misses.
+- I checked the TSMC16 stdcell LEF and confirmed:
+  - ordinary standard cells expose `VDD/VSS` on `M1`
+  - but `VPP/VBB` are on `NW/PW` well layers, not normal signal-routing metal
+- I also checked the synthesized `Core.v` and found:
+  - no `TAPCELL` instances were present in the mapped netlist
+
+### Why This Matters
+- That means the repeated `VPP/VBB` opens are structurally consistent with missing or insufficient well-tap / secondary-power handling.
+- A plain `corePin` or `blockPin` `sroute` pass is not enough by itself.
+- The backend needs body-bias-aware tap cells plus explicit secondary-power handling.
+
+### New Structural Fix Applied
+- Updated the `place` stage in [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl) to insert well taps:
+  - `addWellTap -cell TAPCELLBWP16P90_VPP_VBB -cellInterval 30 -prefix TAP`
+  - followed by `refinePlace`
+- Also updated the PG routing helper to include a dedicated `secondaryPowerPin` pass instead of only treating everything like ordinary `corePin` routing.
+
+### Current Status
+- This is a real flow fix, not a guess:
+  - it directly addresses the physical meaning of `VPP/VBB`
+  - it follows the same class of lesson from `soc_design`: solve the actual PG/connectivity structure first, then judge final LVS-style clean reports
+- I started a fresh `place` rerun with tap-cell insertion and the revised PG flow, then stopped it rather than leaving a blind long job running.
+
+### Next Step
+- Re-run `place` fully with:
+  - well taps inserted
+  - secondary-power-aware `sroute`
+- Then continue `CTS -> route` and recheck:
+  - `route_special_connectivity.rpt`
+  - `route_drc.rpt`
+  - post-route timing
+
+## Day 13: RSD Post-Route DRC Root Cause
+
+### What Changed In The Flow
+- Updated [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl) again so backend iteration is cheaper:
+  - added [route_raw.enc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/route_raw.enc) save point immediately after `routeDesign`
+  - added [route_clean.enc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/route_clean.enc) save point after the post-route DRC cleanup loop
+  - added a new `route_finish` stage so later debug can restart from `route_raw.enc` instead of rerunning the full route
+  - disabled post-route filler insertion by default, so filler behavior does not hide the real routed DRC state
+
+### What We Learned
+- The backend problem is no longer generic signal-route congestion.
+- During route:
+  - signal-route DRC falls from about `10.7k` down to low double digits during the router’s own optimization loop
+  - but full-chip [route_drc.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/route_drc.rpt) still explodes to the report limit of `10000`
+- I parsed that report and found:
+  - about `9998/10000` checked violations are `Special Wire`
+  - the dominant rule is `VIA1 CUTSPACING` on net `VSS`
+  - this is a PG/special-route geometry problem, not a normal signal-wire problem
+
+### Important False Lead Closed
+- I tested whether post-route fillers were the main cause.
+- Result:
+  - fillers were not the primary root cause
+  - even with fillers disabled, the post-route `verify_drc` still reports roughly the same `VIA1` special-wire explosion
+- So the correct focus stays on `sroute`/PG topology, not filler cleanup.
+
+### New PG Strategy Change
+- I changed the PG core-pin routing in [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl) away from:
+  - `corePinTarget {firstAfterRowEnd}`
+- and back toward the staged `soc_design` style:
+  - `corePinTarget {stripe}` on lower layers first
+  - then `corePinTarget {stripe ring}`
+  - then `corePinTarget {stripe ring blockring}`
+
+### Why This Matters
+- The DRC coordinates cluster at repeated PG-via sites, not random signal-routing hotspots.
+- That strongly suggests the special-route connection pattern itself is wrong or too dense.
+- Matching the `soc_design` staged `sroute` style is the right next experiment.
+
+### Current Status
+- A fresh `pg` rerun with the new staged `corePin` strategy is in progress.
+- We still do **not** have `0 DRC / 0 LVS/connectivity`.
+- But the backend debug is now much more structured:
+  - we know the dominant violation class
+  - we know it is special-route PG, not signal route
+  - and we now have finer checkpoints to avoid re-running the full route every time
+
+## Day 14: RSD Route Topology Split
+
+### What Improved
+- Re-ran full route from the latest `cts.enc` after the staged `sroute` fix.
+- Important change in behavior:
+  - the old post-route `VIA1 CUTSPACING` `Special Wire` explosion is no longer the dominant failure mode
+  - regular connectivity is now clean in [route_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/route_connectivity.rpt)
+  - `routeDesign` itself still gets ordinary routed-signal DRC to `0` before the later full-chip verification step
+
+### New Post-Route DRC Signature
+- The remaining routed database is still not clean.
+- Current [route_drc.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/route_drc.rpt) is dominated by:
+  - `MINSTEP` on `Special Wire`
+  - mainly on `M6` and `M7`
+  - net `VSS` on `M6`
+  - net `VDD` on `M6/M7`
+- The current report summary is roughly:
+  - `8903` total DRC
+  - about `8246` `MINSTEP`
+  - about `480` `CUTSPACING`
+  - about `94` `SPACING`
+- Coordinate clustering shows these are concentrated around the cache macro region, not randomly across the die.
+
+### Connectivity Diagnosis
+- [route_special_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/route_special_connectivity.rpt) is no longer dominated by generic signal pins.
+- The remaining special-connectivity failures are overwhelmingly:
+  - `VPP` on standard-cell instances
+  - one `VBB` residual case
+- Top modules with the most `VPP` opens:
+  - `brPred`
+  - `btb`
+  - `iCache`
+- This means:
+  - regular nets are already fine
+  - body-bias connectivity is still a separate closure problem
+
+### Structural Change Kept
+- Updated [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl) to remove per-macro block rings from the main PG strategy.
+- The new default PG direction is:
+  - macro `blockPin -> ring/stripe`
+  - no `blockring` target in the normal flow
+- Reason:
+  - the remaining special-wire `M6/M7` min-step clusters line up with the SRAM-heavy cache region
+  - per-macro block rings are the strongest suspected contributor to that geometry
+
+### Structural Change Rejected
+- I also tested an explicit `secondaryPowerPin` `sroute` pass from `route_raw.enc`.
+- Result:
+  - it does touch the missing body-bias network
+  - but it does **not** reduce the main post-route DRC signature
+  - and it introduces extra via-generation pressure and instability during the post-route cleanup experiment
+- So `secondaryPowerPin` routing is not the main DRC fix and should not be the default path for every route iteration.
+
+### Current Best Next Step
+- Keep the simplified macro PG topology.
+- Rebuild from `prepg.enc` using:
+  - no per-macro block rings
+  - direct macro `blockPin` PG hookup
+- Then rerun:
+  - `pg`
+  - `cts`
+  - `route`
+- Goal of the next iteration:
+  - see whether removing block rings collapses the remaining `M6/M7` special-wire min-step cluster
+  - then revisit `VPP/VBB` connectivity only after the main routed geometry is cleaner
+
+## Day 15: RSD Route-Finish PG Closure Experiments
+
+### Stable Best Geometry Baseline
+- Rebuilt the backend from the fresh full-design `place.enc` / `cts.enc` chain and confirmed the best clean raw-route base is still:
+  - [route_raw.enc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/route_raw.enc)
+  - raw route finishes with only `4` geometry + `4` antenna markers before post-fill cleanup
+- The best geometry-focused `route_finish` result still ends at:
+  - `24` DRC in [route_drc.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/route_drc.rpt)
+  - `0` regular-net connectivity violations
+
+### What Helped
+- Adding fillers after `route_raw.enc` is still necessary.
+- After fillers, a macro-focused reconnect path is better than the earlier broad `corePin` pass:
+  - `blockPinTarget {stripe ring blockring}`
+  - `floatingStripeTarget {stripe ring blockring}`
+- This path:
+  - keeps geometry near the `24`-DRC baseline
+  - avoids the runaway `M6/M7` special-wire explosion
+  - confirms the ordinary routed netlist is already clean
+
+### What Did Not Help
+- Post-fill `corePin -> stripe` full-range `sroute`
+  - too slow
+  - gets stuck in macro-edge via failures
+- Post-fill low-layer `corePin -> ring` (`M1..M4`)
+  - routed `0` new wires
+  - did not reduce the special-net opens
+- Reintroducing per-macro `block_rings`
+  - made things much worse
+  - raw post-fill route jumped to hundreds of real geometry DRC
+  - final special connectivity also degraded into mixed special + regular opens
+
+### Current Best Understanding
+- The remaining blocker is still **special PG connectivity**, not signal routing.
+- The problem is now clearly localized around macro-side PG stitching.
+- The best current no-blockring result still has:
+  - `24` geometry DRC
+  - `1000` capped special-net opens in [route_special_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/route_special_connectivity.rpt)
+- The open spans cluster around the SRAM macro regions:
+  - `dCache`
+  - `iCache`
+  - `BTB`
+  - `Gshare`
+  - `MDP`
+
+### Practical Conclusion
+- The overnight experiments narrowed the search space:
+  - **do not** use per-macro block rings in the current RSD flow
+  - **do not** rely on post-fill `corePin` repair
+  - **keep** the no-blockring route baseline with fillers + macro-focused reconnect
+- The next structural fix should target the PG mesh itself, most likely:
+  - sparse additional horizontal strap / bridge support around the macro bands
+  - then rerun from the saved early checkpoint chain instead of patching only the final routed database
+
+## Day 16: Fresh PG Rebuild and Row-Rail Connectivity Analysis
+
+### Fresh Base Rebuilt
+- Rebuilt the Innovus backend base from scratch after the PG-flow edits:
+  - fresh `init.enc`
+  - fresh `prepg.enc`
+  - fresh `place.enc`
+- Key flow changes in [innovus_flow.tcl](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/innovus_flow.tcl):
+  - widened macro halo from `5` to `10`
+  - added a local low-layer helper mesh in the cache / predictor / MDP / central-if bands
+  - changed the low `corePin` stitch range from `M1..M7` to `M1..M6`
+
+### Important New Result
+- The new PG debug flow is materially better than the older stale-checkpoint path.
+- With the fresh `prepg.enc` and the new low helper mesh:
+  - `pg_after_blockpin_special_connectivity.rpt` is still capped at `1000` open terminals
+  - but after the low `corePin` pass, [pg_after_corepin_low_special_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/pg_after_corepin_low_special_connectivity.rpt) improves to:
+    - `190` terminal opens
+    - `810` special-wire opens
+- This is the first clear evidence that the new PG topology is helping, but not enough for closure.
+
+### Root Cause Refined Again
+- The low-pass report shows the remaining `IMPVFC-200` problems are **long horizontal VDD/VSS row rails** that stay open across wide spans of the core.
+- Example pattern:
+  - `Net VDD: has special routes with opens at (79.957, 79.971) (1214.873, 80.061)`
+  - repeated across many adjacent row heights
+- That means the dominant remaining failure is:
+  - not ordinary signal routing
+  - not random local pin opens
+  - but **standard-cell followpin rails that are still not being stitched vertically into the PG mesh**
+
+### What Was Rejected
+- A full `corePin` climb on top of the new base was tried again.
+- Result:
+  - it falls back into repeated via-obstruction hotspots near the SRAM/control clusters
+  - it does not produce a clearly better debug checkpoint than the low-pass result
+- A sparse full-core low mesh experiment was also started:
+  - this is more invasive
+  - it changes the geometry heavily
+  - early signs show it may be too blunt compared with the more surgical local-helper approach
+- So the best current checkpoint remains the **fresh low-pass PG result**, not the broader full-climb/global-mesh path.
+
+### Current Best Understanding
+- The remaining physical-design blocker is still **PG special-net closure**.
+- More specifically:
+  - standard-cell row rails need a better vertical stitch strategy
+  - the present upper-mesh + local-helper solution improves things, but still leaves hundreds of full-width open PG fragments
+- So the next useful backend experiments should stay focused on:
+  - row-rail stitch strategy
+  - local low-layer PG support
+  - not more general signal-route tuning
+
+### Next-Stage Plan: Soc-Design-Style PG Isolation
+- The next backend step should follow the same diagnostic logic that worked in `soc_design`:
+  - first isolate and clean the **stdcell / tap / followpin PG skeleton**
+  - then reintroduce **macro PG hookup**
+- Why this may work:
+  - when macros are present during PG closure, `sroute` is trying to solve two problems at once:
+    - standard-cell row-rail stitching
+    - macro `blockPin` connection into the upper PG mesh
+  - if macro geometry fragments the rows or blocks via ladders, the base row-rail network never becomes clean
+  - once the base stdcell PG is clean, macro reintegration becomes a smaller delta problem instead of a coupled failure
+- How to apply this to RSD:
+  - keep the same placed design and macro locations
+  - first run PG closure with **macro hookup disabled** or minimized, focused only on:
+    - taps
+    - endcaps
+    - stdcell followpin rails
+    - row-rail stitch into the mesh
+  - verify whether the stdcell-only PG skeleton becomes clean
+  - then re-enable macro `blockPin` hookup on top of that clean checkpoint
+  - if needed, reintroduce macro connection by cluster:
+    - cache cluster
+    - predictor cluster
+    - MDP cluster
+- Decision rule:
+  - if the stdcell-only PG skeleton becomes clean, then macro reintegration is the real remaining problem
+  - if it does not, then the problem is deeper than macro interaction and the row-stitch topology itself still needs work
