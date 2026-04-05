@@ -1052,3 +1052,322 @@ Do not call it a logic bug. First check whether the program eventually reaches t
 - Decision rule:
   - if the stdcell-only PG skeleton becomes clean, then macro reintegration is the real remaining problem
   - if it does not, then the problem is deeper than macro interaction and the row-stitch topology itself still needs work
+
+### Implemented: Split PG Stages and First Results
+- Added two explicit Innovus stages in the RSD backend flow:
+  - `pg_stdcell`: build the stdcell / tap / followpin PG skeleton without macro `blockPin` hookup
+  - `pg_macro`: reintroduce macro PG hookup on top of the saved stdcell-only checkpoint
+- The split flow now saves:
+  - [pg_stdcell.enc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/pg_stdcell.enc)
+  - [pg_macro.enc](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/db/pg_macro.enc)
+- It also writes dedicated reports:
+  - [pg_stdcell_special_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/pg_stdcell_special_connectivity.rpt)
+  - [pg_stdcell_special_connectivity_summary.txt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/pg_stdcell_special_connectivity_summary.txt)
+  - [pg_macro_special_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/pg_macro_special_connectivity.rpt)
+  - [pg_macro_special_connectivity_summary.txt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/pg_macro_special_connectivity_summary.txt)
+
+### What The Split Experiment Proved
+- `pg_stdcell` result:
+  - `macro_terminal_opens: 84`
+  - `tap_or_physical_terminal_opens: 190`
+  - `stdcell_terminal_opens: 0`
+  - `special_wire_opens: 727`
+- `pg_macro` result:
+  - `macro_terminal_opens: 0`
+  - `tap_or_physical_terminal_opens: 190`
+  - `stdcell_terminal_opens: 0`
+  - `special_wire_opens: 811`
+- Interpretation:
+  - the split staging works as intended
+  - macro reintegration does remove the expected macro terminal opens
+  - but the dominant problem survives almost unchanged after macro reintegration
+  - therefore the current root cause is **not only macro hookup**
+
+### Refined Root Cause After The Split
+- The base stdcell skeleton is **not** clean yet.
+- The remaining terminal opens are almost entirely tap/physical-cell PG pins.
+- The remaining special-wire opens are still large row-rail fragments, especially in the lower macro/cache region.
+- Example signature from [pg_stdcell_special_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/pg_stdcell_special_connectivity.rpt):
+  - `Net VSS: has special routes with opens at (79.957, 80.547) (1214.873, 80.637)`
+  - repeated across many adjacent row heights
+- So the current blocker is now more specific:
+  - **row-rail stitch / tap connectivity in the stdcell PG skeleton**
+  - not plain macro `blockPin` hookup by itself
+
+### Practical Conclusion From This Stage
+- The `soc_design`-style isolation plan was still the right move, because it removed ambiguity.
+- It told us exactly where the next fix must go:
+  - improve the stdcell/tap row-rail stitch first
+  - then keep macro reintegration as a second-stage delta
+- The next PG experiments should therefore target:
+  - low-layer boundary stitch support for taps / row rails
+  - localized row-rail bridge support in the lower cache-side region
+  - not another broad macro PG reroute
+
+### Update: Stdcell-Only PG Baseline Improved, But Top-Edge VDD Still Blocks Closure
+- I strengthened the `pg_stdcell` stage in the RSD Innovus flow with:
+  - a boundary low-layer helper mesh
+  - a denser top-edge stitch band
+  - `corePin` routing allowed up to `M10`
+- Best stdcell-only result with that stronger baseline:
+  - `macro_terminal_opens: 37`
+  - `tap_or_physical_terminal_opens: 58`
+  - `stdcell_terminal_opens: 0`
+  - `special_wire_opens: 3`
+- This is much better than the earlier `84 / 190 / 0 / 727` split-baseline result.
+- However, the remaining failures are still capped at `1000` total because of repeated **regular-routing** `VDD` opens concentrated near the top boundary.
+- The dominant remaining signature in [pg_stdcell_special_connectivity.rpt](/home/fy2243/coding/design_and_perf/rsd_fengze/Processor/Project/Innovus/out/reports/pg_stdcell_special_connectivity.rpt) is:
+  - `Net VDD: has regular routing with opens at (x, 1213.296) (x+0.96, 1213.872)`
+  - repeated across the full core width in ~30um columns and many adjacent top-edge rows
+- Interpretation:
+  - the broad stdcell/tap PG problem is much smaller now
+  - the remaining blocker is a narrow **top-edge VDD row-fragment stitch problem**, not generic signal routing and not ordinary macro hookup
+
+### Update: `corePin -> ring` Experiment Did Not Beat The Stronger Baseline
+- I also tested a `soc_design`-style simplification inside `pg_stdcell`:
+  - `sroute -connect {corePin}`
+  - `-corePinTarget {ring}`
+  - instead of `-corePinTarget {stripe ring}`
+- Result:
+  - `Number of Core ports routed: 3942 open: 4788`
+  - connectivity summary:
+    - `105` terminal opens
+    - `230` special-wire opens
+    - `665` regular-routing opens
+- This was **worse overall** than the stronger `stripe/ring` baseline, because it reduced some regular fragments but exploded the special-wire side and left many more open core ports.
+- Conclusion:
+  - keep the stronger `corePin -> stripe/ring` stdcell-only baseline
+  - do **not** use pure `corePin -> ring` as the default RSD fix path
+
+### Current Backend Status After These PG Experiments
+- Best current understanding:
+  - macros are **not** the first-order blocker anymore
+  - the remaining stdcell-only PG issue is a persistent top-edge `VDD` row-stitch pattern
+  - the baseline with the strongest evidence remains the improved `pg_stdcell` flow with `corePin -> stripe/ring`, not the pure ring-target variant
+
+### Update: Top-Edge Failure Pattern Is On The Tap Pitch, Not Random PG Congestion
+- I parsed the remaining `pg_stdcell` regular-routing opens and the pattern is highly structured:
+  - all `903` regular opens are on `VDD`
+  - the first row is:
+    - `(1213.620, 1213.296) (1214.580, 1213.872)`
+    - `(1188.780, 1213.296) (1189.740, 1213.872)`
+    - `(1158.810, 1213.296) (1159.770, 1213.872)`
+    - and so on at about `29.97um` pitch
+- That pitch matches the tap-cell placement interval, and the open rectangles line up with top-row power-rail/tap locations rather than arbitrary mesh gaps.
+- So the late-stage diagnosis is tighter now:
+  - the current stdcell-only PG blocker is **top-row rail capture**, especially `VDD`
+  - this is more specific than “macro PG problem” or “general MINSTEP problem”
+
+### Update: Two Follow-Up Fixes Were Tested And Rejected
+- `pg_stdcell` with an added staged low-layer `corePin -> stripe` pass:
+  - result became worse overall:
+    - `181` terminal opens
+    - `2` special-wire opens
+    - `817` regular-routing opens
+  - interpretation:
+    - it reduced some regular fragments
+    - but created too many new terminal opens, mostly `VSS` tap/physical terminals
+  - conclusion:
+    - do **not** use the staged low core-pin pass as the default stdcell-only fix
+- `pg_stdcell` with a VDD-only top-edge low-metal capture strap:
+  - no measurable change from the better baseline
+  - still:
+    - `94` terminal opens
+    - `3` special-wire opens
+    - `903` regular-routing opens
+  - conclusion:
+    - the issue is not solved by a small local top-edge helper alone
+
+### Update: Stronger Interpretation Of The `soc_design` Lesson
+- The earlier split experiment disabled macro PG hookup, but the macros were still physically present and still fragmented rows.
+- Since the tap-pitch/top-row pattern survives that experiment, the next faithful version of the `soc_design` method should be:
+  - build a **true macro-less control netlist**
+  - run backend on that macro-less design
+  - prove whether the row/tap PG skeleton can become clean without any SRAM macros physically present
+  - then reintroduce the SRAM macros afterward
+- I updated the DC flow to make cache SRAM macro use selectable by environment:
+  - `RSD_DC_USE_CACHE_SRAM=0` removes `RSD_USE_TSMC_CACHE_SRAM` from synthesis defines
+- Next backend control experiment:
+  - synthesize a real no-cache-macro netlist
+  - use that to test whether a truly macro-less placement/PG baseline closes cleanly
+
+### `soc_design` Sequence Confirmed From Git History
+- I checked two key `soc_design` commits to confirm the exact order:
+  - `f45de395041ada24391582bc3448965b768f73d4`
+  - `f11b0ecadc93f1b0db6067acbaca42e79e7a3373`
+- `f45de39` is the true **no-SRAM baseline** milestone:
+  - `rtl/sram.sv` was changed so synthesis no longer instantiated the TSMC hard macro
+  - the memory functionality stayed in RTL as synthesizable logic
+  - `complete_flow_with_qrc.tcl` was used as the clean backend flow
+  - `AGENTS.md` and `DESIGN.md` explicitly recorded this as the no-SRAM `0 DRC / 0 LVS-connectivity` baseline
+- `f11b0ec` is the later **with-SRAM reintroduction** milestone:
+  - `rtl/sram.sv` restored the hard macro path under `SYNTHESIS`
+  - `syn_complete_with_tech.tcl` added checks to require `u_sram/u_sram_macro` of `TS1N16ADFPCLLLVTA512X45M4SWSHOD`
+  - `complete_flow_with_qrc_with_sram.tcl` added the dedicated macro-aware Innovus flow
+
+### What This Means For RSD
+- The useful lesson from `soc_design` is not “finish macro-less and stop there.”
+- The real lesson is:
+  - first prove the **base stdcell backend flow**
+  - then reintroduce SRAM macros in a separate controlled flow
+  - then debug only the delta created by macro reintegration
+- The no-macro baseline does **not** directly become the final macro layout.
+- Its value is:
+  - proving the base PG/row/tap/filler recipe is sound
+  - giving a known-good reference
+  - shrinking the later debug space when macros are added back
+
+### Current Direction For RSD Backend Closure
+- For the real RSD implementation, the mainline flow should keep the SRAM macros present from the start.
+- The no-macro flow is still useful as a control experiment, but it is **not** the production direction.
+- Current diagnosis:
+  - the remaining blocker is not timing
+  - the remaining blocker is not ordinary signal routing
+  - the blocker is the macro-present PG/special-net topology, especially row-rail/tap stitch disruption near macro-heavy regions
+- Important working assumption now:
+  - this is more a **macro placement + PG topology** problem than a route-effort problem
+
+### Planned Next Stage
+- Keep macros present in the real backend flow.
+- Stop treating the no-macro path as the main closure target.
+- Move to a more deliberate macro-driven closure strategy:
+  - manually place the cache/predictor macros instead of relying on the current coarse arrangement
+  - align macro placement to the PG strap geometry
+  - give wider clean channels / halo around macro groups
+  - avoid placing macro edges in the regions where top-row rail capture is already weak
+- Use a simpler macro PG strategy:
+  - prefer `blockPin -> stripe/ring`
+  - avoid per-macro block rings unless a specific macro proves it needs one
+- Workflow for the next iterations:
+  1. update macro placement / halo / spacing
+  2. rerun from early backend checkpoints (`prepg` / `place`)
+  3. check PG special connectivity first
+  4. only after special-net connectivity is near clean, proceed again to `cts`, `route`, DRC, and final connectivity checks
+
+### Key Lesson Right Now
+- The next high-value change is **manual macro floorplanning**, not more generic route-option tuning.
+
+### Update: Manual Macro Floorplan Is Now The Active Fix Path
+- I refactored the RSD Innovus flow so macro placement is no longer a coarse static pattern.
+- The current `innovus_flow.tcl` now:
+  - snaps macro columns to the PG strap grid
+  - uses a more deliberate banded floorplan for cache and predictor macros
+  - drives the low helper mesh from the **actual placed macro groups** instead of stale hardcoded windows
+- This matters because the earlier helper mesh was tuned for an old macro arrangement; once the macros moved, the PG helper geometry no longer overlapped the real problem regions.
+
+### Update: First Manual-Floorplan Result Confirmed The Direction
+- After switching to the new grid-aligned manual macro placement plus dynamic helper mesh, the low-layer `corePin` PG pass improved materially:
+  - `Number of Core ports routed: 3238 open: 17346`
+- This was a real improvement over the first broken manual-floorplan attempt, which had:
+  - `Number of Core ports routed: 0 open: 20594`
+- Interpretation:
+  - macro geometry and PG helper alignment are tightly coupled
+  - once the helper mesh followed the real macro positions, PG access improved immediately
+
+### Update: Simply Making The Global Macro Spacing Larger Did Not Solve It
+- I then widened the cache/predictor row spacing further and increased macro halo.
+- The next measured low-layer `corePin` result was:
+  - `Number of Core ports routed: 3441 open: 17927`
+- This is **not** a clear improvement over the earlier `3238 / 17346` result.
+- Interpretation:
+  - blindly adding more whitespace is not enough
+  - the remaining problem is more localized to the specific channels between the stacked cache macro rows
+
+### Update: The Current Fix Focus Is Now The Inter-Row Cache Channels
+- I added a new `rsd_add_pg_row_channel_stitch` step in the Innovus flow.
+- This injects low-layer PG ladders specifically in the narrow channels between:
+  - the `dCache` tall data row and the `dCache` short tag row
+  - the `iCache` tall low-bank row and the `iCache` short high-bank row
+- The intent is to give the row rails and low-layer PG a deliberate bridge **exactly** where the macro bands are fragmenting them, rather than applying broader global helpers.
+- The new stitch step built cleanly during `make init`, and Innovus reported that it actually created local geometry in those channels:
+  - extra M5/M6 wires
+  - extra M5-M6 / M6-M7 vias
+- The next measurement point is to rerun `place` with this new channel-stitch geometry and compare it against the current best low-layer `corePin` checkpoint (`3238 routed / 17346 open`).
+
+### Current Tactical Conclusion
+- The manual macro-floorplan path is still the right direction.
+- The evidence now says:
+  - **macro alignment to the strap grid matters**
+  - **helper mesh must follow the real macro coordinates**
+  - **general extra whitespace is not sufficient**
+  - the next useful geometry change is **surgical PG stitching inside the cache-row channels**
+
+### Update: Wider Halo And Wider Cache-Band Gaps Were Not The Right Macro Fix
+- I reran the macro-present flow with:
+  - widened cache/predictor row spacing
+  - wider macro halo
+  - an additional low-layer cache-row channel stitch
+- The low-layer `corePin` checkpoint still landed at:
+  - `Number of Core ports routed: 3441 open: 17927`
+- That matched the earlier widened-gap result and did **not** improve the main PG access problem.
+- Interpretation:
+  - the extra low-layer stitch was creating real M4/M5/M6/VIA work in the cache channels
+  - but it was not changing the main core-port accessibility metric
+  - so that patch should not be the default macro-present path
+
+### Update: Smaller Halo Restored A Better Macro-Present PG Baseline
+- I then reverted toward the better manual-floorplan baseline:
+  - smaller macro halo
+  - smaller cache/predictor row gaps
+  - row-channel stitch disabled by default
+- That materially changed the PG behavior.
+- The new macro-present low `corePin` result became:
+  - `Number of Core ports routed: 1602 open: 16854`
+- The total port accounting changed because the fixed tap/physical-cell picture changed, so the raw routed count is not directly comparable to the earlier widened-gap run.
+- The more important number here is the open count:
+  - `16854` is lower than the widened-gap `17927`
+- Interpretation:
+  - the earlier “bigger halo + bigger channels” direction was over-fragmenting rows
+  - the smaller-halo macro baseline is the better foundation for the next macro-present fixes
+
+### Update: Short-Row Y Phase Shift Helps Only Marginally
+- I next tested a macro-present variant with:
+  - the same smaller-halo baseline
+  - plus a `40um` Y-phase shift for the short macro rows
+- Result:
+  - `Number of Core ports routed: 1598 open: 16836`
+- This is only a marginal improvement over `1602 / 16854`.
+- Interpretation:
+  - short-row Y alignment is part of the repeated `VIA5/VIA7` conflict pattern
+  - but it is not the main lever
+
+### Current Macro-Present Direction Tightened Further
+- The more promising structural next move is to **stagger the short cache rows in X** so the upper tag/high-bank rows are no longer directly stacked over the lower data/low-bank rows.
+- Reason:
+  - the remaining macro-present warnings are still highly regular
+  - they cluster around the stacked cache-row bands
+  - changing only Y phase does not move the core-port result enough
+- I added an explicit control knob for this in the Innovus flow:
+  - `RSD_CACHE_SHORT_X_SHIFT`
+- The current live experiment is:
+  - keep the better smaller-halo macro-present baseline
+  - stagger the short cache rows by `40um` in X
+  - rerun `init -> place`
+  - compare the low `corePin` result against the current best open-count baseline (`16836`)
+
+### Update: X-Staggering The Short Cache Rows Is The First Real Macro-Present PG Improvement
+- With `RSD_CACHE_SHORT_X_SHIFT=40`, the macro-present `place` flow improved materially.
+- The key `sroute` checkpoints were:
+  - first `corePin -> stripe`: `2487 routed / 15969 open`
+  - second `corePin -> stripe ring`: `15191 routed / 822 open`
+- The post-place special-connectivity report still hit the `1000`-violation cap, but the remaining failures were no longer broad macro collapse.
+- The surviving problem narrowed to:
+  - repeated `TAP` terminal opens in a handful of row bands
+  - a smaller set of special-wire PG breaks clustered around the cache/predictor region
+
+### Update: Remaining Macro-Present Opens Are Now Band-Localized
+- I parsed the best `place_special_connectivity.rpt` and the terminal opens now cluster in repeated Y bands rather than across the whole macro region.
+- The most obvious surviving bands are:
+  - full-width `VSS` at the bottom and top rows
+  - repeated `VDD` bands around `211`, `428`, `497`, `537`, `662`, `937`
+  - repeated `VSS` bands around `622`, `778`, `902`, `1062`
+- Interpretation:
+  - the X-staggered floorplan is good enough that broad helper meshes are no longer the right tool
+  - the next PG work should target these exact row/tap bands directly
+
+### Update: Added A Surgical Tap-Band PG Capture Ladder
+- I patched the Innovus flow with a new `rsd_add_pg_tap_band_capture` helper.
+- This adds local low-layer `M4/M5/M6` capture ladders only in the exact row bands that survived the current best X-stagger run.
+- The intent is to give the affected tap/followpin rows a nearby capture path into the existing PG mesh without going back to a broad global low-layer mesh.
+- I rebuilt `init` successfully with this patch on the same `RSD_CACHE_SHORT_X_SHIFT=40` floorplan.
+- The matching `place` rerun was started and then intentionally stopped so the current backend-debug state could be committed cleanly before the next measurement.
