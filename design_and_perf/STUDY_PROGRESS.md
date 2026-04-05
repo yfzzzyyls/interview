@@ -412,6 +412,78 @@ AXI4 adds: burst transfers (AWLEN/ARLEN — up to 256 beats), transaction IDs (A
 **Q76. Why does AXI separate write address and write data into different channels?**
 So they can be accepted independently — the slave might accept the address before the data or vice versa. In AXI4 full, this enables pipelining: the address can arrive before data, and data can stream in bursts. In AXI-Lite, the practical benefit is simpler handshaking (each channel has its own valid/ready).
 
+### UART TX (2026-04-04)
+
+#### Modules Completed
+- `uart_tx.sv` + testbench — 6/6 tests pass (0x55, 0xA3, 0x00, 0xFF, tx_busy, idle line)
+
+#### Quiz Q&A (Review Before Interview) — Score: 6/10
+
+**Q77. What is the UART frame format? How many bits total per byte?**
+1 START bit (0) + 8 DATA bits (LSB first) + 1 STOP bit (1) = **10 bits total**. No clock wire — both sides agree on baud rate ahead of time. Standard config: 8N1 (8 data, No parity, 1 stop).
+
+**Q78. Why is the start bit 0 and stop bit 1?**
+IDLE line sits at 1. Start bit = 0 creates a **falling edge** the receiver can detect. Stop bit = 1 returns to idle, guaranteeing a falling edge for the next frame's start bit. If the last data bit were 0 and no stop bit, the next start bit would be invisible (no edge).
+
+**Q79. What happens if TX and RX baud rates don't match?**
+Receiver samples at wrong times, gets corrupted data. The sampling point drifts further with each bit — by bit 7-8, it may land in the wrong bit entirely. Must match within ~2-3%.
+
+**Q80. With 50MHz clock and 115200 baud, how many clock cycles per bit? Per byte?**
+- Per bit: `50,000,000 / 115,200 = 434 cycles`
+- Per byte: `434 × 10 = 4,340 cycles` (10 bits: start + 8 data + stop)
+
+**Q81. What does `tx_busy` tell the CPU, and why is it needed?**
+Tells the CPU the transmitter is still sending the last frame — don't send another byte yet. CPU must wait for `tx_busy = 0` before pulsing `tx_start` again, otherwise the new byte overwrites the shift register mid-transmission.
+
+**Q82. In UART RX, why sample at the middle of each bit period?**
+Two reasons: (1) At bit edges, the signal is still transitioning (rise/fall time), voltage is unstable. Middle is most stable. (2) Any baud rate mismatch between TX and RX causes the sample point to **drift** over 10 bits — sampling at the middle gives maximum margin before drifting into the wrong bit.
+
+### Clock Divider (2026-04-05)
+
+#### Modules Completed
+- `clk_divider.sv` + testbench — 6/6 tests pass (÷3 freq, ÷4 freq, ÷5 freq, ÷3 duty 50%, ÷4 duty 50%, ÷5 duty 50%)
+
+#### Quiz Q&A (Review Before Interview) — Score: 6/10
+
+**Q83. For an even divide-by-6 with 50% duty, how many cycles high? How many low?**
+Period = 6 input cycles. 50% duty = **3 high, 3 low**. Divide-by-N means the output period is N input cycles, not N high + N low.
+
+**Q84. Why can't a simple posedge counter achieve 50% duty for odd division (e.g., ÷3)?**
+Period = 3 cycles, 50% duty needs 1.5 high + 1.5 low. But posedge-only logic can only toggle at integer cycle boundaries (0, 1, 2, 3...). Best you can do is 1 high + 2 low (33%) or 2 high + 1 low (67%).
+
+**Q85. How does the posedge + negedge OR trick achieve 50% duty for odd division?**
+Negedge gives half-cycle resolution — edges at 0.5, 1.5, 2.5... Combined with posedge (0, 1, 2...), you can now toggle at any half-cycle boundary. For ÷3: `clk_pos` is high for count 0 (cycle 0–1), `clk_neg` is the same but shifted by 0.5 cycle. OR them → high from 0 to 1.5, low from 1.5 to 3.0. Exactly 50%.
+
+**Q86. What is `generate` used for in SystemVerilog? Two common use cases.**
+Conditionally creates hardware at **compile time** (not runtime — no hardware is being "decided" dynamically). Two uses: (1) `generate if` — conditional implementation based on parameters (e.g., even vs odd divider). (2) `generate for` — instantiate N copies of a module (e.g., N SRAM banks, N pipeline stages, N slaves in an interconnect).
+
+### Dual-Port RAM + Register File (2026-04-05)
+
+#### Modules Completed
+- `dual_port_ram.sv` (1R1W, sync read) + testbench — 5/5 tests pass
+- `regfile_2r1w.sv` (2R1W, async read, x0 hardwired) + testbench — 6/6 tests pass
+
+#### Quiz Q&A (Review Before Interview) — Score: 3.5/6
+
+**Q87. Synchronous read vs asynchronous read — what's the difference? Which does SRAM use? Register file?**
+- Sync read: output registered, data available **next cycle**. SRAM uses this because the physical circuit needs time — address decode → wordline drive → bitline sense → latch output. That chain takes a full cycle.
+- Async read: output combinational, data available **same cycle**. Register file uses this because FFs have a direct mux to output — no sense amp delay. The pipeline needs operands immediately in the decode cycle.
+
+**Q88. Why does the dual-port RAM have no reset on the memory array?**
+Adding reset with a for-loop prevents the synthesis tool from **inferring an SRAM macro**. The tool sees the reset loop and thinks "each element needs individual reset" → builds from flip-flops instead. Real SRAM macros have no reset pin — contents are undefined at power-on. If you want FF inference (e.g., small register file), then adding reset is fine.
+
+**Q89. Why does a pipeline register file need 2R1W?**
+The decode stage reads **rs1 and rs2 simultaneously** in the same cycle. 1R1W can only read one operand at a time — would need 2 cycles, halving throughput. So: 2 read ports for rs1/rs2, 1 write port for rd writeback.
+
+**Q90. How is RISC-V x0=0 implemented in RTL?**
+Two places: (1) **Write side**: `if (wr_en && wr_addr != '0)` — block all writes to address 0. (2) **Read side**: `assign rd_data = (rd_addr == '0) ? '0 : regs[rd_addr]` — always return 0 for address 0. x0=0 provides a free constant for compare-to-zero (`beq x1, x0`), discard results (`add x0, x1, x2`), and register copy (`add x1, x0, x2`).
+
+**Q91. Read and write same address on same posedge — what happens in our dual-port RAM?**
+**Read-first.** Both `always_ff` blocks use nonblocking `<=`. On posedge, all right-hand sides evaluate first (read sees old `mem` value), then all left-hand sides update (write commits new value). So `rd_data` gets the old value. This is a SystemVerilog simulation guarantee of `<=` — all RHS evaluate before any LHS updates. In real SRAM, behavior depends on the macro (read-first, write-first, or undefined).
+
+**Q92. Why does a register file synthesize to flip-flops, not SRAM?**
+Small depth (32 entries) — no matching SRAM macro from the foundry (macros come in sizes like 256×32, 512×64). Also, SRAM macros don't support async read or multi-port (2R1W), which register files require.
+
 ---
 
 ## Day 6: RSD DCache 1R1W Redesign (2026-04-02)
@@ -1484,3 +1556,392 @@ Do not call it a logic bug. First check whether the program eventually reaches t
 - This is not final closure, but it is still a meaningful reduction:
   - the macro-present PG problem is now a **single-net** reconnect problem
   - the next targeted work should stay on narrow `VDD` reconnect in the remaining cache/predictor bands, not broad mixed-net PG repair
+
+### Update: The Remaining `VDD` Terminals Are Full-Width Row-Band Opens, Not Small Hotspots
+- I ran a focused sweep of the narrow `VDD` reconnect helpers from the current macro-present `pg_edge` base:
+  - `dcache_vdd_low`
+  - `dcache_vdd_mid`
+  - `dcache_vdd_high`
+  - cache-only `VDD` phase-2 capture
+- These branches do change the report, but one pattern stayed constant:
+  - the stubborn `VDD` terminal count stays at `113`
+- Parsing the terminal coordinates shows why:
+  - the remaining `VDD` terminals are not a few isolated macro-edge points
+  - they are spread across repeated row bands at approximately:
+    - `y ≈ 211.5 / 211.7`
+    - `y ≈ 428.1 / 428.2`
+    - `y ≈ 497.2 / 497.4`
+    - plus a smaller predictor-top band around `y ≈ 937`
+  - and the `x` locations span most of the cache row width instead of one narrow hotspot
+- Practical consequence:
+  - more upper-metal hotspot bridges alone are not enough
+  - the next `VDD` fix should be a **row-aligned capture** for those exact `y` bands
+  - most likely with a shifted/additional `x` phase, because the current `VDD` phase-2 capture windows cover the right `y` ranges but still miss the actual terminal lattice
+- Best current sub-results from this sweep:
+  - `dcache_vdd_high` alone:
+    - `113` `VDD` + `62` `VSS` terminal opens
+    - `826` special-wire opens, all `VDD`
+  - cache-only `VDD` phase-2 capture:
+    - `113` `VDD` + `130` `VSS` terminal opens
+    - `758` special-wire opens, all `VDD`
+  - enabling local vias on the cache-only `VDD` phase-2 capture did **not** fix the stubborn `113` `VDD` terminals
+- So the current best interpretation is:
+  - the remaining problem is a row-stitch alignment problem on `VDD`
+  - not a missing global PG feature and not a mixed `VDD/VSS` closure problem anymore
+
+### Update: Low-Layer `VDD` Row-Attach Ladder Reaches The Right Layer But Not Final Closure
+- I added a new exact-band `VDD` row-attach helper in the macro-present `pg_vdd` flow:
+  - `M3` horizontal row capture
+  - `M4` vertical ladders on the exact repeated `VDD` x phases
+  - then a `VDD`-only `corePin -> stripe` `sroute` pass from `M1..M4`
+- This is materially different from the older `M4/M5/M6` helper:
+  - the new branch actually routed real low-layer attach wires in `sroute`
+  - the earlier `M1..M4` attach attempt on the old helper routed `0` wires
+- Result from the new low-layer row-attach branch:
+  - `114` terminal opens total
+    - `113` on `VDD`
+    - `1` on `VSS`
+  - `887` special-wire opens, all on `VDD`
+- So the branch preserves the clean single-net picture:
+  - `VSS` is effectively solved
+  - the remaining problem is still entirely `VDD`
+- The important new diagnosis is:
+  - low-layer row attachment is now proven necessary, but it is not sufficient by itself
+  - the remaining blocker is the same small set of `VDD` vertical trunk families, not the row-band identification anymore
+- Current surviving `VDD` special-wire trunk families after the low-layer attach:
+  - `x = 663.247..704.933` (`213`)
+  - `x = 583.237..624.923` (`213`)
+  - `x = 503.227..544.913` (`213`)
+  - `x = 343.297..384.893` (`187`)
+  - `x = 263.287..304.883` (`60`)
+  - plus one full-width bottom-band artifact
+- Practical conclusion:
+  - the next fix should not be another broad row-capture change
+  - it should target those surviving `VDD` trunk families directly, now that the low-layer row attachment has been proven to work as far as it can
+
+### Update: Explicit `VDD` Floating-Stripe Stitch Finally Moves Off The 887 Plateau
+- I added an explicit `VDD` floating-stripe stitch pass to the macro-present `pg_vdd` stage in `Processor/Project/Innovus/innovus_flow.tcl`.
+- This follows the same basic idea that worked in `soc_design`: once helper stripes are inserted, they still need a dedicated `sroute -connect {floatingStripe}` pass instead of relying only on `corePin` attachment.
+- This was the first branch that actually moved the long-stalled macro-present `VDD` result:
+  - old plateau:
+    - `113` terminal opens
+    - `887` special-wire opens
+  - with explicit `VDD` floating-stripe stitch:
+    - `138` terminal opens
+    - `862` special-wire opens
+- The detailed report parse shows the useful part clearly:
+  - `VDD` terminals stayed flat at `113`
+  - `VDD` special-wire opens dropped from `887` to `863`
+  - the extra terminal count came from now-visible `VSS` terminals, not a new `VDD` terminal regression
+- So this is real progress:
+  - the flow was leaving useful `VDD` helper stripes floating
+  - the remaining `VDD` special-wire problem can be reduced further by explicit stripe stitching
+
+### Update: What Does Not Stack On Top Of The New Floating-Stripe Branch
+- I tested a final `VSS` edge catch-up on top of the new `VDD` floating-stripe branch.
+- That was a bad branch:
+  - it collapsed back to the old mixed-net state
+  - final result became `270` terminal opens and `730` special-wire opens
+- I also tested the predictor-only mid-layer (`M5`) `VDD` trunk bridge on top of the floating-stripe branch.
+- That did **not** provide any further benefit:
+  - the result stayed `138` terminal opens and `862` special-wire opens
+- So the current conclusion is:
+  - explicit `VDD` floating-stripe stitch is useful
+  - reintroducing the old broad `VSS` edge cleanup on top of it is not
+  - the current predictor `M5` trunk-bridge geometry is not the missing piece
+
+### Current Best Branch After This Round
+- macro-present flow
+- X-staggered macro floorplan
+- `pg_edge` baseline
+- exact-band low-layer `VDD` row attach
+- explicit `VDD` floating-stripe stitch
+- `VDD`-only `corePin -> stripe` attach
+
+### Current Best Practical Interpretation
+- the first real reduction in the residual `VDD` problem came from explicitly stitching floating `VDD` helper stripes
+- the remaining work should stay on that branch
+- the next useful experiments should focus on the still-open `VDD` families directly, instead of bringing back broad mixed-net cleanup passes
+
+### Update: Floating-Stripe Target Mode Matters More Than Raising The Layer Range
+- I tested whether the explicit `VDD` floating-stripe stitch could be made less intrusive by raising the bottom layer from `M3` to `M4`.
+- That was a dead branch:
+  - `M4..M10` floating-stripe stitch fell all the way back to the old low-layer plateau
+  - result: `113` terminal opens + `887` special-wire opens
+- So the helpful effect is tied to reaching `M3`; simply lifting the stitch higher removes the gain.
+
+- I also tested the three meaningful `floatingStripeTarget` modes for the `M3..M10` `VDD` stitch:
+  - `ring stripe`:
+    - `138` terminal opens
+    - `862` special-wire opens
+    - still the best balanced branch so far
+  - `stripe`:
+    - `153` terminal opens
+      - `113` on `VDD`
+      - `40` on `VSS`
+    - `848` special-wire opens, all on `VDD`
+    - this is the strongest raw `VDD` special-wire improvement so far
+  - `ring`:
+    - fell back to `113` terminal opens + `887` special-wire opens
+    - no meaningful gain
+
+- Important interpretation from these target-mode tests:
+  - the useful `VDD` improvement comes from stripe-side stitching, not ring-only stitching
+  - but a pure `stripe` target exposes a localized `VSS` terminal problem
+  - the `ring stripe` branch remains the safer macro-present baseline because it keeps the `VDD` gain while containing the `VSS` fallout
+
+### Update: Bottom-Row `VSS` Repair Is Sensitive To Stage Ordering
+- I added a post-`VDD` hook in `Processor/Project/Innovus/innovus_flow.tcl` so the bottom-row `VSS` helper can be inserted *after* the `VDD` branch is built, instead of only before it.
+- This was needed because the pre-`VDD` `VSS` bottom-row helper can interfere with the `VDD` floating-stripe gain.
+- First confirmed result:
+  - on the aggressive `stripe`-only `VDD` branch, adding the bottom-row `VSS` helper after the `VDD` passes still collapsed the result back to `270` terminal opens + `730` special-wire opens
+- So the current conclusion is:
+  - bottom-row `VSS` repair is still a real issue
+  - but the current `addStripe`-style `VSS` helper is too intrusive when stacked on top of the `VDD` improvement path
+  - the better mainline remains a macro-present `VDD`-driven branch, not a mixed-net cleanup branch
+
+### Update: Pivoted To The `soc_design`-Style Simple Macro Flow
+- I added a separate simple macro-present flow in:
+  - `Processor/Project/Innovus/innovus_flow.tcl`
+  - `Processor/Project/Innovus/Makefile`
+- The simple path keeps the SRAM macros present, but removes the custom PG scaffolding:
+  - core ring only
+  - manual macro placement
+  - small `M5/M6` signal halo with `-exceptpgnet`
+  - one simple `sroute -connect {corePin blockPin} -corePinTarget ring -blockPinTarget ring`
+- First clean result from `out_simple/`:
+  - `158` terminal opens
+    - `157` on `VSS`
+    - `1` on `VDD`
+  - `843` special-wire opens
+    - all on `VSS`
+- This is a meaningful simplification versus the earlier complex branch:
+  - the residual problem is no longer mixed or `VDD`-dominated
+  - the simple flow reduces the problem to an almost pure `VSS` closure issue
+
+### Update: Cheap Simple Reroutes Help Specials, But Reintroduce Mixed-Net Problems
+- I added a `simple_pg` stage so simple-flow experiments can restore a saved `prepg` checkpoint and rerun only the simple `sroute`, instead of paying for a full `place` every time.
+- I also fixed the simple Makefile targets so they can write to isolated output trees instead of hardwiring `out_simple/`.
+- Two cheap reroute experiments are now characterized:
+  - `out_simple_vss/`:
+    - extra simple `VSS` reroute after the simple baseline
+    - result:
+      - `270` terminal opens
+      - `731` special-wire opens
+      - net split:
+        - terminals: `157 VSS`, `113 VDD`
+        - specials: `362 VSS`, `369 VDD`
+  - `out_simple_vss_vdd/`:
+    - extra simple `VSS` reroute followed by extra simple `VDD` reroute
+    - result:
+      - `270` terminal opens
+      - `730` special-wire opens
+- Interpretation:
+  - extra simple reroutes can reduce the raw special-wire count a lot (`843 -> ~730`)
+  - but they destroy the clean almost-pure-`VSS` baseline and bring `VDD` back into the problem
+  - so the reroute-only path is informative, but not yet a new mainline
+
+### Current Simple-Flow Mainline And Next Lever
+- The plain `out_simple/` baseline is still the safer simple mainline:
+  - `158` terminals
+  - `843` specials
+  - almost entirely `VSS`
+- Since the cheap reroute-only experiments did not preserve that clean net split, the next simple-compatible lever should be geometry, not more PG passes.
+- I parameterized the bottom cache-row placement in `Processor/Project/Innovus/innovus_flow.tcl` with:
+  - `RSD_MACRO_BOTTOM_GUARD` (default `140.0`)
+- I then started a geometry-only simple-flow experiment in `out_simple_bg180/` with:
+  - `RSD_MACRO_BOTTOM_GUARD=180`
+- Goal of this branch:
+  - move the lower cache macro band upward
+  - see whether the stubborn bottom/cache-side `VSS` row bands are being caused by the current macro-row placement
+
+### Update: Three More Simple-Flow Branches, None Better Than `out_simple`
+- I tested a cache short-row `X` stagger inside the simple macro-present flow:
+  - branch: `out_simple_x40/`
+  - knob: `RSD_CACHE_SHORT_X_SHIFT=40`
+  - result:
+    - `270` terminal opens
+      - `113` on `VDD`
+      - `157` on `VSS`
+    - `730` special-wire opens
+      - `577` on `VDD`
+      - `154` on `VSS`
+- Conclusion:
+  - the short-row `X` stagger that helped earlier PG-debug work is **not** a good fit for the current simple baseline
+  - in the simple flow it destroys the clean almost-pure-`VSS` split and turns the problem back into a mixed `VDD/VSS` failure
+
+- I also tested exact-column `VSS` stripes from the saved simple `prepg` checkpoint:
+  - branch: `out_simple_vss_cols/`
+  - added only `VSS` `M9` vertical stripes at the seven repeated open columns from the `out_simple` report
+  - then stitched those stripes to the ring with a `floatingStripe -> ring` pass
+  - result:
+    - `270` terminal opens
+      - `113` on `VDD`
+      - `157` on `VSS`
+    - `730` special-wire opens
+      - `362` on `VDD`
+      - `369` on `VSS`
+- Conclusion:
+  - this recreated the same mixed-net failure shape as the earlier broad `VSS` reroute
+  - it also triggered a flood of `IMPPP-133` boundary-expansion warnings on taps/macros along those columns
+  - so this exact-column stripe style is a dead branch for the simple mainline
+
+- Finally, I matched the simple RSD flow more closely to the final `soc_design` geometry:
+  - branch: `out_simple_socgeom/`
+  - knobs:
+    - `RSD_FP_MARGIN_ALL=50`
+    - `RSD_RING_WIDTH=2.0`
+    - `RSD_RING_SPACING=2.0`
+    - `RSD_RING_OFFSET_ALL=5.0`
+  - result:
+    - `270` terminal opens
+      - `113` on `VDD`
+      - `157` on `VSS`
+    - `730` special-wire opens
+      - `381` on `VDD`
+      - `350` on `VSS`
+- Conclusion:
+  - simply copying the `soc_design` floorplan margins and lighter ring is **not** enough for RSD
+  - it again collapses the clean simple baseline into a mixed-net problem
+
+### Current Best Simple Mainline After These Tests
+- `out_simple/` remains the best simple macro-present baseline:
+  - `158` terminal opens
+    - `157` on `VSS`
+    - `1` on `VDD`
+  - `843` special-wire opens
+    - all on `VSS`
+- Practical interpretation:
+  - the current best state is still the original simple branch, because every tested follow-up that lowered the raw special-wire total also reintroduced a broad `VDD` problem
+  - the next useful fix should therefore stay anchored to `out_simple/` and avoid:
+    - cache short-row `X` staggering
+    - exact-column `VSS` stripes
+    - blindly copying the `soc_design` ring/margin geometry into RSD
+
+### Boundary-Only And Phase-2 `VSS` Fixes From `out_simple/place.enc`
+- I then switched to delta-only `simple_pg` branches restored from the already
+  cleanest simple checkpoint, `out_simple/db/place.enc`, to see whether the
+  residual `VSS` problem could be fixed without rerunning the full simple
+  `sroute` and perturbing `VDD`.
+
+- Corrected phase-2 `VSS` helper with `M6` attach:
+  - branch: `out_simple_vss_phase2_m6/`
+  - knobs:
+    - `RSD_SIMPLE_SKIP_BASE_SROUTE=1`
+    - `RSD_SIMPLE_ADD_VSS_PHASE2_CAPTURE=1`
+    - `RSD_SIMPLE_ENABLE_VSS_COREPIN_ATTACH=1`
+    - `RSD_VSS_COREPIN_TOP_LAYER=M6`
+  - result:
+    - `250` terminal opens
+    - `750` special-wire opens
+  - conclusion:
+    - this was the first version where the `VSS` phase-2 helper was actually
+      visible to `sroute`
+    - but it still collapsed the design into a mixed-net shape, so it is not a
+      better simple mainline
+
+- Boundary-only `VSS` row attach with local `M3/M4` lattice:
+  - branch: `out_simple_vss_boundary/`
+  - result:
+    - `270` terminal opens
+      - `157` on `VSS`
+      - `113` on `VDD`
+    - `730` special-wire opens
+      - `364` on `VSS`
+      - `367` on `VDD`
+  - conclusion:
+    - even a narrow boundary-local `VSS` patch on top of `out_simple/place.enc`
+      collapses into the same `270 / 730` mixed-net state
+
+- Boundary-rails-only `VSS` helper:
+  - branch: `out_simple_vss_rails/`
+  - knobs:
+    - only the top/bottom horizontal `VSS` rails
+    - no vertical boundary post lattice
+  - result:
+    - `270` terminal opens
+      - `157` on `VSS`
+      - `113` on `VDD`
+    - `730` special-wire opens
+      - `529` on `VSS`
+      - `202` on `VDD`
+  - conclusion:
+    - this is the cleanest of the post-`out_simple` repair branches because it
+      preserves most of the `VSS` special-wire reduction while introducing less
+      `VDD` damage than the other mixed branches
+    - but it still does not beat the plain `out_simple` baseline as a new
+      place-stage checkpoint
+
+- Exact-band `VDD` cleanup on top of `out_simple_vss_rails/`:
+  - branch: `out_simple_vss_rails_vdd/`
+  - knobs:
+    - `RSD_SIMPLE_ADD_VDD_ROW_ATTACH=1`
+    - `RSD_VDD_ROW_ATTACH_NAMES='cache_row_low cache_row_mid cache_row_high pred_row_top'`
+    - `RSD_SIMPLE_ENABLE_VDD_COREPIN_ATTACH=1`
+  - result:
+    - `270` terminal opens
+      - `157` on `VSS`
+      - `113` on `VDD`
+    - `730` special-wire opens
+      - `394` on `VSS`
+      - `337` on `VDD`
+  - conclusion:
+    - the exact-band `VDD` attach did not improve the total shape
+    - it only redistributed the `730` special-wire errors between `VSS` and `VDD`
+
+### Updated Interpretation
+- Place-stage `VSS` repair on the simple macro-present baseline now looks
+  plateaued:
+  - `out_simple/` stays the least bad mainline at place stage
+  - every delta-only `VSS` helper restored from `out_simple/place.enc` still
+    falls back into the same `270 / 730` mixed-net family once it tries to fix
+    the residual `VSS` rows
+- The next step should therefore follow the actual `soc_design` closure path:
+  - stop over-iterating place-stage PG fixes
+  - push the plain simple baseline through `CTS -> route -> ECO`
+  - then evaluate post-route DRC and regular/special connectivity on the routed
+    design instead of demanding a fully clean place-stage PG report first
+
+### Routed Checkpoint: Simple Macro-Present Flow Is the Real Mainline
+- I pushed the plain `out_simple/` branch through `CTS -> route -> ECO` all the
+  way to a routed checkpoint.
+- `CTS` completed cleanly enough to proceed:
+  - clock tree built for `158717` sinks
+  - the residual CTS route DRC was already small (`4` geometry violations)
+- The full `simple_route` run then completed and saved:
+  - `route_clean.enc`
+  - `route.enc`
+  - routed reports under `Processor/Project/Innovus/out_simple/reports/`
+
+### Final Routed Status From `out_simple/`
+- Regular routing/connectivity is now clean:
+  - `route_connectivity.rpt`: `0` violations
+- The remaining routed DRC is narrow and stable:
+  - `route_drc.rpt`: `286` total
+  - all `286` are `SHORT` violations
+  - all are on `M5/M6`
+- The remaining special-net problem is also narrow:
+  - `route_special_connectivity.rpt`: `1000` capped violations
+  - almost all visible entries are `Net VDD ... /VPP` unconnected terminals
+  - only `1` visible `VSS ... /VBB` terminal appears before the report hits the
+    `1000` cap
+
+### What This Means
+- The simple macro-present flow is now the clear production mainline.
+- The broad early PG problem is no longer the blocker in the old sense:
+  - we have a full routed checkpoint
+  - regular routing is already clean
+- The remaining closure task is now two-stage and very specific:
+  1. fix routed `M5/M6` shorts, which are concentrated around routing blockages
+     in the predictor / BTB region
+  2. then fix the residual `VDD/VPP` special-net closure from the routed
+     checkpoint
+
+### Updated Next Step
+- Do **not** go back to broad place-stage PG experimentation.
+- Stay on the routed `out_simple/` checkpoint and fix:
+  - `DRC` first
+  - then special-net `VPP/VBB` connectivity
+- The practical next move is to locally relax or refine the offending
+  `M5/M6` simple signal-halo blockage pattern around predictor / BTB, reroute,
+  and then perform a routed-db `VPP/VBB` cleanup pass.
