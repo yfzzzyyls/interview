@@ -84,6 +84,7 @@ SRAM cell basics (#5) → Dual-port RAM (#12) → Register file (#16)
 - **Afternoon (2-3 hrs)**: Architecture concept study OR additional RTL module
 - **Evening (1 hr)**: Spaced repetition — re-code a previous module from scratch, closed-book
 - **Mastery test**: Can you code it on a blank screen in 45 min with no reference? If not, it's not learned.
+- **Quick quizzes**: After each topic, do 3-5 concept-check questions before moving on. These catch gaps that coding alone misses (e.g., "why must FIFO depth be power of 2?", "what's the latency of a 2-FF synchronizer?"). Quiz before code, quiz after code.
 
 ---
 
@@ -92,7 +93,7 @@ SRAM cell basics (#5) → Dual-port RAM (#12) → Register file (#16)
 ### Day 1: CDC Fundamentals + Timing/Reset Concepts
 - **AM**: Study metastability, MTBF, why 2-FF works. Code `sync_2ff.sv` + `pulse_sync.sv` with testbenches (two independent clocks)
 - **PM**: Study gray code (binary↔gray conversion, why only 1 bit changes). Then **1 hr quick-hit concepts**: setup/hold violations (#24 partial — what happens, how to fix), sync vs async reset (#28 partial — tradeoffs, reset synchronizer), latch vs FF (when latches are OK)
-- **EVE**: Re-code `sync_2ff.sv` closed-book
+- **EVE**: Re-code `pulse_sync.sv` + `async_fifo.sv` closed-book (sync_2ff is trivial, skip)
 
 ### Day 2: Async FIFO Part 1
 - **AM**: Study async FIFO architecture (Cummings SNUG 2002). Begin coding `async_fifo.sv` — gray-coded pointers, dual-port RAM, full/empty generation

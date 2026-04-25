@@ -122,4 +122,4 @@ When reviewing submitted RTL or testbench code:
 
 ## EDA Tools on This Server
 
-- VCS: `vcs -full64 -sverilog <files> -o <simv_name> && ./<simv_name>`
+- VCS: `vcs -full64 -sverilog <files> -o <simv_name> && ./<simv_name>` (both W-2024.09 and U-2023.03 resolve to same backend on this server; always use `-full64`)
