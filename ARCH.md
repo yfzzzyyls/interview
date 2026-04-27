@@ -88,6 +88,174 @@ Common combo: **write-back + write-allocate** (most modern processors)
 **Interview question**: "What happens when Core A writes to a Shared line?"
 - Core A invalidates all other copies (Shared → Invalid in other caches), then transitions to Modified.
 
+### VIPT Caches
+
+VIPT = **Virtually Indexed, Physically Tagged**.
+
+Idea:
+- Use virtual address index bits to start L1 tag/data SRAM access immediately.
+- In parallel, the TLB translates virtual address to physical address.
+- After translation, compare the physical tag against the cache tag.
+
+Why VIPT:
+- PIPT is clean but slower because translation must finish before cache indexing.
+- VIVT is fast but has synonym/coherence problems.
+- VIPT overlaps TLB lookup with cache access while still using physical tags.
+
+Aliasing condition:
+```text
+num_sets * line_size <= page_size
+cache_size / associativity <= page_size
+```
+
+Reason:
+- Page offset bits are identical in VA and PA.
+- VIPT is safe when all `index + offset` bits fit inside the page offset.
+- If index bits extend into the virtual page number, two virtual aliases of the same physical page can index different L1 sets.
+
+Examples:
+```text
+32KB L1, 64B line, 8-way, 4KB page:
+32KB / 8 = 4KB <= 4KB -> no VIPT synonym aliasing
+
+64KB L1, 64B line, 4-way, 4KB page:
+64KB / 4 = 16KB > 4KB -> aliasing possible
+```
+
+Interview one-liner:
+> VIPT indexes the L1 with virtual address bits while the TLB translates in parallel, then compares a physical tag. Aliasing depends on `num_sets * line_size`, equivalently `cache_size / associativity`, because index+offset must fit within the page offset.
+
+### Cache Banking
+
+Cache banking splits the physical cache arrays into multiple independently accessible banks. Main purpose: increase access bandwidth without building expensive multiported SRAMs.
+
+Ways vs banks:
+- **Ways** = associativity; placement choices within a set.
+- **Banks** = physical array partitioning for bandwidth, layout, or timing.
+- A 4-way cache can be implemented as 4 way SRAM arrays, and each way SRAM can also be split into 2 or more banks.
+
+For banking by set/line, the old index bits are split into bank-select bits and set-within-bank bits.
+
+Example:
+```text
+32KB cache, 64B line, 4-way, 2 banks, 32-bit address
+
+num_lines = 32KB / 64B = 512
+num_sets  = 512 / 4 = 128 sets
+
+Without banking:
+offset = log2(64)  = 6 bits
+index  = log2(128) = 7 bits
+tag    = 32 - 6 - 7 = 19 bits
+
+Address:
+[ tag 31:13 | set index 12:6 | offset 5:0 ]
+```
+
+If the 128 sets are split across 2 banks:
+```text
+sets_per_bank = 128 / 2 = 64
+bank bits = log2(2) = 1
+set_in_bank bits = log2(64) = 6
+```
+
+One possible physical split:
+```text
+[ tag 31:13 | set_in_bank 12:7 | bank 6 | offset 5:0 ]
+
+old set_index[6:0] = {set_in_bank[5:0], bank[0]}
+```
+
+Another design could choose a different index bit as the bank bit:
+```text
+[ tag 31:13 | bank 12 | set_in_bank 11:6 | offset 5:0 ]
+```
+
+Bank conflicts:
+- Accesses to different banks can proceed in parallel.
+- Accesses to the same bank need arbitration, stall, or replay.
+
+Caveat:
+- If banking is inside a cache line, bank bits may come from the offset instead:
+```text
+[ tag | index | bank | byte_offset ]
+```
+
+Interview one-liner:
+> Cache banking is physical partitioning for bandwidth. For set/line banking, the original index field is split into bank bits and set-within-bank bits. Ways and banks are orthogonal: ways define associativity; banks define which physical SRAM partition is accessed.
+
+### Memory Consistency
+
+Memory consistency defines what order memory operations appear to happen in across multiple cores/threads. It is different from cache coherence:
+- **Coherence**: all cores agree on ordering of writes to the same address.
+- **Consistency**: rules for ordering memory operations across different addresses.
+
+Why ordering matters:
+```c
+// Core 0
+data = 42;
+ready = 1;
+
+// Core 1
+while (ready == 0) {}
+print(data);
+```
+
+Programmer expects that seeing `ready == 1` means `data == 42` is visible. On a weak memory model, `ready` may become visible before `data` unless software uses fences or acquire/release synchronization.
+
+#### TSO vs RVWMO
+
+TSO = **Total Store Order**. Used by x86-like memory models.
+
+Key TSO relaxation:
+```text
+Store -> Load reordering is allowed for different addresses.
+```
+
+Meaning:
+```text
+store X
+load Y
+```
+
+The younger load can execute before the older store becomes globally visible, because the store may sit in the local store buffer while the load reads from cache/memory.
+
+Important TSO rules:
+- A load after a store to the **same address** must see the older store through store forwarding.
+- Stores become globally visible in program order.
+- TSO mainly relaxes store-to-load ordering; it is stronger than weak models like RVWMO.
+
+Classic store-buffering example:
+```c
+// Core 0
+x = 1;
+r1 = y;
+
+// Core 1
+y = 1;
+r2 = x;
+```
+
+Under TSO, this result is allowed:
+```text
+r1 = 0
+r2 = 0
+```
+
+Each core's load can bypass its own older store while that store is still buffered.
+
+RVWMO = **RISC-V Weak Memory Ordering**.
+
+RVWMO is weaker than TSO. It gives hardware more freedom to reorder independent memory operations unless ordering is created by:
+- `fence`
+- acquire/release operations
+- atomics
+- dependencies
+- same-address ordering rules
+
+Interview one-liner:
+> TSO mostly preserves program order except that a younger load may bypass an older store to a different address through the store buffer. RVWMO is weaker and allows more reorderings unless constrained by fences, acquire/release, atomics, dependencies, or same-address rules.
+
 ---
 
 ## 3. Pipeline
