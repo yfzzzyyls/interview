@@ -1,8 +1,1339 @@
-# C/C++ Interview Practice
+# Performance Modeling and C++ Review
 
-## Performance Modeling C++ Prep — Qualcomm CPU Performance Modeling
+Unified performance-modeling and simulator-C++ review notes for the Qualcomm second-round preparation.
 
-### Role-Specific Coding Assumption
+This file has two major review blocks:
+
+1. Performance modeling: Sparta/Olympia structure, scheduler/events, trace-driven modeling, reports, debug flow, and interview wording.
+2. C++ coding: simulator-quality C++ fundamentals, callbacks, STL/data structures, bit manipulation, and microarchitecture coding practice.
+
+## Part 1 — Performance Modeling Review
+
+Source: `../riscv-perf-model-fengze/review.md`
+
+### Goal
+
+Build a structural understanding of the RISC-V performance model repo, with enough clarity to explain the framework, code organization, profiling/debug flow, and how it compares to a hand-written cycle model.
+
+### Core Distinction
+
+#### Sparta
+
+Sparta is the generic simulation framework. It is not the CPU model itself.
+
+It provides:
+
+- A global simulated-time scheduler.
+- A resource tree, such as `top.cpu.core0.fetch`.
+- `Unit` and `ResourceTreeNode` abstractions for model components.
+- Typed ports for communication between components.
+- Events and event callbacks.
+- Parameters from YAML and command-line options.
+- Counters, reports, logs, PEvents, and pipeout collection.
+
+Mental model:
+
+```text
+Sparta = simulator infrastructure + component wiring + timing/event/stats/debug framework
+```
+
+#### Olympia
+
+Olympia is the actual RISC-V out-of-order CPU performance model built using Sparta.
+
+It implements:
+
+- Fetch / I-cache
+- Decode / Mavis decoder integration
+- Rename
+- Dispatch
+- Issue queues
+- Execute pipes
+- LSU
+- D-cache
+- MMU / TLB
+- L2 / BIU / memory subsystem
+- ROB retirement
+
+Mental model:
+
+```text
+Olympia = RISC-V CPU microarchitecture model implemented on top of Sparta
+```
+
+### Code Walkthrough Notes
+
+#### Step 1: `sim/main.cpp`
+
+`main.cpp` is the executable entry point. It does not model CPU behavior directly.
+
+Main responsibilities:
+
+- Define command-line defaults.
+- Parse workload, `-i` instruction limit, architecture config, report/log options, etc.
+- Create the global `sparta::Scheduler`.
+- Create `OlympiaSim`.
+- Let `sparta::app::CommandLineSimulator` populate, run, and post-process the simulation.
+
+Important pattern:
+
+
+```cpp
+sparta::Scheduler scheduler;
+OlympiaSim sim(scheduler, num_cores, workload, ilimit, show_factories);
+
+cls.populateSimulation(&sim);
+cls.runSimulator(&sim);
+cls.postProcess(&sim);
+```
+
+Mental model:
+
+```text
+main.cpp = command-line + scheduler + launch wrapper
+OlympiaSim = concrete simulator that knows how to build Olympia
+```
+
+#### Step 2: `sim/OlympiaSim.cpp`
+
+`OlympiaSim` tells Sparta how to build this specific simulator.
+
+Important setup phases:
+
+```cpp
+buildTree_()
+configureTree_()
+bindTree_()
+```
+
+Mental model:
+
+```text
+buildTree_     = create components
+configureTree_ = apply parameters
+bindTree_      = connect ports
+```
+
+#### `addResourceFactory<olympia::CPUFactory>()`
+
+Code:
+
+```cpp
+getResourceSet()->addResourceFactory<olympia::CPUFactory>();
+```
+
+The angle brackets are C++ template syntax. Here they pass a type, not a runtime value.
+
+Meaning:
+
+```text
+Register Olympia's CPUFactory type with Sparta's resource registry.
+```
+
+Analogy:
+
+```cpp
+std::vector<int> v;
+```
+
+Here `<int>` tells `vector` what type it stores.
+
+In Olympia:
+
+```cpp
+addResourceFactory<olympia::CPUFactory>();
+```
+
+tells Sparta what factory type to register.
+
+#### `getCPUFactory_()`
+
+Code shape:
+
+```cpp
+auto OlympiaSim::getCPUFactory_() -> olympia::CPUFactory*
+```
+
+This is trailing return type syntax. It means the same as:
+
+```cpp
+olympia::CPUFactory* OlympiaSim::getCPUFactory_()
+```
+
+Inside, it does:
+
+```cpp
+auto sparta_res_factory = getResourceSet()->getResourceFactory("cpu");
+auto cpu_factory = dynamic_cast<olympia::CPUFactory*>(sparta_res_factory);
+```
+
+Meaning:
+
+```text
+Ask Sparta for the generic factory named "cpu".
+Cast it to Olympia's concrete CPUFactory type.
+```
+
+Why cast? Because the registry returns a generic base pointer, but Olympia needs CPUFactory-specific methods like `setTopology()`, `buildTree()`, and `bindTree()`.
+
+#### `buildTree_()`
+
+`buildTree_()` starts the component hierarchy.
+
+Important operations:
+
+```cpp
+auto cpu_factory = getCPUFactory_();
+```
+
+Gets the CPU factory.
+
+```cpp
+allocators_tn_.reset(new olympia::OlympiaAllocators(getRoot()));
+```
+
+Creates common allocators for frequent model objects such as instructions, memory access records, load/store records, and MSHR entries.
+
+```cpp
+sparta::ResourceTreeNode* cpu_tn = new sparta::ResourceTreeNode(
+    getRoot(),
+    "cpu",
+    ...,
+    "CPU Node",
+    cpu_factory
+);
+```
+
+Creates the top-level `cpu` node under the Sparta root.
+
+Initial tree picture:
+
+```text
+root
+  └── cpu
+```
+
+After `CPUFactory` builds the topology, it becomes more like:
+
+```text
+root
+  └── cpu
+      └── core0
+          ├── fetch
+          ├── icache
+          ├── decode
+          ├── rename
+          ├── dispatch
+          ├── execute
+          ├── lsu
+          ├── dcache
+          ├── mmu / tlb
+          ├── rob
+          └── ...
+```
+
+#### Setup Flow Summary
+
+Everything from `main.cpp` through `OlympiaSim`, `CPUFactory`, and `CPUTopology` is setup/elaboration work. No instruction has flowed through the modeled pipeline yet.
+
+Responsibilities:
+
+```text
+main.cpp
+  = launch simulator
+  - parse command-line options
+  - get workload path
+  - get instruction limit
+  - select architecture config
+  - create sparta::Scheduler
+  - create OlympiaSim
+```
+
+```text
+OlympiaSim
+  = top-level setup phases
+  - register CPUFactory
+  - create top-level cpu node
+  - store workload/config into simulation state
+  - apply instruction limit to ROB parameter
+  - ask CPUFactory to build and bind CPU
+```
+
+```text
+CPUFactory
+  = instantiate model hierarchy
+  - create topology object, usually CoreTopologySimple
+  - build ResourceTreeNodes for units
+  - replace * with core index, such as core* -> core0
+  - attach resource factories to each unit
+  - bind static ports between units
+```
+
+```text
+CPUTopology
+  = recipe for CPU blocks and wiring
+  - unit list: fetch, decode, rename, dispatch, execute, LSU, caches, ROB, etc.
+  - static port connections: fetch to decode, decode to rename, LSU to DCache, ROB to FlushManager, etc.
+  - dynamic execute backend binding based on YAML architecture configs
+```
+
+RTL analogy:
+
+```text
+CPUTopology units        ~= module instances
+CPUTopology connections  ~= top-level wires
+CPUFactory buildTree     ~= elaboration
+CPUFactory bindTree      ~= connecting ports
+Scheduler                ~= simulator time engine
+```
+
+After setup:
+
+```text
+Fetch reads trace
+  -> instructions flow through pipeline
+  -> ROB retires instructions
+```
+
+### Scheduler And Events
+
+The `sparta::Scheduler` owns simulated time. Units do not run because a top-level loop calls every stage manually. Instead, units schedule callbacks to happen at a specific simulated cycle or phase.
+
+An event means:
+
+```text
+Call this function at a scheduled simulated time.
+```
+
+Example pattern:
+
+```cpp
+sparta::UniqueEvent<> ev_retire_{
+    &unit_event_set_,
+    "retire_insts",
+    CREATE_SPARTA_HANDLER(ROB, retireInstructions_)
+};
+```
+
+This means that when `ev_retire_` fires, Sparta calls:
+
+```cpp
+ROB::retireInstructions_()
+```
+
+Scheduling examples:
+
+```cpp
+ev_retire_.schedule(1);  // run one cycle later
+ev_retire_.schedule(sparta::Clock::Cycle(0));  // run in the current cycle/phase
+```
+
+### Difference From My Previous Model
+
+My previous performance model style was manually cycle-driven:
+
+```cpp
+void Core::tick() {
+    commit.tick();
+    writeback.tick();
+    execute.tick();
+    issue.tick();
+    rename.tick();
+    decode.tick();
+    fetch.tick();
+
+    pipeRegs.update();
+}
+```
+
+That style uses a centralized global tick loop. Pipeline stages are often called backward so that later stages consume entries first and earlier stages can see freed space. Explicit pipeline-register classes separate current-cycle state from next-cycle state.
+
+Sparta/Olympia is more event-driven and decentralized:
+
+```text
+Data arrives on a port
+  -> input callback runs
+  -> unit updates local state
+  -> unit schedules an event if work is needed
+  -> event fires at the right cycle
+  -> unit sends data/credits to the next unit
+```
+
+Key contrast:
+
+```text
+Manual model:
+  global tick loop calls every stage every cycle
+
+Sparta/Olympia:
+  units react to ports, credits, events, and scheduled callbacks
+```
+
+### What Replaces Pipeline Registers
+
+Sparta/Olympia still models cycle timing, but the structures are expressed differently:
+
+- Ports: communication between units, similar to typed wires/messages.
+- Credits: backpressure and downstream capacity.
+- Buffers/queues: local storage such as issue queues, ROB, replay buffers, and fetch queues.
+- Events: latency and delayed work.
+- `sparta::Pipeline`: explicit staged pipeline resource when the model needs stage-by-stage movement.
+
+So the framework is not less cycle-aware. It just does not require one manually written `tick()` that calls every component.
+
+#### Where Scheduler Appears In Olympia
+
+- `sim/main.cpp`: creates the global `sparta::Scheduler scheduler`.
+- `sim/OlympiaSim.cpp`: passes the scheduler into `sparta::app::Simulation`.
+- Units create events, for example ROB retire, fetch, LSU issue, cache response.
+- Events are scheduled into the global scheduler with calls like `schedule(0)`, `schedule(1)`, or `schedule(latency)`.
+- `core/ROB.cpp` can stop the scheduler through `getScheduler()->stopRunning()` when the retire instruction limit is reached.
+
+If Sparta source is installed, the relevant framework header to glance at is:
+
+```cpp
+sparta/kernel/Scheduler.hpp
+```
+
+For interview prep, do not deep-read scheduler internals. The important idea is that it stores pending events by simulated cycle/phase and dispatches their callbacks in deterministic order.
+
+#### Which Sparta Repo To Clone
+
+Sparta lives in the Sparcians MAP repository:
+
+```text
+https://github.com/sparcians/map
+```
+
+This Olympia repo does not vendor Sparta. It expects Sparta as an external dependency found by CMake.
+
+For source inspection and compatibility with this checkout, prefer the version mentioned by the Olympia README:
+
+```bash
+git clone --recursive --branch map_v2.0.21 https://github.com/sparcians/map.git ~/map-sparta-v2.0.21
+```
+
+For latest stable MAP source, upstream currently recommends `map_v2.2`, but that is not necessarily the exact version this Olympia checkout was tested against.
+
+#### Sparcians Ecosystem Map
+
+Useful related repositories:
+
+- `sparcians/map`: MAP framework. Contains Sparta and Helios/Argos.
+- `sparcians/mavis`: RISC-V decoder library. Olympia uses Mavis under `mavis/`.
+- `sparcians/stf_spec`: Simulation Trace Format specification.
+- `sparcians/stf_lib`: C++ library for reading/writing STF traces. Olympia has this as a submodule.
+- `sparcians/stf_tools`: command-line tools around STF traces.
+- `sparcians/pegasus`: RISC-V functional simulator. Built on Sparta; useful for co-simulation, STF trace generation, and execution-driven simulator flows.
+- `sparcians/simdb`: database/report infrastructure used by newer Sparta/MAP reporting flows.
+
+For interview prep, priority order:
+
+1. `map` / Sparta: know scheduler, ports, events, counters, reports, PEvents, pipeout.
+2. `mavis`: know it provides instruction decode / uarch metadata to Olympia.
+3. `stf_spec`, `stf_lib`, `stf_tools`: know STF is the trace format Olympia can consume.
+4. `pegasus`: know it is the functional model side, useful for co-sim and trace generation.
+5. `simdb`: nice-to-know reporting/database backend, lower priority.
+
+Do not deep-read all repos before the interview. One-paragraph purpose and how it connects to Olympia is enough.
+
+### Video Notes: RISC-V Perf-Model Talk
+
+Source: https://www.youtube.com/watch?v=739lNpMWpQI  
+Title: `RISC-V Perf-Model: An Open Source Cycle Accurate Performance Model...`  
+Speakers: Knute Lingaard and Arup Chakraborty  
+Length: 21:39  
+Note: summary based on YouTube auto-generated captions.
+
+#### Main Purpose
+
+The talk introduces the RISC-V performance model as an open-source starting point for community-wide CPU and system performance modeling.
+
+The motivation:
+
+- Good microarchitecture design requires performance analysis.
+- High-quality performance models are hard and time-consuming to build from scratch.
+- The RISC-V community benefits from a shared framework, trace format, and example model.
+- The goal is not to model one commercial CPU exactly, but to provide a reusable starting point for core, memory-system, interconnect, and SoC analysis.
+
+#### Sparta Role
+
+Sparta is presented as the infrastructure layer:
+
+- C++ discrete-event simulation framework.
+- Provides simulation instances, units/resources, topology, parameters, ports, events, counters, statistics, reports, logs, and notifications.
+- Designed for modularity: components can be replaced, extracted, or unit-tested independently.
+- Reports and instrumentation are considered central, not optional, because a performance model is only useful if it exposes what the microarchitecture is doing.
+
+Interview wording:
+
+> Sparta is the modeling framework; Olympia is the RISC-V performance model built on top of it.
+
+#### Olympia / RISC-V Perf Model Role
+
+The RISC-V perf model is an example C++ model using Sparta to model an out-of-order superscalar RISC-V core.
+
+Important limitations and framing:
+
+- It is a template/example model, not a real commercial design.
+- It is trace-driven, not execution-driven.
+- It does not perform functional execution; it consumes a trace generated elsewhere.
+- The speaker cautions that "accuracy" only makes sense relative to a target. The model is useful as infrastructure and a baseline, not as a magically accurate CPU.
+
+#### Modeled Pipeline
+
+The model is described as a typical superscalar OoO pipeline:
+
+```text
+in-order fetch/decode/rename/dispatch
+  -> out-of-order execute
+  -> in-order retire
+```
+
+The model already supports backpressure:
+
+- Queue full conditions backpressure upstream stages.
+- Dispatch routes instructions to the correct execution unit.
+- Execution units can stall based on latency or busy state.
+- Retirement is in order.
+
+#### Current Model Status In The Talk
+
+At the time of the talk, the repo was still new and many units were minimal or pass-through.
+
+Available features mentioned:
+
+- RV64GC-oriented model.
+- Small core: 2-wide.
+- Medium core: 3-wide.
+- Big core: 8-wide.
+- Sample Dhrystone trace.
+- Ability to compare IPC and stall behavior across core configs.
+- Fetches a fixed number of instructions per cycle.
+- Decode identifies instruction types.
+- Dispatch routes instructions to the proper execution unit.
+
+#### Profiling And Reports
+
+The talk emphasizes Sparta's reporting infrastructure:
+
+- Cycle-by-cycle pipeline trace.
+- Pipeline visualization.
+- Full stats from beginning of simulation.
+- Warmup/delayed stats.
+- Time-series reports at chosen intervals.
+- Multiple report formats: text, JSON, CSV.
+
+This maps directly to commands in this repo such as:
+
+```bash
+./olympia -i1M traces/dhry_riscv.zstf --report-all report.out
+```
+
+and report definitions under `reports/`.
+
+#### Sparta vs gem5
+
+The Q&A compares Sparta/Olympia with gem5:
+
+- gem5 is mature and execution-driven.
+- The Sparta-based RISC-V model is more about modular performance-model infrastructure.
+- Accuracy depends on what target you are trying to match.
+- Sparta's value is modularity: components can be swapped or extracted. For example, if only LSU analysis matters, a modeler can replace or isolate the LSU while reusing the rest of the framework.
+
+Interview wording:
+
+> gem5 is a mature execution-driven simulator. Olympia is a Sparta-based, trace-driven model intended as a modular performance-modeling starting point. The key value is rapid microarchitecture exploration, instrumentation, and component replacement.
+
+#### Trace And Branch Prediction Discussion
+
+The model uses the STF trace library. Because it is trace-driven:
+
+- The trace already contains the committed instruction stream.
+- For branches, the next PC / target information can indicate taken vs not-taken behavior.
+- Future branch prediction support can compare predicted direction with trace-observed direction.
+- The model already has flushing support; the missing piece discussed was hooking up a branch predictor.
+
+Important interview point:
+
+> Trace-driven simulation can model timing on the known instruction stream, but wrong-path behavior and speculation fidelity are limited unless explicitly modeled.
+
+#### Extensibility Message
+
+A major theme is composability:
+
+- Components built on the same Sparta framework can be connected more easily.
+- CPU models, interconnect models, memory models, and other system components can share ports/concepts.
+- The speakers mention prior experience where separate CPU and interconnect models could be connected quickly because they used the same framework conventions.
+
+#### Takeaway For My Interview
+
+This video supports the right framing:
+
+- I should describe Olympia as ecosystem awareness, not personal deep expertise.
+- I should emphasize Sparta concepts: event-driven simulation, modular units, ports, parameters, counters, reports, PEvents/pipeout.
+- I should not overclaim accuracy. Say accuracy requires a target and correlation methodology.
+- I should clearly distinguish trace-driven from execution-driven simulation.
+- I can connect this to my RiVAI custom model story: custom execution-driven model gave tighter RTL correlation/control; Olympia/Sparta provides standardization and reusable infrastructure.
+
+### Video Notes: CPU Development Using Olympia
+
+Source: https://www.youtube.com/watch?v=Seu0FoXqkmw  
+Title: `RISC-V CPU Development Using Olympia Performance Model - Knute Lingaard, MIPS`  
+Speaker: Knute Lingaard  
+Length: 27:28  
+Date: 2024-10-31 upload  
+Note: summary based on YouTube auto-generated captions.
+
+#### Main Purpose
+
+This talk is about using Olympia as a practical CPU development and tradeoff-analysis tool, not just as an example framework.
+
+Knute frames performance models around several uses:
+
+- Microarchitecture development and design-space exploration.
+- Software tuning against a future or configurable hardware target.
+- Correlation/debug support as RTL and model evolve together.
+
+The key message: Olympia is useful because it exposes bottlenecks and lets the designer quickly change machine parameters, rerun workloads, and inspect where stalls moved.
+
+#### What Olympia Is In This Talk
+
+Olympia is described as:
+
+- A C++ performance model.
+- A RISC-V community model.
+- Built on Sparta.
+- Intended as an extensible starting point, not a final commercial CPU.
+- A configurable superscalar/OoO-style CPU pipeline model.
+
+The model is configurable across:
+
+- machine widths between stages,
+- queue and buffer sizes,
+- pipeline depth,
+- execution pipe mix,
+- cache and memory hierarchy parameters,
+- branch predictor API / frontend work under development.
+
+#### Pipeline / Model Structure
+
+The talk shows a basic Olympia CPU pipeline:
+
+```text
+fetch / branch prediction
+  -> decode
+  -> rename
+  -> dispatch
+  -> issue / execute
+  -> LSU / cache
+  -> retire
+```
+
+The frontend and branch prediction API are described as simple and still under development. Decode is backed by a strong framework for instruction/uarch information. The main value is not that the default model is perfect, but that it is a concrete configurable baseline.
+
+#### Trace Flow
+
+Olympia consumes STF traces generated by a functional model instrumented with the STF library.
+
+Flow:
+
+```text
+binary/application
+  -> functional model instrumented with STF writer
+  -> STF instruction trace on disk
+  -> Olympia timing model
+  -> reports / pipeout / PEvents / plots
+```
+
+The STF trace represents the instruction stream that actually ran. The trace format can be extended with extra records, but the default model is still trace-driven.
+
+#### Reports, PEvents, And Debug
+
+The talk emphasizes that Olympia/Sparta can generate:
+
+- full reports,
+- triggered reports with a chosen time-zero or warmup point,
+- snapshots,
+- time-series reports,
+- pipeout / Argos visualization,
+- PEvents for comparison/correlation,
+- text files that can be compared against RTL instrumentation.
+
+Interview point:
+
+> A performance model is only useful if it explains where cycles go. Olympia's value is not only timing simulation; it is the instrumentation around reports, PEvents, and pipeline visualization.
+
+#### Tradeoff Example: Small Core To Medium Core
+
+Knute walks through changing the architecture from a small core to a medium core:
+
+- small core: narrower machine,
+- medium core: wider machine and more execution pipelines.
+
+The expected result is higher IPC, but the key lesson is not just "IPC improved." The useful workflow is:
+
+```text
+change architecture
+  -> rerun same trace
+  -> compare reports
+  -> inspect stall counters
+  -> identify which bottleneck moved
+```
+
+Example bottleneck movement from the talk:
+
+- integer-busy stalls drop significantly after adding more integer resources,
+- branch-busy stalls become visible,
+- adding branch capacity can reduce that bottleneck,
+- then LSU-busy becomes the next limiter.
+
+This is the classic performance-analysis pattern: removing one bottleneck reveals the next one.
+
+#### Directed Microbenchmark Example: LSU / DCache Timing
+
+The most useful concrete example is a directed load microbenchmark:
+
+- Create a JSON input with many loads to the same address.
+- Configure TLB as always-hit.
+- Configure L1 D-cache as always-hit.
+- Expect roughly 1.0 IPC for a simple stream of independent loads.
+
+Observed behavior:
+
+- retirement had periodic bubbles,
+- Argos/pipeout showed holes in the pipeline,
+- this suggested a timing issue between LSU and DCache.
+
+Root cause described:
+
+- LSU sends a cache request and expects a response in the right pipeline timing window.
+- DCache response timing/order was not aligned with the LSU pipeline expectation.
+- There was also an assertion/checking gap.
+- Reordering/fixing the relevant pipeline behavior removed the bubble and achieved the expected 1.0 IPC.
+
+Interview point:
+
+> This is a good example of using a performance model like RTL debug: create a tiny directed workload, set caches/TLBs to always-hit, establish an expected throughput, then use pipeout and counters to find timing bubbles.
+
+#### Why This Matters
+
+Knute emphasizes that small pipeline bubbles matter because they multiply across large workloads. A few lost cycles in a recurring path can become a large performance loss over billions of cycles.
+
+The talk also connects performance model and RTL development:
+
+- Use Olympia to explore intended microarchitecture behavior.
+- Keep RTL and performance model aligned.
+- Use PEvents / traces / instrumentation for comparison.
+- Treat the model as a tool for deciding what the hardware should do and validating that the RTL follows that intent.
+
+#### Takeaway For My Interview
+
+This talk gives a strong answer for "how would you use a performance model?"
+
+Use this structure:
+
+```text
+1. Start with a workload or directed trace.
+2. Run baseline architecture.
+3. Inspect IPC, stall counters, occupancy, pipeout/time-series.
+4. Change one architectural parameter.
+5. Rerun and compare.
+6. Identify whether the bottleneck moved.
+7. If behavior looks wrong, build a smaller directed test.
+8. Use PEvents/pipeout/logs to root-cause timing or resource issues.
+```
+
+Good interview wording:
+
+> Olympia's value is the workflow: parameterized architecture, repeatable traces, counters/reports, PEvents, and pipe visualization. You can do sensitivity sweeps, see where stalls move, then reduce a suspicious bottleneck into a directed microbenchmark. That is very similar to how I used performance models at RiVAI to identify LSU bottlenecks and validate design changes.
+
+#### Follow-Up Tutorial Resources
+
+Closest published tutorial/demo video found:
+
+- `RISC-V Performance Modeling SIG Presentation February 10, 2023`
+- Link: https://www.youtube.com/watch?v=Go_jgyULeB4
+- Length: 52:03
+- Description says it introduces Sparta as an event-driven microarchitectural simulation framework, introduces Olympia as an instruction-trace-driven performance model, discusses model status/future plans, and includes a basic performance-analysis demo if time permits.
+
+Written tutorial:
+
+- https://github-wiki-see.page/m/riscv-software-src/riscv-perf-model/wiki/Tutorial
+- Covers trace generation, running Olympia, parameters, architecture configs, report generation, Dhrystone reports, Argos/pipeline visualization, and time-series analysis.
+
+#### Trace-Driven Model Limitations
+
+Trace-driven models are good for timing studies, but they do not fully verify functional correctness.
+
+Core idea:
+
+```text
+The trace already gives the correct dynamic instruction stream.
+The model mainly decides when each instruction moves, stalls, replays, and retires.
+```
+
+Code evidence in Olympia:
+
+- STF trace creates each instruction and sets its PC from the trace in `core/InstGenerator.cpp`.
+- STF memory accesses come from the trace and set `Inst::target_vaddr_`.
+- JSON traces can also directly provide `vaddr`.
+- ExecutePipe waits the modeled execution latency and marks destination registers ready; it does not compute architectural result values.
+- ROB checks retirement program order, not data-value correctness.
+
+Important implication:
+
+```text
+If an execution-driven model computes a wrong load value, that wrong value can affect
+future branch targets or future memory addresses.
+
+In Olympia trace-driven mode, future PCs and memory addresses are already in the
+golden trace, so that kind of functional error usually does not naturally propagate.
+```
+
+So the model can appear functionally correct while still being timing-wrong.
+
+Examples of timing errors that still matter:
+
+- wrong ICache/DCache hit or miss behavior,
+- wrong MSHR merge/replay behavior,
+- wrong store-to-load forwarding timing,
+- wrong memory-order violation replay,
+- wrong branch misprediction penalty,
+- wrong queue occupancy or backpressure,
+- wrong retirement timing.
+
+Fetch-specific limitation:
+
+```text
+The trace is per instruction, but hardware fetches instruction bytes/cache lines.
+```
+
+Olympia reconstructs block-level fetch by buffering trace instructions, grouping consecutive PCs in the same fetch block, and sending one ICache request for the group. On a miss, ICache sends a linefill request to L2, reloads the line, then replays the pending fetch request.
+
+Code evidence:
+
+- `Fetch::fetchInstruction_()` prefills `ibuf_` from the trace.
+- It groups instructions by comparing `PC >> icache_block_shift_`.
+- It creates one `MemoryAccessInfo` from the first PC and attaches the whole fetch group.
+- `ICache::doArbitration_()` checks hit/miss, queues misses, and schedules a response/replay.
+
+This models useful frontend timing:
+
+- fetch bandwidth,
+- fetch buffer occupancy,
+- ICache hit/miss latency,
+- credits/backpressure,
+- linefill and replay timing.
+
+But it is still approximate:
+
+- not fetching raw instruction bytes,
+- limited wrong-path ICache pollution,
+- limited modeling of bytes fetched but never executed,
+- incomplete support for instructions straddling fetch blocks.
+
+Interview wording:
+
+> Trace-driven modeling is powerful for timing studies because it gives a repeatable golden instruction stream, but functional correctness is mostly outsourced to the trace generator. Olympia reconstructs fetch-block and memory timing from that stream, so validation should focus on timing correctness: cache hit/miss behavior, replay, queue occupancy, branch penalties, and cycle-by-cycle correlation against RTL or directed tests.
+
+#### Scheduling Phases And DAG Ordering
+
+Events are not only ordered by simulated time. They are also ordered within a cycle.
+
+Sparta uses scheduling phases so events in the same cycle can be separated into deterministic regions, such as receiving data, updating state, and flushing. This avoids ambiguous update-before-read behavior.
+
+Code evidence:
+
+- `map-sparta-v2.0.21/sparta/sparta/events/SchedulingPhases.hpp`
+- `map-sparta-v2.0.21/sparta/src/DAG.cpp`
+
+Exact phase order from the Sparta DAG initialization:
+
+```text
+Trigger -> Update -> PortUpdate -> Flush -> Collection -> Tick -> PostTick
+```
+
+Important correction:
+
+```text
+Flush is before Tick in Sparta's built-in phase order.
+```
+
+So if a callback is explicitly scheduled in `SchedulingPhase::Flush`, it runs before normal `SchedulingPhase::Tick` callbacks in that same cycle, unless the events are in different cycles because of delivery delay.
+
+Phase meaning:
+
+```text
+Trigger
+  Internal framework phase.
+
+Update
+  Resource updates happen first. Similar to making registered/pipeline state visible
+  before the next logic phase consumes it.
+
+PortUpdate
+  Delayed inter-unit messages arrive. Registered port handlers are called.
+
+Flush
+  Pipeline flush/control recovery work. Wrong-path entries can be removed and
+  already-scheduled later work can be cancelled.
+
+Collection
+  Pipeline/resource state is sampled for visualization/reporting.
+
+Tick
+  Main model behavior. Sparta comments describe this as the phase where most
+  operations or combinational logic occur.
+
+PostTick
+  Late events after all Tick events.
+```
+
+Inter-unit message means data sent between modeled blocks through Sparta ports:
+
+```text
+Fetch DataOutPort -> ICache DataInPort
+Decode credits -> Fetch credit port
+ROB flush signal -> Fetch/Decode/Rename/Dispatch/Execute/LSU flush ports
+```
+
+Hardware analogy:
+
+```text
+valid + payload wires between modules
+```
+
+Sparta analogy:
+
+```text
+typed port send + scheduled receiver callback
+```
+
+Why this order:
+
+```text
+Update first:
+  make resource state current.
+
+PortUpdate next:
+  deliver delayed inter-unit messages.
+
+Flush before Tick:
+  apply kill/redirect before normal same-cycle behavior uses wrong-path state.
+
+Collection before Tick:
+  sample pipeline/resource state at a defined point for debugging/visualization.
+
+Tick:
+  run normal component behavior using updated state and delivered inputs.
+
+PostTick:
+  run cleanup or late-cycle work after normal behavior.
+```
+
+Hardware comparison:
+
+```text
+Hardware does not literally have named phases like Flush and Tick.
+The analogy is priority logic: flush/kill/redirect has priority over normal valid propagation.
+Sparta models that priority by putting Flush before Tick in the same simulated cycle.
+```
+
+Example problem phases help avoid:
+
+```text
+Cycle 100:
+  Event A writes state X.
+  Event B reads state X.
+
+Without deterministic ordering, the result depends on callback order.
+With phases / ordering, the model defines which one happens first.
+```
+
+Sparta can also build DAG ordering between events. The idea is to preserve deterministic dependency order between related events in the same cycle. This is useful in a component model where many units schedule zero-cycle work into the same simulated tick.
+
+Interview wording:
+
+> Sparta scheduling is not just a timestamp queue. Events are ordered by simulated time, scheduling phase, and dependency/DAG order. That matters for cycle models because same-cycle events can otherwise create race-like ambiguity, similar to update-before-read problems in a hand-written tick model.
+
+#### Port Delay And Same-Cycle Phases
+
+Sparta port declarations include a scheduling phase and often a delivery delay.
+
+Example:
+
+```cpp
+sparta::DataInPort<uint32_t> in_fetch_queue_credits_{
+    &unit_port_set_,
+    "in_fetch_queue_credits",
+    sparta::SchedulingPhase::Tick,
+    0
+};
+```
+
+The final `0` is the port delivery delay:
+
+```text
+sender sends at cycle 10
+  -> receiver callback may run at cycle 10
+```
+
+Example with delay 1:
+
+```cpp
+sparta::DataInPort<MemoryAccessInfoPtr> in_icache_fetch_resp_{
+    &unit_port_set_,
+    "in_icache_fetch_resp",
+    sparta::SchedulingPhase::Tick,
+    1
+};
+```
+
+Meaning:
+
+```text
+sender sends at cycle 10
+  -> receiver callback runs at cycle 11
+```
+
+So a port send is not just a direct function call. It can schedule delivery through the scheduler with a defined phase and delay.
+
+Same-cycle work is ordered by more than cycle number:
+
+```text
+(cycle, phase, dependency/order)
+```
+
+For example, normal pipeline work may use `Tick`, while flush/redirect delivery may use `Flush`.
+
+Safe interview wording:
+
+> Sparta separates normal tick work and flush/control-recovery work into different scheduling phases, so same-cycle behavior is deterministic. In this Sparta version, the DAG phase order is Trigger, Update, PortUpdate, Flush, Collection, Tick, PostTick. That means a same-cycle Flush-phase callback is ordered before normal Tick-phase callbacks.
+
+The dependency/DAG structure is effectively established during setup when units, ports, and event relationships are built. Runtime dynamically chooses which events are active in a given cycle, but ordering rules are already defined.
+
+#### Event Queue Shape
+
+The scheduler is not just one simple FIFO. Conceptually it is closer to:
+
+```text
+time bucket / tick quantum
+  -> scheduling phase or group
+    -> list/vector of events
+```
+
+Simplified picture:
+
+```text
+cycle 100:
+  group 0: event A, event B
+  group 1: event C
+
+cycle 101:
+  group 0: event D
+```
+
+So the scheduler behaves like a priority queue of callbacks indexed by simulated time, phase/group, and deterministic event order.
+
+#### Callback Syntax Refresher
+
+A callback is a function registered now and called later by another object.
+
+Plain C++ example:
+
+```cpp
+#include <functional>
+#include <iostream>
+
+void callLater(std::function<void()> cb) {
+    cb();
+}
+
+void hello() {
+    std::cout << "hello\n";
+}
+
+int main() {
+    callLater(hello);
+}
+```
+
+Class member callback using a lambda:
+
+```cpp
+class DCache {
+public:
+    void handleRequest() {
+        std::cout << "handle request\n";
+    }
+};
+
+DCache dcache;
+
+auto cb = [&dcache]() {
+    dcache.handleRequest();
+};
+
+cb();
+```
+
+Sparta event callback pattern:
+
+```cpp
+sparta::UniqueEvent<> ev_retire_{
+    &unit_event_set_,
+    "retire_insts",
+    CREATE_SPARTA_HANDLER(ROB, retireInstructions_)
+};
+```
+
+Meaning:
+
+```text
+When this event fires, call ROB::retireInstructions_().
+```
+
+Sparta port callback with data:
+
+```cpp
+in_lsu_lookup_req_.registerConsumerHandler(
+    CREATE_SPARTA_HANDLER_WITH_DATA(
+        DCache,
+        receiveMemReqFromLSU_,
+        MemoryAccessInfoPtr
+    )
+);
+```
+
+Meaning:
+
+```text
+When data arrives on this port, call:
+DCache::receiveMemReqFromLSU_(MemoryAccessInfoPtr req)
+```
+
+#### Simple Callback Examples
+
+No-argument callback:
+
+```cpp
+#include <iostream>
+#include <functional>
+
+void runLater(std::function<void()> callback) {
+    callback();
+}
+
+void sayHello() {
+    std::cout << "hello\n";
+}
+
+int main() {
+    runLater(sayHello);
+}
+```
+
+Callback with input parameter:
+
+```cpp
+#include <iostream>
+#include <functional>
+
+void sendCredit(std::function<void(int)> callback) {
+    callback(8);
+}
+
+class Fetch {
+public:
+    void receiveCredit(int credits) {
+        std::cout << "received credits = " << credits << "\n";
+    }
+};
+
+int main() {
+    Fetch fetch;
+
+    sendCredit([&fetch](int credits) {
+        fetch.receiveCredit(credits);
+    });
+}
+```
+
+Conceptual Sparta equivalent:
+
+```cpp
+in_fetch_queue_credits_.registerConsumerHandler(
+    CREATE_SPARTA_HANDLER_WITH_DATA(Fetch, receiveFetchQueueCredits_, uint32_t)
+);
+```
+
+is like:
+
+```cpp
+register_callback([this](uint32_t credits) {
+    this->receiveFetchQueueCredits_(credits);
+});
+```
+
+#### Simple Delayed Callback / Event Scheduling
+
+Core idea:
+
+```text
+event = callback + target cycle
+```
+
+Toy event scheduler:
+
+```cpp
+#include <iostream>
+#include <functional>
+#include <queue>
+
+struct Event {
+    int cycle;
+    std::function<void()> callback;
+};
+
+int main() {
+    int current_cycle = 0;
+    std::queue<Event> event_queue;
+
+    event_queue.push({
+        3,
+        []() {
+            std::cout << "cache response returns\n";
+        }
+    });
+
+    while (current_cycle <= 5) {
+        if (!event_queue.empty() && event_queue.front().cycle == current_cycle) {
+            event_queue.front().callback();
+            event_queue.pop();
+        }
+
+        current_cycle++;
+    }
+}
+```
+
+Sparta equivalent:
+
+```cpp
+ev_respond_.preparePayload(req)->schedule(cache_latency_);
+```
+
+Meaning:
+
+```text
+Call the response callback after cache_latency simulated cycles.
+```
+
+#### C++ Syntax To Review Later
+
+This repo uses several C++ constructs that are worth reviewing systematically after the structural walkthrough.
+
+Backlog:
+
+- Function pointer vs member-function pointer.
+- Template syntax, especially explicit template arguments.
+- Macro expansion and token stringification with `#`.
+- Constructor initializer lists.
+- `std::unique_ptr`, `std::shared_ptr`, and Sparta shared pointers.
+- References such as `const T &`.
+- Lambdas and captures.
+- `auto`, `decltype`, and type aliases.
+
+Current example to revisit:
+
+```cpp
+#define CREATE_SPARTA_HANDLER_WITH_DATA(clname, meth, dataT) \
+    sparta::SpartaHandler::from_member_1<clname, &clname::meth, dataT> \
+        (this, #clname"::"#meth"("#dataT")")
+```
+
+Example expansion:
+
+```cpp
+CREATE_SPARTA_HANDLER_WITH_DATA(DCache, receiveReq_, MemoryAccessInfoPtr)
+```
+
+becomes conceptually:
+
+```cpp
+sparta::SpartaHandler::from_member_1<
+    DCache,
+    &DCache::receiveReq_,
+    MemoryAccessInfoPtr
+>(
+    this,
+    "DCache::receiveReq_(MemoryAccessInfoPtr)"
+)
+```
+
+Key points:
+
+- `&DCache::receiveReq_` is a pointer to a member function, not a call.
+- `this` is the current object instance to call the member function on.
+- `#clname`, `#meth`, and `#dataT` turn macro tokens into strings.
+- The debug string is for readability; the real callable target is the member-function pointer.
+
+### Interview Wording
+
+Use this phrasing:
+
+> My previous model was more manually cycle-driven: the core tick called pipeline stages in reverse order and used explicit pipeline-register classes to separate current and next state. Sparta/Olympia is more event-driven. The global scheduler owns simulated time, and each unit registers callbacks on ports or events. A unit schedules local events when data, credits, or responses arrive. So the timing model is still cycle-accurate, but control is decentralized through ports, events, buffers, and counters instead of one hand-written backward pipeline loop.
+
+### Olympia One-Minute Structural Summary
+
+Olympia is built in layers:
+
+1. Sparta framework:
+   - Provides tree hierarchy, parameters, ports, events, scheduler, counters, reports, PEvents, and pipeout.
+   - Model units are Sparta `Unit`s connected by ports.
+
+2. Olympia simulator wrapper:
+   - `main.cpp` parses CLI/config.
+   - `OlympiaSim.cpp` builds, configures, and binds the tree.
+   - `CPUFactory.cpp` and `CPUTopology.cpp` instantiate CPU/core units and connect ports.
+
+3. Trace-driven instruction source:
+   - Fetch uses `InstGenerator`.
+   - JSON/STF trace gives the dynamic instruction stream.
+   - Mavis decodes instructions and attaches uarch metadata.
+
+4. Pipeline model:
+   - Fetch groups trace instructions into ICache block requests.
+   - Decode mostly queues/generated uops because decode already happened through Mavis.
+   - Rename maps ARF to PRF and manages freelist/scoreboard.
+   - Dispatch sends ops to IssueQueue, LSU, and ROB.
+   - IssueQueue waits on scoreboard readiness.
+   - ExecutePipe models latency and wakes dependents.
+   - ROB retires in order.
+
+5. Memory system:
+   - LSU has separate issue/replay/store-buffer logic.
+   - DCache/ICache use `CacheFuncModel`.
+   - L2 arbitrates I/D misses.
+   - BIU/MSS model lower-memory service with simple fixed latency.
+
+6. Debug/profiling:
+   - Counters/reports show aggregate bottlenecks.
+   - PEvents and pipeout show per-instruction timing.
+   - YAML arch files enable sensitivity sweeps.
+
+Interview wording:
+
+> Olympia is a trace-driven, Sparta-based RISC-V performance model. Sparta gives the simulation infrastructure: event scheduler, unit hierarchy, ports, parameters, counters, and reports. Olympia defines the CPU microarchitecture on top: fetch, decode, rename, dispatch, issue, execute, ROB, LSU, caches, L2, and memory-service models. The dynamic instruction stream comes from JSON/STF traces, Mavis decodes instructions and attaches uarch metadata, and the model estimates timing through configurable pipeline resources and event scheduling. Its strength is fast, repeatable architecture exploration and profiling; its weakness is limited wrong-path and functional correctness fidelity compared with execution-driven simulation.
+
+## Part 2 — C++ Coding and Simulator-C++ Review
+
+Source: C++ coding prep notes previously kept as `c++coding/PM_CPP.md`.
+
+### Performance Modeling C++ Prep — Qualcomm CPU Performance Modeling
+
+#### Role-Specific Coding Assumption
 
 This is not primarily a LeetCode interview. For a CPU performance modeling role, C++ questions are most likely to test whether I can write and reason about simulator-quality C++:
 
@@ -14,11 +1345,11 @@ This is not primarily a LeetCode interview. For a CPU performance modeling role,
 
 The job description emphasizes C/C++, CPU architecture blocks, writing and maintaining CPU architectural performance model features, workload bottleneck analysis, and self-guided design-alternative studies. The interviewer background we have prepared for is LSU/performance-modeling heavy, so C++ basics should be practiced through microarchitecture examples whenever possible.
 
-### Part 1 — C++ Basics Refresh, 45-60 Min
+#### Part 1 — C++ Basics Refresh, 45-60 Min
 
 Goal: answer these crisply, then connect them to performance-modeling code.
 
-#### A. Object Size, Alignment, and Memory Layout
+##### A. Object Size, Alignment, and Memory Layout
 
 Expected questions:
 
@@ -129,7 +1460,7 @@ object -> vptr -> actual class vtable -> slot 0 -> function implementation
 
 The runtime does not search for the class. The `vptr` identifies the actual runtime type's vtable, and the compile-time slot index identifies which virtual function to call.
 
-#### B. `const`, References, and Pointers
+##### B. `const`, References, and Pointers
 
 Expected questions:
 
@@ -269,7 +1600,7 @@ Key lesson:
 - Use `T*` when `nullptr` is a meaningful state, when reseating is needed, or when the API wants explicit address/ownership semantics.
 - In a performance model, instruction records, memory requests, and cache metadata are often passed by `const&` in read-only hot paths to avoid unnecessary copies.
 
-#### C. `static`
+##### C. `static`
 
 Expected questions:
 
@@ -379,7 +1710,7 @@ Key lesson:
 - It cannot access non-static object fields unless an object is passed in.
 - A non-static member function can access both `count` and `x`, because it has `this`.
 
-#### D. Virtual Functions, Vtable, and Polymorphism
+##### D. Virtual Functions, Vtable, and Polymorphism
 
 Expected questions:
 
@@ -564,7 +1895,7 @@ Key lesson:
 - Calls through a base pointer dispatch only through the virtual interface declared in the base class.
 - `override` would catch this mismatch if used.
 
-#### E. Constructors, Destructors, RAII, Rule of 3/5/0
+##### E. Constructors, Destructors, RAII, Rule of 3/5/0
 
 Expected questions:
 
@@ -805,7 +2136,7 @@ Key lesson:
 - The object is not destroyed after `b.reset()` because `a` and `c` still own it.
 - Conceptually the reference count goes from 3 to 2.
 
-#### F. Smart Pointers and Ownership
+##### F. Smart Pointers and Ownership
 
 Expected questions:
 
@@ -825,7 +2156,7 @@ Microarch connection:
 
 - Instructions and memory requests may be referenced by several queues at once. Shared ownership can be convenient, but it must be intentional.
 
-#### G. STL Containers and Iterator Invalidation
+##### G. STL Containers and Iterator Invalidation
 
 Expected questions:
 
@@ -973,7 +2304,7 @@ Key lesson:
 - Use head/tail/count for allocation and retirement.
 - This keeps STL-managed storage while modeling hardware ring behavior.
 
-#### H. Lambdas, Callbacks, and Function Pointers
+##### H. Lambdas, Callbacks, and Function Pointers
 
 Expected questions:
 
@@ -1208,7 +2539,7 @@ Key lesson:
 - They cannot directly access non-static object state.
 - Simulator handlers are usually non-static because they update unit state.
 
-#### I. Templates, Macros, and Type Aliases
+##### I. Templates, Macros, and Type Aliases
 
 Expected questions:
 
@@ -1227,7 +2558,7 @@ Microarch connection:
 
 - Sparta/Olympia uses templates, type aliases, and handler macros heavily. I do not need to be a template metaprogramming expert, but I need to read and explain the syntax.
 
-#### J. Integer Types, Bit Manipulation, and Address Decoding
+##### J. Integer Types, Bit Manipulation, and Address Decoding
 
 Expected questions:
 
@@ -1331,7 +2662,7 @@ uint64_t addr = 0x80000000ULL;
 uint64_t tag = addr >> 13;
 ```
 
-#### K. Performance and Complexity
+##### K. Performance and Complexity
 
 Expected questions:
 
@@ -1514,7 +2845,7 @@ O(issue_width * queue_size)
 
 If issue width is fixed, this simplifies to O(queue_size). In simulator hot paths, constants still matter because this work runs every simulated cycle.
 
-#### L. Concurrency Basics, Lower Priority
+##### L. Concurrency Basics, Lower Priority
 
 Expected questions:
 
@@ -1532,7 +2863,7 @@ Microarch connection:
 
 - Lower probability for this interview unless he chooses a generic C++ systems question. Know the surface, do not over-invest.
 
-### Part 1 Practice Order
+#### Part 1 Practice Order
 
 1. `sizeof` / alignment / padding examples.
 2. `const`, references, pointers.
@@ -1543,7 +2874,68 @@ Microarch connection:
 7. callbacks/lambdas/event queue.
 8. bit manipulation for cache index/tag/offset.
 
-### Part 2 — Warmup Coding, 60-90 Min
+#### Part 2 — C++ Basics Coding Blocks, 90-120 Min
+
+Goal: rebuild C++ coding fluency from syntax and fundamentals before solving interview-style problems. These blocks should be small, compiled, and easy to explain line by line.
+
+Recommended location:
+
+- `/home/fy2243/interview/c++coding/basics/`
+
+Coding blocks, in order:
+
+1. `01_compile_io_types.cpp`
+   - Practice: `main()`, headers, `std::cout`, `std::cin`, fixed-width integer types, `sizeof`, signed vs unsigned.
+   - Done when: can compile/run from command line and explain each type choice.
+
+2. `02_control_flow_functions.cpp`
+   - Practice: `if`, `switch`, loops, helper functions, pass-by-value return values.
+   - Done when: code is split into small functions and handles basic edge cases.
+
+3. `03_arrays_vectors_strings.cpp`
+   - Practice: C arrays vs `std::vector`, `std::string`, indexing, bounds, range-for loops.
+   - Done when: can implement simple scan/search/reverse operations without iterator mistakes.
+
+4. `04_pointers_references_const.cpp`
+   - Practice: raw pointers, references, `nullptr`, `const T&`, `T&`, pointer-to-const vs const-pointer.
+   - Done when: can explain which functions mutate caller state and which only inspect it.
+
+5. `05_structs_classes_constructors.cpp`
+   - Practice: `struct` vs `class`, constructors, initializer lists, member functions, `const` member functions.
+   - Done when: can build a small `Instruction` or `CacheLine` type and print/update it cleanly.
+
+6. `06_memory_lifetime_raii.cpp`
+   - Practice: stack vs heap lifetime, `std::vector` ownership, `std::unique_ptr`, destructor behavior.
+   - Done when: no manual owning `new/delete` is needed and ownership is clear.
+
+7. `07_stl_container_basics.cpp`
+   - Practice: `vector`, `deque`, `queue`, `stack`, `unordered_map`, `map`, `set`, `priority_queue`.
+   - Done when: can state the operation complexity and one correct use case for each container.
+
+8. `08_iterators_and_invalidations.cpp`
+   - Practice: iterators, references, `erase`, `push_back`, `reserve`, `resize`, invalidation examples.
+   - Done when: can explain why a saved pointer/iterator becomes invalid after vector growth or erase.
+
+9. `09_bit_manipulation_address_decode.cpp`
+   - Practice: masks, shifts, alignment, power-of-two checks, cache offset/index/tag extraction.
+   - Done when: can decode an address for configurable line size and set count using unsigned types.
+
+10. `10_small_test_harness.cpp`
+    - Practice: `assert`, simple table-driven tests, expected vs actual output, edge-case checklist.
+    - Done when: every basics file has at least a tiny self-checking `main()`.
+
+Practice rule:
+
+- Keep each block under 20-30 minutes.
+- Compile every file with `g++ -std=c++17 -Wall -Wextra -pedantic`.
+- After each block, write a three-line review: one syntax issue, one edge case, one interview sentence.
+
+Interview framing:
+
+- These are not the final target, but they remove friction.
+- The goal is to stop losing time on C++ syntax when the real question is about simulator structures, cache behavior, or LSU modeling.
+
+#### Part 3 — Warmup Coding, 60-90 Min
 
 Goal: regain C++ fluency before microarchitecture-specific problems. These should be quick, clean, and compiled with small tests.
 
@@ -1583,7 +2975,7 @@ Interview framing:
 - Keep each solution under 25-35 minutes.
 - After each one, write down one bug, one edge case, and final complexity.
 
-### Part 3 — Microarchitecture Coding, Highest Priority
+#### Part 4 — Microarchitecture Coding, Highest Priority
 
 Goal: practice the coding problems most aligned with CPU performance modeling. These are more important than generic LeetCode.
 
@@ -1634,7 +3026,7 @@ Microarch coding rule:
   - What is the per-cycle or per-access API?
   - What are the invariants?
 
-### Simulator-Style Warmup Checklist and Interview Key Points
+#### Simulator-Style Warmup Checklist and Interview Key Points
 
 Completed warmup files:
 
@@ -1712,7 +3104,7 @@ Key interview points:
   - What stats are reported?
 - For each implementation, include a tiny `main()` test rather than relying on memory.
 
-### Part 4 — Callback Practice
+#### Part 5 — Callback Practice
 
 Goal: remove C++ callback syntax weakness before discussing Sparta/Olympia-style event-driven simulation.
 
@@ -1755,7 +3147,7 @@ Interview framing:
   - execute it later at simulated cycle `N`;
   - use payloads to model delayed messages like cache responses or wakeup events.
 
-### Part 5 — C++ Through Microarchitecture Examples
+#### Part 6 — C++ Through Microarchitecture Examples
 
 Goal: connect C++ basics to CPU modeling examples after syntax is refreshed.
 
@@ -1781,12 +3173,12 @@ Practice format:
   - one code-level example;
   - one microarchitecture modeling example.
 
-### Status Log
+#### Status Log
 
 - 2026-04-25: Planned Part 1 C++ basics refresh for performance-modeling interview.
 - 2026-04-25: Added warmup coding, microarchitecture coding, callback practice, and C++-through-microarchitecture example plan.
 
-## Goal
+### Goal
 
 Practice C/C++ coding for interviews in a structured, progressive way.
 
@@ -1798,7 +3190,7 @@ Build confidence and fluency in:
 - Dynamic programming and backtracking
 - Writing clean, correct, interview-quality code under time pressure
 
-## Intention
+### Intention
 
 Use an interviewer-style format instead of passive study.
 
@@ -1813,7 +3205,7 @@ Claude acts as the C/C++ coding interviewer and:
 
 The user writes the solution first. The goal is active practice, not immediate solution dumping.
 
-## Methodology
+### Methodology
 
 1. Start with very simple problems.
 2. Solve one problem at a time.
@@ -1825,7 +3217,7 @@ The user writes the solution first. The goal is active practice, not immediate s
 4. If needed, give a corrected version and explain the key issue briefly.
 5. Move to the next question only after the current one is understood.
 
-## Session Style
+### Session Style
 
 - Mode: interviewer mode
 - Pace: step by step
@@ -1833,7 +3225,7 @@ The user writes the solution first. The goal is active practice, not immediate s
 - Question style: classic and fundamental C/C++ interview questions
 - Primary language: C/C++
 
-## Review Standard
+### Review Standard
 
 Each answer should be judged by questions such as:
 
@@ -1852,7 +3244,7 @@ When reviewing submitted code:
 - if there is a cleaner, more standard, or more optimal solution, propose that improvement briefly
 - if the submitted solution is already solid, simply say it is good instead of forcing extra optimization advice
 
-## Folder Layout
+### Folder Layout
 
 - `01_arrays_strings/`
 - `02_math_bit_manipulation/`
@@ -1868,7 +3260,7 @@ When reviewing submitted code:
 - `12_interval_matrix/`
 - `13_backtracking_heap_trie/`
 
-## File Convention
+### File Convention
 
 For each new question:
 
@@ -1877,7 +3269,7 @@ For each new question:
 - include a comment block at the top with the problem description and constraints
 - expect the user to fill in the solution
 
-## Working Agreement
+### Working Agreement
 
 - Keep the practice interactive.
 - Do not skip straight to advanced problems.
@@ -1889,15 +3281,15 @@ For each new question:
 
 ---
 
-## Study Plan — Priority Order for Interview Prep
+### Study Plan — Priority Order for Interview Prep
 
 Problems sourced from [LeetCode Top Interview 150](https://leetcode.com/studyplan/top-interview-150/). Organized by topic, ordered easy → medium → hard within each section. Problems the user has already solved are marked with ✅.
 
-### Phase 1 — Fundamentals (do these first)
+#### Phase 1 — Fundamentals (do these first)
 
 These are the bread and butter. If you only have a few hours, focus here.
 
-#### 01 — Arrays & Strings
+##### 01 — Arrays & Strings
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -1924,7 +3316,7 @@ These are the bread and butter. If you only have a few hours, focus here.
 | 🟢 | 135 | Candy | Hard | |
 | 🟢 | 68 | Text Justification | Hard | |
 
-#### 02 — Math & Bit Manipulation
+##### 02 — Math & Bit Manipulation
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -1941,7 +3333,7 @@ These are the bread and butter. If you only have a few hours, focus here.
 | 🟢 | 201 | Bitwise AND of Numbers Range | Medium | |
 | 🟢 | 149 | Max Points on a Line | Hard | |
 
-#### 05 — Hashmap
+##### 05 — Hashmap
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -1955,11 +3347,11 @@ These are the bread and butter. If you only have a few hours, focus here.
 | 🟡 | 219 | Contains Duplicate II | Easy | |
 | 🟡 | 128 | Longest Consecutive Sequence | Medium | ✅ |
 
-### Phase 2 — Core Patterns (high ROI techniques)
+#### Phase 2 — Core Patterns (high ROI techniques)
 
 These patterns show up repeatedly. Master the technique, not just individual problems.
 
-#### 06 — Two Pointers
+##### 06 — Two Pointers
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -1969,7 +3361,7 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🔴 | 11 | Container With Most Water | Medium | ✅ |
 | 🔴 | 15 | 3Sum | Medium | ✅ |
 
-#### 07 — Sliding Window
+##### 07 — Sliding Window
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -1978,7 +3370,7 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟡 | 30 | Substring with Concatenation of All Words | Hard | |
 | 🟡 | 76 | Minimum Window Substring | Hard | |
 
-#### 08 — Binary Search
+##### 08 — Binary Search
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -1990,7 +3382,7 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟡 | 153 | Find Minimum in Rotated Sorted Array | Medium | |
 | 🟢 | 4 | Median of Two Sorted Arrays | Hard | |
 
-#### 04 — Stack & Queue
+##### 04 — Stack & Queue
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -2000,9 +3392,9 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟡 | 71 | Simplify Path | Medium | |
 | 🟢 | 224 | Basic Calculator | Hard | |
 
-### Phase 3 — Data Structures (linked lists, trees, graphs)
+#### Phase 3 — Data Structures (linked lists, trees, graphs)
 
-#### 03 — Linked List
+##### 03 — Linked List
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -2018,7 +3410,7 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟢 | 25 | Reverse Nodes in k-Group | Hard | |
 | 🟢 | 146 | LRU Cache | Medium | |
 
-#### 09 — Tree & BST
+##### 09 — Tree & BST
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -2041,7 +3433,7 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟡 | 173 | Binary Search Tree Iterator | Medium | |
 | 🟢 | 124 | Binary Tree Maximum Path Sum | Hard | |
 
-#### 10 — Graph
+##### 10 — Graph
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -2053,9 +3445,9 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟡 | 210 | Course Schedule II | Medium | |
 | 🟢 | 127 | Word Ladder | Hard | |
 
-### Phase 4 — Advanced (if time allows)
+#### Phase 4 — Advanced (if time allows)
 
-#### 11 — Dynamic Programming
+##### 11 — Dynamic Programming
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -2074,7 +3466,7 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟢 | 221 | Maximal Square | Medium | |
 | 🟢 | 63 | Unique Paths II | Medium | |
 
-#### 12 — Interval & Matrix
+##### 12 — Interval & Matrix
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -2088,7 +3480,7 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 | 🟡 | 54 | Spiral Matrix | Medium | |
 | 🟡 | 289 | Game of Life | Medium | |
 
-#### 13 — Backtracking, Heap & Trie
+##### 13 — Backtracking, Heap & Trie
 
 | Priority | LC# | Problem | Difficulty | Status |
 |----------|-----|---------|------------|--------|
@@ -2109,13 +3501,13 @@ These patterns show up repeatedly. Master the technique, not just individual pro
 
 ---
 
-## Priority Legend
+### Priority Legend
 
 - 🔴 **Must do** — very high frequency in interviews, do these first
 - 🟡 **Should do** — common patterns, do if time allows
 - 🟢 **Nice to have** — less common or harder, skip under time pressure
 
-## Night-Before Strategy
+### Night-Before Strategy
 
 If you only have a few hours:
 
@@ -2124,7 +3516,7 @@ If you only have a few hours:
 3. **Review patterns** — make sure you can recognize when to use two pointers, sliding window, binary search, BFS/DFS
 4. **Practice talking through your approach** — interviewers care about communication as much as code
 
-## C/C++ Interview Tips
+### C/C++ Interview Tips
 
 - Always clarify input constraints before coding
 - State your approach and complexity before writing code
@@ -2134,6 +3526,6 @@ If you only have a few hours:
 - Know when to use `new`/`delete` vs stack allocation vs smart pointers
 - If stuck, start with brute force and optimize
 
-## EDA Tools on This Server
+### EDA Tools on This Server
 
 - Compile C++: `g++ -std=c++17 -o solution solution.cpp && ./solution`

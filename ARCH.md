@@ -1,10 +1,31 @@
-# Computer Architecture Interview Cheatsheet
+# Architecture Review
+
+Unified microarchitecture review notes for the Qualcomm second-round preparation.
+
+This file has these major review blocks:
+
+1. Computer architecture fundamentals.
+2. Decoupled frontend implementation specification.
+3. Backend microarchitecture details.
+4. LSU + L1D optimization specification.
+5. Branch predictor microarchitecture.
+6. TLB, MMU, and page-table-walker microarchitecture.
+7. Cache, coherence, and memory-system review.
+8. Retire, commit, ROB state, and recovery.
+9. Vector / SIMD review.
+10. Operation-specific implementation notes: interrupt/exception, fences, atomics.
+
+The original FE and LSU source markdown files and their diagram assets remain in place. Local markdown links in the merged sections are rewritten relative to this `interview/` directory so the SVG/PNG pipeline diagrams still resolve from here.
+
+## Part 1 — Computer Architecture Fundamentals
+
+Source: original architecture fundamentals from this file before the merge.
 
 Key concepts for firmware/embedded engineer interviews.
 
 ---
 
-## 1. Memory Hierarchy
+### 1. Memory Hierarchy
 
 ```
 Fastest                                              Slowest
@@ -24,9 +45,9 @@ Fastest                                              Slowest
 
 ---
 
-## 2. Cache
+### 2. Cache
 
-### Cache Organization
+#### Cache Organization
 
 ```
 Direct-Mapped (1-way):
@@ -45,7 +66,7 @@ Can be placed in ANY cache line. No conflict misses.
   Expensive — needs to compare all tags. Used for TLB, small caches.
 ```
 
-### Address Breakdown (example: 32-bit address, 256B cache, 4-way, 16B lines)
+#### Address Breakdown (example: 32-bit address, 256B cache, 4-way, 16B lines)
 
 ```
 Total cache = 256 bytes
@@ -56,7 +77,7 @@ Tag bits    = 32 - 4 - 2 = 26
 Address: [ 26-bit Tag | 2-bit Set Index | 4-bit Offset ]
 ```
 
-### Cache Miss Types (the 3 C's)
+#### Cache Miss Types (the 3 C's)
 
 | Type | Cause | Fix |
 |------|-------|-----|
@@ -64,7 +85,7 @@ Address: [ 26-bit Tag | 2-bit Set Index | 4-bit Offset ]
 | **Conflict** | Two addresses map to same set, evicting each other | Increase associativity |
 | **Capacity** | Cache too small to hold all active data | Bigger cache |
 
-### Write Policies
+#### Write Policies
 
 | Policy | Description | Pros | Cons |
 |--------|-------------|------|------|
@@ -75,7 +96,7 @@ Address: [ 26-bit Tag | 2-bit Set Index | 4-bit Offset ]
 
 Common combo: **write-back + write-allocate** (most modern processors)
 
-### Cache Coherence (Multi-core)
+#### Cache Coherence (Multi-core)
 
 **Problem**: Core A writes to address X in its L1 cache. Core B still has the old value of X in its L1.
 
@@ -88,7 +109,7 @@ Common combo: **write-back + write-allocate** (most modern processors)
 **Interview question**: "What happens when Core A writes to a Shared line?"
 - Core A invalidates all other copies (Shared → Invalid in other caches), then transitions to Modified.
 
-### VIPT Caches
+#### VIPT Caches
 
 VIPT = **Virtually Indexed, Physically Tagged**.
 
@@ -125,7 +146,7 @@ Examples:
 Interview one-liner:
 > VIPT indexes the L1 with virtual address bits while the TLB translates in parallel, then compares a physical tag. Aliasing depends on `num_sets * line_size`, equivalently `cache_size / associativity`, because index+offset must fit within the page offset.
 
-### Cache Banking
+#### Cache Banking
 
 Cache banking splits the physical cache arrays into multiple independently accessible banks. Main purpose: increase access bandwidth without building expensive multiported SRAMs.
 
@@ -184,7 +205,7 @@ Caveat:
 Interview one-liner:
 > Cache banking is physical partitioning for bandwidth. For set/line banking, the original index field is split into bank bits and set-within-bank bits. Ways and banks are orthogonal: ways define associativity; banks define which physical SRAM partition is accessed.
 
-### Memory Consistency
+#### Memory Consistency
 
 Memory consistency defines what order memory operations appear to happen in across multiple cores/threads. It is different from cache coherence:
 - **Coherence**: all cores agree on ordering of writes to the same address.
@@ -203,7 +224,7 @@ print(data);
 
 Programmer expects that seeing `ready == 1` means `data == 42` is visible. On a weak memory model, `ready` may become visible before `data` unless software uses fences or acquire/release synchronization.
 
-#### TSO vs RVWMO
+##### TSO vs RVWMO
 
 TSO = **Total Store Order**. Used by x86-like memory models.
 
@@ -258,9 +279,9 @@ Interview one-liner:
 
 ---
 
-## 3. Pipeline
+### 3. Pipeline
 
-### Classic 5-Stage Pipeline
+#### Classic 5-Stage Pipeline
 
 ```
 Stage 1    Stage 2    Stage 3    Stage 4     Stage 5
@@ -273,9 +294,9 @@ Stage 1    Stage 2    Stage 3    Stage 4     Stage 5
 
 **Ideal**: One instruction completes every cycle (throughput = 1 IPC).
 
-### Pipeline Hazards
+#### Pipeline Hazards
 
-#### Data Hazard
+##### Data Hazard
 **Problem**: Instruction needs a result that isn't computed yet.
 ```
 ADD R1, R2, R3    // writes R1 in WB stage (cycle 5)
@@ -287,7 +308,7 @@ SUB R4, R1, R5    // needs R1 in ID stage (cycle 3) — R1 not ready!
 - **Stalling**: Insert bubble (NOP) and wait — simple but wastes cycles
 - **Load-use hazard**: Load from memory (available after MEM stage) can't be fully forwarded — needs 1 stall cycle
 
-#### Control Hazard
+##### Control Hazard
 **Problem**: Branch instruction — don't know which instruction to fetch next.
 ```
 BEQ R1, R2, LABEL    // branch decided in EX stage
@@ -301,7 +322,7 @@ BEQ R1, R2, LABEL    // branch decided in EX stage
   - Dynamic: Branch History Table (BHT), 2-bit saturating counter
 - **Branch delay slot**: Execute the instruction after branch regardless (MIPS)
 
-#### Structural Hazard
+##### Structural Hazard
 **Problem**: Two instructions need the same hardware resource simultaneously.
 ```
 Example: Single memory port — IF and MEM both need memory in the same cycle.
@@ -310,9 +331,9 @@ Example: Single memory port — IF and MEM both need memory in the same cycle.
 
 ---
 
-## 4. Virtual Memory
+### 4. Virtual Memory
 
-### Address Translation
+#### Address Translation
 
 ```
 CPU generates:  Virtual Address (VA)
@@ -338,7 +359,7 @@ CPU generates:  Virtual Address (VA)
                               (OS loads from disk)
 ```
 
-### Virtual Address Breakdown (example: 32-bit VA, 4KB pages)
+#### Virtual Address Breakdown (example: 32-bit VA, 4KB pages)
 
 ```
 Page size = 4KB = 2^12 → Offset = 12 bits
@@ -351,7 +372,7 @@ PA: [ PPN (Physical Page Number) | 12-bit Page Offset ]
 
 **Page offset stays the same** — only the page number gets translated.
 
-### Page Table
+#### Page Table
 
 ```
 Page Table (one per process):
@@ -374,9 +395,9 @@ VPN  →  PPN  | Valid | Dirty | Permission
 
 ---
 
-## 5. Interrupts
+### 5. Interrupts
 
-### Interrupt Handling Flow
+#### Interrupt Handling Flow
 
 ```
 1. Hardware asserts interrupt line
@@ -393,7 +414,7 @@ VPN  →  PPN  | Valid | Dirty | Permission
 9. Resume normal execution
 ```
 
-### Key Concepts
+#### Key Concepts
 
 | Concept | Description |
 |---------|-------------|
@@ -413,9 +434,9 @@ VPN  →  PPN  | Valid | Dirty | Permission
 
 ---
 
-## 6. Bus Protocols (ARM AMBA)
+### 6. Bus Protocols (ARM AMBA)
 
-### AXI / AHB / APB Comparison
+#### AXI / AHB / APB Comparison
 
 ```
                 AXI                 AHB                 APB
@@ -431,13 +452,13 @@ Pipeline:     Yes (outstanding    No                  No
               transactions)
 ```
 
-### AXI Key Concepts
+#### AXI Key Concepts
 - **5 channels**: Read Address (AR), Read Data (R), Write Address (AW), Write Data (W), Write Response (B)
 - **Handshake**: Every channel uses `VALID`/`READY` handshake — transfer happens when both are high
 - **Outstanding transactions**: Can issue multiple requests before getting responses (pipelined)
 - **Burst types**: FIXED (same address), INCR (incrementing), WRAP (wrapping)
 
-### AXI Handshake (most important concept)
+#### AXI Handshake (most important concept)
 
 ```
          ____          ________
@@ -458,7 +479,7 @@ Rule: VALID must not depend on READY (no deadlock)
 
 ---
 
-## 7. Endianness
+### 7. Endianness
 
 ```
 Storing 0x12345678 at address 0x00:
@@ -490,9 +511,9 @@ uint32_t swap(uint32_t x) {
 
 ---
 
-## 8. DMA (Direct Memory Access)
+### 8. DMA (Direct Memory Access)
 
-### What is DMA?
+#### What is DMA?
 
 ```
 Without DMA (CPU copies data):          With DMA:
@@ -504,7 +525,7 @@ CPU reads next byte...                   CPU is free to do other work
 
 **Purpose**: Transfer data between memory and peripherals (or memory-to-memory) without CPU involvement.
 
-### How DMA Works
+#### How DMA Works
 
 ```
 1. CPU programs DMA controller:
@@ -519,7 +540,7 @@ CPU reads next byte...                   CPU is free to do other work
 5. CPU handles the completion interrupt
 ```
 
-### DMA Transfer Modes
+#### DMA Transfer Modes
 
 | Mode | Description | Use Case |
 |------|-------------|----------|
@@ -539,7 +560,7 @@ CPU reads next byte...                   CPU is free to do other work
 
 ---
 
-## Quick Reference Table
+### Quick Reference Table
 
 | Topic | Key Concept | Common Question |
 |-------|-------------|-----------------|
@@ -558,9 +579,9 @@ CPU reads next byte...                   CPU is free to do other work
 
 ---
 
-## Embedded-Specific Concepts
+### Embedded-Specific Concepts
 
-### Volatile Keyword
+#### Volatile Keyword
 ```c
 volatile int* reg = (volatile int*)0x40021000;
 ```
@@ -568,11 +589,2238 @@ volatile int* reg = (volatile int*)0x40021000;
 - Use for: memory-mapped registers, shared variables with ISR, hardware status registers
 - Without `volatile`: compiler might cache the value in a register and never re-read
 
-### Memory-Mapped I/O vs Port-Mapped I/O
+#### Memory-Mapped I/O vs Port-Mapped I/O
 - **Memory-mapped**: Peripherals share address space with memory. Access with normal load/store. (ARM uses this)
 - **Port-mapped**: Separate address space, special instructions (`IN`/`OUT`). (x86 uses this for legacy I/O)
 
-### Watchdog Timer
+#### Watchdog Timer
 - Hardware timer that resets the system if not periodically "kicked" (written to)
 - Purpose: recover from firmware crashes or infinite loops
 - Firmware must periodically reset the watchdog — if it hangs, watchdog expires and resets the chip
+
+## Part 2 — Decoupled Frontend Specification
+
+Source: `design_and_perf/rsd_fengze/Processor/Src/FetchUnit/deCoupled_FE.md`
+
+Diagram assets remain under `design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/`.
+
+This document describes the frontend that is implemented in RTL behind
+`RSD_MARCH_DECOUPLED_FRONTEND`.
+
+It is not a future proposal. It intentionally removes the earlier raw-byte
+fetch packet plan, FTQ-to-I$ bypass plan, I-cache MSHR assumptions, and the
+claim that the BPU can run sixteen fetch blocks ahead of Fetch. The current RTL
+keeps the existing RSD 32-bit instruction lane model and decouples prediction
+from I-cache access through an FTQ.
+
+### Implemented Files
+
+| File | Role |
+| --- | --- |
+| `FetchUnit/FTQ_Types.sv` | FTQ entry, pointer, ID, and helper functions |
+| `FetchUnit/FTQ_IF.sv` | FTQ interface shared by BPU, Fetch, Decode, Execute, Commit, and redirect logic |
+| `FetchUnit/FTQ.sv` | FTQ ring buffer and lifecycle state |
+| `FetchUnit/DecoupledBPU.sv` | BTB plus gshare predictor pipeline that enqueues FTQ entries |
+| `Pipeline/FetchStage/NextPCStage.sv` | FTQ-head fetch request stage under the decoupled macro |
+| `Pipeline/FetchStage/FetchStage.sv` | I-cache response stage plus four-entry fetch packet buffer |
+| `Cache/ICache.sv` | Existing I-cache FSM plus a two-entry next-line prefetch queue |
+| `Pipeline/PipelineTypes.sv` | `ftqID` and `ftqLast` fields in frontend and backend pipeline registers |
+| `Pipeline/PreDecodeStage.sv` | Carries `ftqID` and `ftqLast` |
+| `Pipeline/DecodeStage.sv` | Reads and updates FTQ lane prediction metadata |
+| `Pipeline/RenameStage.sv` | Writes `ftqID` and `ftqLast` into ActiveList entries |
+| `Pipeline/DispatchStage.sv` | Sends `ftqID` into issue queue entries |
+| `Pipeline/IntegerBackEnd/*` | Reads FTQ prediction metadata and resolves branches into FTQ |
+| `Pipeline/CommitStage.sv` | Sends predictor update and FTQ release information |
+| `Recovery/RecoveryManager*.sv` | Carries recovery FTQ IDs for frontend squash |
+| `Core.sv` | Instantiates `DecoupledBPU`, `FTQ`, and macro-specific stage wiring |
+
+### High-Level Behavior
+
+The original RSD frontend couples PC selection, branch prediction, and I-cache
+request generation. Under `RSD_MARCH_DECOUPLED_FRONTEND`, this is split:
+
+1. `DecoupledBPU` owns the prediction PC and predicts one fetch block.
+2. The BPU writes the prediction result into the FTQ.
+3. `NextPCStage` consumes the FTQ head and issues the demand I-cache request.
+4. `FetchStage` receives I-cache data and pushes a lane packet into a small
+   fetch buffer before PreDecode.
+5. Backend stages carry `FTQ_ID` so branch resolution, recovery, predictor
+   update, and FTQ release refer back to the original FTQ entry.
+
+The predictor algorithm remains BTB plus gshare. The change is the pipeline
+organization and metadata lifetime, not a replacement of the predictor.
+
+### Real Pipeline Stage Mapping
+
+The original RSD frontend has two live frontend pipeline stages:
+
+| Original stage | Role |
+| --- | --- |
+| `NextPCStage` | Select next PC and drive the next I-cache read address |
+| `FetchStage` | Hold fetched lane PCs, receive I-cache hit/data, and forward to PreDecode |
+
+The decoupled frontend keeps those two fetch stages and adds a two-stage BPU in
+front of them. FTQ is a queue and lifecycle structure, not a pipeline stage.
+
+| Implemented logical stage | RTL location | Register boundary |
+| --- | --- | --- |
+| `BP_S0` | `DecoupledBPU.sv` | Combinational PC/GHR selection, lane PC adders, gshare index XOR, and BTB/PHT read addresses |
+| `BP_S0 -> BP_S1` | `DecoupledBPU.sv` | `bpS1PC`, `bpS1LanePC`, `bpS1Ghist`, `bpS1Valid` |
+| `BP_S1` | `DecoupledBPU.sv` | BTB tag match, PHT direction, earliest-taken pick, FTQ entry pack/enqueue |
+| `FTQ` | `FTQ.sv` | Decoupling queue plus metadata lifetime from prediction through commit/recovery |
+| `IF_S0` / `NextPCStage` | `NextPCStage.sv` | Consume FTQ head, form fetch lane PCs/`ftqID`/`ftqLast`, drive `icNextReadAddrIn`, advance FTQ head |
+| `IF_S0 -> IF_S1` | `FetchStage.sv` pipe register | `FetchStageRegPath`: `valid`, `pc`, `ftqID`, `ftqLast` |
+| `IF_S1` / `FetchStage` | `FetchStage.sv` and `ICache.sv` | Receive I-cache hit/data for the registered fetch lanes, capture into the four-entry packet buffer or bypass to PreDecode |
+
+So the correct implemented frontend view is:
+
+```text
+BP_S0 -> BP_S1 -> FTQ -> IF_S0/NextPCStage -> IF_S1/FetchStage -> PreDecode
+```
+
+### Implemented Diagrams
+
+#### Detailed Datapath Pipeline View
+
+![Implemented decoupled frontend datapath](design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/implemented_datapath_vertical.svg)
+
+This is the primary frontend pipeline diagram. It shows the implemented
+datapath with muxes, DFFs, adders, predictor SRAMs, FTQ pointers, I-cache
+arrays/FSM, fetch buffer state, backend FTQ_ID lifecycle, and the real stage
+boundaries listed above.
+
+#### Connectivity Summary View
+
+![Implemented decoupled frontend connectivity](design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/implemented_pipeline.svg)
+
+#### Pipeline Timing Summary View
+
+![Implemented decoupled frontend pipeline timing](design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/implemented_pipeline_timing.svg)
+
+These diagrams are the implemented path. They replace the older proposal
+diagrams that included FTQ-to-I$ bypass, raw cacheline/IBuffer forwarding, and
+head advance from an IF_S1 stage. Those older SVG/PNG files are still in
+`diagrams/` for history, but they should not be treated as the implemented
+frontend.
+
+### Macro and Core Wiring
+
+The implemented macro is:
+
+```systemverilog
+RSD_MARCH_DECOUPLED_FRONTEND
+```
+
+`Core.sv` changes the frontend wiring under this macro:
+
+- Instantiates `FTQ_IF ftqIF`.
+- Instantiates `DecoupledBPU bpu(npStageIF, recoveryManagerIF, ftqIF)`.
+- Instantiates `FTQ ftq(ftqIF)`.
+- Instantiates `NextPCStage` with the `FTQ_IF.Fetch` modport.
+- Instantiates `DecodeStage`, `IntegerExecutionStage`,
+  `IntegerRegisterWriteStage`, and `CommitStage` with FTQ ports.
+- Removes live use of the legacy `BTB` and `BranchPredictor` modules from the
+  decoupled frontend path. They remain in the legacy `#else` path.
+
+The redirect arbiter in `Core.sv` drives `ftqIF.redir*`:
+
+- Redirect sources are interrupt, recovery, and Decode-stage early redirect.
+- PC priority is interrupt, then recovery, then Decode-stage redirect.
+- `redirFTQ_ID` is zero for interrupt, recovery FTQ ID for recovery, and Decode
+  FTQ ID for Decode-stage redirect.
+- `redirFlushAll` is asserted only for interrupt.
+- `redirGhist` exists in the interface but is currently tied to zero and is not
+  used by `DecoupledBPU`.
+
+### FTQ Data Model
+
+The FTQ has 16 entries:
+
+```systemverilog
+localparam int FTQ_ENTRY_NUM = 16;
+localparam int FTQ_INDEX_WIDTH = $clog2(FTQ_ENTRY_NUM);
+localparam int FTQ_PTR_WIDTH = FTQ_INDEX_WIDTH + 4;
+typedef logic [FTQ_PTR_WIDTH-1:0] FTQ_Ptr;
+typedef FTQ_Ptr FTQ_ID;
+```
+
+`FTQ_ID` is the full FTQ pointer value, not only the low index bits. The low
+bits select the physical FTQ array entry through `ToFTQ_Index(id)`. The upper
+bits let downstream stages distinguish wrapped generations.
+
+`FTQ_Entry` contains:
+
+- Fetch block identity:
+  - `valid`
+  - `startPC`
+  - `fetchEndPC`
+  - `predTarget`
+- Scalar prediction summary:
+  - `predTaken`
+  - `brOffsetBytes`
+  - `brInsnBytes`
+  - `btbHit`
+  - `isCondBr`
+- Gshare update metadata:
+  - `ghistSnapshot`
+  - `phtIndex`
+  - `phtPrevValue`
+- Execute resolution metadata:
+  - `resolved`
+  - `execBrAddr`
+  - `execIsCondBr`
+  - `execTaken`
+  - `execTarget`
+  - `execPredTaken`
+  - `mispred`
+  - `execGlobalHistory`
+  - `execPhtPrevValue`
+- Per-lane compatibility metadata:
+  - `lanePred[FETCH_WIDTH]`
+  - `execLanePred[FETCH_WIDTH]`
+
+`lanePred` is used by Decode for early branch handling. `execLanePred` is used
+by Execute for the later branch comparison. Both are initialized by BPU and can
+be updated by Decode for the matching PC.
+
+### FTQ Pointers and Lifetime
+
+`FTQ.sv` maintains three pointers:
+
+- `tailPtr`: next BPU enqueue position.
+- `headPtr`: next fetch block to consume.
+- `commitPtr`: oldest FTQ entry still needed by backend/commit.
+
+The queue is empty when `headPtr == tailPtr`.
+
+The queue is considered full when either:
+
+- The lifetime window from `commitPtr` to `tailPtr` reaches `FTQ_ENTRY_NUM`, or
+- The BPU runahead throttle is reached.
+
+The implemented runahead throttle is:
+
+```systemverilog
+localparam FTQ_BPU_MAX_AHEAD_ENTRY_NUM = 1;
+```
+
+So the BPU is currently allowed to produce only one unconsumed fetch block ahead
+of Fetch. The FTQ still has 16 entries because entries remain live after Fetch
+consumes them and until Commit releases them.
+
+Fetch advances `headPtr` when `NextPCStage` accepts the FTQ head:
+
+```systemverilog
+headAccepted = ftq.headValid && !stall && !clear && !redirect && !port.rst;
+ftq.fetchAdvanceHead = headAccepted;
+```
+
+Commit advances `commitPtr` through `commitReleaseValid` and
+`commitReleaseID`. A normal release happens when a committed ActiveList entry
+has `ftqLast`. Recovery also releases through the recovery FTQ ID.
+
+On interrupt redirect, `redirFlushAll` resets `headPtr`, `tailPtr`, and
+`commitPtr` and clears valid bits. On non-interrupt redirect, FTQ moves
+`headPtr` and `tailPtr` to the entry after `redirFTQ_ID` within the current
+`commitPtr..tailPtr` window. This drops younger speculative fetch entries while
+preserving older entries that can still be needed for backend commit/recovery.
+
+### DecoupledBPU
+
+`DecoupledBPU.sv` implements the live predictor path. It still uses BTB plus
+gshare PHT:
+
+- BTB and PHT arrays are instantiated inside `DecoupledBPU`.
+- PHT index is formed by XORing PC index bits with the speculative global
+  history.
+- Reset initializes BTB entries invalid and PHT counters to weak taken.
+
+The BPU has a one-cycle SRAM-read style pipeline:
+
+- The read address is `readPC`.
+- SRAM outputs are interpreted in the next registered state:
+  - `bpS1PC`
+  - `bpS1LanePC[FETCH_WIDTH]`
+  - `bpS1Ghist`
+  - `bpS1Valid`
+
+`readPC` selection:
+
+1. Redirect PC when `ftq.redirValid` or recovery is active.
+2. Hold `bpS1PC` when `ftq.ftqFull`.
+3. Otherwise use the previous S1 entry's predicted target or sequential end PC.
+
+The BPU enqueues when S1 is valid, there is no redirect, and FTQ is not full.
+
+For each lane, the BPU checks:
+
+- The lane is within the current I-cache line.
+- BTB valid/tag hit.
+- PHT MSB predicts taken.
+
+If more than one lane predicts taken, the earliest taken lane wins. If no lane
+predicts taken, the fetch block ends at the sequential end of the block, clipped
+to the current I-cache line.
+
+#### BTB SRAM Organization
+
+The implemented BTB is a direct-indexed SRAM table, not a fully associative
+CAM. The current configuration uses 1024 entries:
+
+- `BTB index = PC[11:2]` because instructions are 4-byte aligned and
+  `log2(1024) = 10`.
+- `BTB tag = PC[15:12]`; this is only a partial tag, so aliasing is possible.
+- Each fetch lane independently reads the BTB using that lane's instruction PC,
+  not the cacheline address.
+
+Each BTB entry stores `valid`, partial `tag`, partial target `data`, and
+`isCondBr`. On a hit, the predicted target PC is reconstructed from the current
+PC upper bits plus the stored target bits:
+
+```systemverilog
+predTarget = { currentPC[31:15], btbEntry.data[12:0], 2'b00 };
+```
+
+This saves BTB storage and works well for local control flow, but long-range
+targets can be reconstructed incorrectly and are later recovered by branch
+resolution.
+
+The BPU writes both scalar FTQ metadata and per-lane `lanePred`/`execLanePred`
+metadata. This preserves compatibility with the existing branch resolver and
+execute branch comparison flow while allowing downstream stages to carry only an
+`FTQ_ID`.
+
+#### GHR Update and Restore
+
+On a successful enqueue, the BPU speculatively updates its global history for
+conditional BTB-hit lanes, stopping at the first predicted-taken lane.
+
+On branch misprediction, the BPU restores from the branch result carried by the
+existing backend branch result path:
+
+- Conditional branch: `(oldGlobalHistory << 1) | execTaken`.
+- Non-conditional branch: `oldGlobalHistory`.
+
+The FTQ interface has a `redirGhist` field, but the current implementation does
+not consume it.
+
+#### Predictor Update
+
+Predictor update is commit driven:
+
+- `CommitStage` asserts `bpUpdateValid[i]` for committed branch entries.
+- `DecoupledBPU` reads `ftq.bpUpdateEntry[i]`.
+- PHT updates when the FTQ entry is resolved.
+- BTB updates only for resolved taken branches.
+- PHT update uses `execBrAddr`, `execGlobalHistory`, and `execPhtPrevValue`.
+
+### NextPCStage Fetch Request Path
+
+Under `RSD_MARCH_DECOUPLED_FRONTEND`, `NextPCStage` no longer owns branch
+prediction. It selects the fetch request PC from:
+
+1. FTQ redirect PC.
+2. Interrupt PC.
+3. Recovery PC.
+4. `ftq.headEntry.startPC` when the FTQ has a head.
+5. The existing PC register output as fallback.
+
+When the FTQ head is accepted, `NextPCStage` creates a `FetchStageRegPath` lane
+packet:
+
+- `pc = ftq.headEntry.startPC + lane * INSN_BYTE_WIDTH`
+- `ftqID = ftq.headID`
+- `valid = lane PC is before fetchEndPC and does not cross the I-cache line`
+- `ftqLast = last valid lane in this FTQ fetch block`
+
+The I-cache request address is:
+
+- Redirect PC during redirect.
+- The stalled IF-stage PC when Fetch is stalled on an existing request.
+- Otherwise the selected fetch PC.
+
+There is no FTQ-to-I$ bypass in the current RTL. Fetch consumes the FTQ head
+through `NextPCStage`.
+
+### FetchStage Packet Buffer
+
+`FetchStage.sv` keeps the existing RSD instruction-lane interface and adds a
+conservative fetch packet buffer under the decoupled macro.
+
+The buffer is:
+
+```systemverilog
+localparam int FETCH_BUFFER_ENTRY_NUM = 4;
+```
+
+Each entry stores `PreDecodeStageRegPath lane[FETCH_WIDTH]`. It is not a raw
+byte stream, and it does not redesign PreDecode for compressed instructions.
+
+A packet is ready when:
+
+```systemverilog
+pipeReg[0].valid && port.icReadHit[0] && !packetCapturedReg
+```
+
+The packet is either:
+
+- Bypassed directly to PreDecode when the buffer is empty and PreDecode can
+  accept it, or
+- Pushed into the four-entry buffer.
+
+Fetch applies backpressure when the current packet is ready but the buffer
+cannot accept it. I-cache miss behavior is still the existing frontend stall:
+
+```systemverilog
+pipeReg[0].valid && !port.icReadHit[0]
+```
+
+`packetCapturedReg` prevents the same I-cache response from being pushed more
+than once during a stall.
+
+Branch prediction is no longer calculated in `FetchStage` under the decoupled
+macro. `updateBrHistory` is driven false there, and Decode/Execute recover
+prediction metadata through the FTQ.
+
+### I-Cache Prefetch
+
+The implemented prefetcher is a simple next-line request path:
+
+- `NextPCStage` requests a prefetch for `NextICacheLineAddr(startPC)` when it
+  accepts an FTQ head and the FTQ entry is not predicted taken.
+- `ICache.sv` has a two-entry prefetch queue.
+- Demand fetch has priority over queued prefetch work.
+- Prefetch probing starts only when the I-cache is in `ICACHE_PHASE_READ_CACHE`,
+  there is no demand read, the prefetch queue is non-empty, and there is no
+  flush request.
+
+The I-cache does not have an MSHR in this implementation. A prefetch miss uses
+the existing I-cache miss FSM:
+
+1. `ICACHE_PHASE_PREFETCH_PROBE`
+2. `ICACHE_PHASE_MISS_READ_MEM_REQUEST`
+3. `ICACHE_PHASE_MISS_READ_MEM_RECEIVE`
+4. `ICACHE_PHASE_MISS_WRITE_CACHE`
+
+If a prefetch probe hits, it updates NRU state and pops the queue entry. If a
+demand fetch appears during a prefetch probe, demand fetch wins and the prefetch
+entry is retried later.
+
+### FTQ Metadata Full Lifecycle
+
+The implemented design keeps the FTQ entry live from prediction until the fetch
+block commits or is recovered. Downstream stages carry `FTQ_ID` rather than a
+full `BranchPred` struct.
+
+Lifecycle:
+
+1. BPU enqueues an `FTQ_Entry`.
+2. `NextPCStage` assigns `ftqID` and `ftqLast` to fetch lanes.
+3. `FetchStage`, `PreDecodeStage`, `DecodeStage`, and `RenameStage` carry
+   `ftqID` and `ftqLast`.
+4. `RenameStage` writes `ftqID` and `ftqLast` into ActiveList entries.
+   `ftqLast` is kept only on the last micro-op of the final instruction in the
+   FTQ fetch block.
+5. `DispatchStage` writes `ftqID` into integer branch subinfo and into complex,
+   memory, and FP issue queue entries.
+6. `IntegerExecutionStage` reads `execLanePred` from FTQ using `ftqID` and PC,
+   then compares the actual branch result against that prediction.
+7. `IntegerRegisterWriteStage` writes resolved branch metadata back to the FTQ
+   through `execResolve*`.
+8. Complex, memory, and FP writeback stages propagate `ftqID` into
+   `ActiveListWriteData` so recovery can identify the correct FTQ point even
+   when the recovering op is not an integer branch.
+9. `ActiveList` records the oldest recovery FTQ ID.
+10. `RecoveryManager` forwards recovery FTQ IDs to the frontend redirect path.
+11. `CommitStage` sends branch predictor updates and releases FTQ entries when
+    committed ActiveList entries carry `ftqLast`.
+
+This is the "full lifecycle" FTQ path in the current RTL: the entry is held
+past Fetch and Decode, is visible to Execute and Commit, and is released only
+after the corresponding fetch block has committed or recovery has selected the
+entry.
+
+### Decode-Stage FTQ Use
+
+`DecodeStage` reads FTQ entries for each decode lane:
+
+```systemverilog
+ftq.decodeReadID[i] = pipeReg[i].ftqID;
+brPredIn[i] = FTQBranchPredForPC(ftq.decodeReadEntry[i], pipeReg[i].pc);
+```
+
+The existing `DecodedBranchResolver` still performs early redirect detection.
+When Decode completes, it writes corrected lane prediction metadata back into
+the FTQ:
+
+```systemverilog
+ftq.decodeUpdateValid[i]
+ftq.decodeUpdateID[i]
+ftq.decodeUpdatePC[i]
+ftq.decodeUpdatePred[i]
+```
+
+`FTQ.sv` updates both `lanePred` and `execLanePred` for the matching PC. This
+keeps Decode's early branch handling and Execute's later branch comparison
+consistent for the same instruction.
+
+Decode-stage redirects also carry `nextFlushFTQ_ID` and `nextFlushPC`. For
+cases where Decode's early redirect would require already-renamed backend work
+to be flushed, `RenameStage` and `RecoveryManager` support a rename-stage
+recovery path under the decoupled frontend macro.
+
+### Recovery and Squash
+
+Frontend redirect sources are:
+
+- Interrupt redirect from `NextPCStageIF`.
+- Recovery redirect from `RecoveryManager`.
+- Decode-stage early redirect from `DecodeStage`.
+
+The FTQ redirect ID is the instruction/fetch block that caused the redirect.
+Normal redirect sets the FTQ fetch and enqueue pointers to the entry after that
+ID, removing younger predictions. Interrupt redirect flushes the whole FTQ.
+
+Backend selective flush still uses ActiveList ranges. The FTQ ID is additional
+frontend metadata used to align the predictor/fetch queue with the backend
+recovery point.
+
+### What This Implementation Does Not Do
+
+The following items were in earlier design notes but are not implemented:
+
+- No `RSD_MARCH_DECOUPLED_FE` macro. The macro is
+  `RSD_MARCH_DECOUPLED_FRONTEND`.
+- No raw-byte instruction buffer.
+- No compressed-instruction byte-stream PreDecode redesign.
+- No FTQ-to-I$ bypass.
+- No sixteen-block BPU runahead. Current runahead is one unconsumed FTQ entry.
+- No I-cache MSHR.
+- No independent architectural GHR register driven by `redirGhist`.
+- No separate standalone prefetch arbiter. Prefetch is integrated into
+  `ICache.sv`.
+
+### Validation Status
+
+The decoupled frontend checkpoint was validated with the existing RSD functional
+test flow. Local benchmark staging for Dhrystone and CoreMark is wired and has
+run successfully:
+
+| Test | Result | Elapsed cycles |
+| --- | --- | ---: |
+| Dhrystone | PASS | 1,182,719 |
+| CoreMark | PASS | 4,209,057 |
+
+Embench is intentionally not part of the regular FE validation loop because the
+full suite is too long for iteration.
+
+## Part 3 — Backend Microarchitecture Details
+
+This section is the backend review placeholder for a Qualcomm-style CPU performance modeling interview. Use it to connect generic out-of-order backend concepts to the RSD implementation, then compare against BOOM or another open-source OoO core when useful.
+
+### 1. RSD Backend Snapshot
+
+RSD parameters to remember:
+- Fetch / decode / rename / dispatch width: 2.
+- Commit width: 2.
+- Physical scalar integer registers: 64.
+- Issue queue entries: 16.
+- ActiveList entries: 64; this is RSD's ROB-equivalent structure.
+- Load queue / store queue entries: 16 / 16.
+- Integer issue width: 2; complex integer issue width: 1 unless unified with memory; memory issue width: 2 in the split load/store configuration.
+
+Primary code anchors:
+- `MicroArchConf.sv` — backend sizing knobs.
+- `Pipeline/RenameStage.sv` — rename, allocation, serialization checks.
+- `Pipeline/DispatchStage.sv` — dispatch into scheduler / issue structures.
+- `Scheduler/` — source readiness, wakeup/select, issue queue, replay.
+- `RenameLogic/ActiveList.sv` — ROB-like in-order allocation, completion state, recovery bookkeeping.
+- `Pipeline/CommitStage.sv` — commit decision, store/load release, recovery trigger.
+- `Recovery/RecoveryManager.sv` — frontend/backend flush and recovered PC selection.
+
+### 2. Rename
+
+What to explain:
+- Logical registers are mapped to physical registers through rename-table state.
+- A destination register allocates a fresh physical register; the old physical register is retained until commit so precise state can be restored.
+- Source operands read producer tags and readiness; renamed operands carry physical register numbers and issue-queue dependency information.
+- Rename allocates backend resources in program order: ActiveList entry, issue-queue entry, LQ/SQ entry for memory ops, and physical destination register when needed.
+- Rename must stall on resource pressure: ActiveList full, issue queue full, free-list empty, LQ/SQ full, or a serialized instruction that requires an empty machine.
+
+RSD-specific notes:
+- Serialized ops such as fences use rename-stage gating, because they need prior committed state and an empty store queue before entering the backend.
+- RSD records LSQ recovery pointers with each op so a recovery can restore LQ/SQ tail state.
+
+Interview prompts:
+- Why does rename need both speculative and committed mapping tables?
+- What happens when a destination physical register is freed too early?
+- Where does backpressure first show up when the backend is full?
+
+### 3. ROB / ActiveList
+
+Generic ROB state model:
+- **Allocated / busy / not finished**: entry exists, but execution result has not reached writeback.
+- **Executed / complete**: functional unit has produced result or fault state; entry waits for older entries.
+- **Exception / recovery pending**: entry contains branch misprediction, replay, trap, or fault metadata.
+- **Committed / retired**: head entry updates architectural state and is popped.
+- **Squashed / flushed**: younger speculative entries are removed after redirect, exception, or replay recovery.
+
+RSD-specific model:
+- `ActiveList.sv` is a FIFO with tail allocation and head commit/recovery readout.
+- Main entry RAM stores metadata such as PC, destination register, load/store flags, branch flags, FTQ ID, and LSQ pointers.
+- A separate execution-state RAM tracks whether each entry is still unfinished or can be treated as successful at commit.
+- A recovery register records the oldest in-flight recovery point from writeback stages, including PC, execution state, fault address, and LSQ pointers.
+
+Key details to remember:
+- The ROB/ActiveList gives precise exceptions because commit is still in order.
+- Head pointer moves forward only for committed entries.
+- Tail pointer moves forward on allocation; on squash, tail is effectively rewound by recovery logic.
+- Multi-uop instructions need a `last` marker or equivalent so commit can retire complete instructions, not half an instruction.
+
+### 4. Issue Queue
+
+What to explain:
+- The issue queue holds renamed but not-yet-issued micro-ops.
+- Entries store source tags, destination tags, op class, ActiveList pointer, LSQ pointers, and execution metadata.
+- The queue can be unified or split by type. Unified queues improve utilization but cost more CAM/selection power; split queues simplify select and routing but can fragment capacity.
+
+RSD-specific notes:
+- RSD has scheduler data plus type-specific issue payloads for integer, complex integer, memory, and optional FP paths.
+- The scheduler tracks selected entries and then routes them into the matching issue stage.
+- ReplayQueue is shared across pipes; this matters for performance modeling because a memory-heavy workload can create global replay pressure.
+
+Interview prompts:
+- Why is issue-queue wakeup/select often a timing-critical loop?
+- What is the tradeoff between issue queue size and frequency/power?
+- How would widening issue affect CAM comparisons and select arbitration?
+
+### 5. Wakeup / Select
+
+Wakeup:
+- Producers broadcast destination physical tags when results become available.
+- Waiting issue-queue entries compare source tags against broadcast tags.
+- When all required operands are ready, the entry becomes eligible to issue.
+
+Select:
+- Select chooses ready entries for available functional-unit ports.
+- Policies usually prioritize older ops for fairness and forward progress, while also respecting port type and replay constraints.
+- Stores often do not wake up consumers because their architectural destination is memory, not a register.
+
+RSD-specific notes:
+- `Scheduler/WakeupLogic.sv`, `SourceCAM.sv`, `ProducerMatrix.sv`, and `SelectLogic.sv` are the key anchors.
+- RSD explicitly notes that store ports do not wake consumers; load and ALU writebacks do.
+
+Performance-modeling hooks:
+- Model wakeup/select as one or more cycles depending on issue queue size and target frequency.
+- Count issue conflicts separately from operand-not-ready stalls.
+- Track per-port utilization to identify structural bottlenecks.
+
+### 6. Execute
+
+Backend execution groups to review:
+- Integer ALU: branch resolution, simple arithmetic, address-independent integer ops.
+- Complex integer: multiply/divide, potentially longer latency or pipelined execution.
+- Memory: address generation, D$ access, SQ forwarding, MSHR allocation, replay.
+- FP/vector if implemented: longer pipelines, separate register file and bypass network.
+
+RSD-specific notes:
+- Integer branch resolution happens in the integer backend and writes branch result metadata.
+- Memory execution has multiple backend stages: address, tag, data, writeback.
+- Long-latency operations must either hold pipeline state, reserve replay resources, or write back when complete.
+
+### 7. Commit and Recovery Overview
+
+Commit rules:
+- Commit only the oldest contiguous completed instructions.
+- Commit updates the committed rename map, releases old physical registers, releases committed LQ entries, and marks retired stores for store-commit processing.
+- Store data should not update memory architecturally until the store is safe to retire.
+
+Recovery rules:
+- Branch misprediction and some replay conditions may be detected before the mispredicted op reaches ROB head.
+- Exceptions, traps, and CSR-visible events usually wait until commit to preserve precise architectural state.
+- Recovery chooses a flush range, restores rename/LSQ/FTQ state, and sends a recovered PC to the frontend.
+
+RSD-specific notes:
+- RSD can start recovery from writeback for refetch-style events while CSR-visible traps/faults are handled at commit.
+- `RecoveryManager.sv` always flushes the frontend during recovery; backend structures use selective flush based on ActiveList pointer range.
+- This gives a concrete example for discussing full flush versus early restart.
+
+### 8. Backend Review Checklist
+
+- Can I draw rename -> dispatch -> schedule -> issue -> register-read -> execute -> writeback -> commit?
+- Can I explain what each ROB/ActiveList entry stores?
+- Can I explain why branch recovery can sometimes start before commit, while exceptions wait until commit?
+- Can I explain how a store becomes architectural later than a register-writing ALU op?
+- Can I map each backend concept to one RSD source file?
+
+## Part 4 — LSU + L1D Optimization Specification
+
+Source: `design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/LSU_Optimization.md`
+
+Diagram assets remain under `design_and_perf/rsd_fengze/Processor/Src/Cache/diagrams/`.
+
+**Status:** DRAFT v0.1 — 2026-04-22
+**Owner:** fy2243
+**Scope:** unified load/store unit and L1 data-cache optimizations on top of current `Processor/Src/LoadStoreUnit/` and `Processor/Src/Cache/DCache.sv`
+**Gate macros:** `RSD_MARCH_LSU_SEL_SQ`, `RSD_MARCH_LSU_LRB`, `RSD_MARCH_DC_PREFETCH`, `RSD_MARCH_DC_WAYPRED` (legacy path must still build when undefined)
+
+This document is the **golden reference** for the LSU/L1D optimization block:
+- **Selective Store Queue Lookup** — reduce the 32-comparator full-CAM on every load to a partial-tag prefilter + gated full compare.
+- **Load Replay Buffer (LRB)** — dedicated structure for blocked loads; replay from LSU directly without round-tripping through IQ / ReplayQueue.
+- **L1D Next-Line Prefetcher** — issue low-priority `load_addr + line` prefetches for sequential demand loads.
+- **L1D Way Predictor** — predict the likely D$ way and gate tag-array activation; recover with a 1-cycle other-way retry on misprediction.
+
+RTL must not be written until this spec is frozen.
+
+---
+
+### 0. Unified LSU + L1D Pipeline Diagrams
+
+Top-to-bottom vertical flow through the 4 LSU stages plus the coupled L1D pipeline. The four resume-level optimizations are highlighted in yellow:
+- **Optimization A** (Selective SQ Lookup) is shown inside stage ② D$TAG — partial-tag column on the SQ, partial-tag compare row, and GATED full CAM.
+- **Optimization B** (Load Replay Buffer) is shown as the tall block on the right; captures blocked loads from stage ② D$TAG (matching legacy RSD block detection at [MemoryTagAccessStage.sv:493](design_and_perf/rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493) — `ldUpdate[i] && !ldRegValid[i]`), replays directly into stage ① D$ADDR (bypassing IQ and scheduler).
+- **Optimization C** (L1D Next-Line Prefetcher) and **Optimization D** (L1D Way Predictor) are shown as L1D blocks on the same D$ADDR/D$TAG/D$DATA path.
+
+![L1D optimized datapath](design_and_perf/rsd_fengze/Processor/Src/Cache/diagrams/dcache_datapath_vertical.png)
+
+*(source: [dcache_datapath_vertical.svg](design_and_perf/rsd_fengze/Processor/Src/Cache/diagrams/dcache_datapath_vertical.svg))*
+
+---
+
+### 1. Baseline — Current RSD LSU
+
+#### 1.1 Pipeline stages
+Loads and stores travel through four LSU-adjacent stages (names from `Processor/Src/Pipeline/MemoryBackEnd/`):
+
+| Stage | Action |
+|---|---|
+| `MemoryExecutionStage`  (D$ADDR) | Address compute; issue D$ read request through `DCacheArrayPortArbiter` |
+| `MemoryTagAccessStage`  (D$TAG)  | D$ tag compare; **SQ CAM lookup** for loads; MSHR conflict / MSHR-bypass check |
+| `MemoryAccessStage`     (D$DATA) | Data forwarding mux (SQ fwd / D$ / MSHR); result latch |
+| `MemoryRegisterWriteStage` (D$RW) | Writeback to register file |
+
+#### 1.1.1 L1D configuration (from `MicroArchConf.sv`)
+
+| Param | Value |
+|---|---|
+| `CONF_DCACHE_WAY_NUM` | 2 |
+| `CONF_DCACHE_INDEX_BIT_WIDTH` | 8 → **256 sets** |
+| `CONF_DCACHE_LINE_BYTE_NUM` | 8 |
+| Total capacity | 2 × 256 × 8 = **4 KB** |
+| `CONF_DCACHE_MSHR_NUM` | 2 |
+
+Baseline D$ organization:
+- Tag array: one read-side array slot and one write-side array slot. The read-side slot indexes all tag-way arrays in parallel; current `DCacheTagSRAM_TSMC16` has no read-enable input and ties the SRAM `REB` low.
+- Data array: functionally selects one `hit_way` in D$DATA, but current wrappers index every data-way array and then mux the selected way.
+- Misses allocate one of two D$ MSHRs; fills write back into a normal D$ way using tree-LRU replacement.
+- There is no demand-triggered prefetcher and no way predictor today.
+
+#### 1.2 Key structures (baseline)
+| Structure | Size | Source | Notes |
+|---|---|---|---|
+| Load Queue (LQ) | 16 | [LoadQueue.sv](design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/LoadQueue.sv) | FIFO, tracks in-flight loads; allocated at rename |
+| Store Queue (SQ) | 16 | [StoreQueue.sv](design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/StoreQueue.sv) | Address/control metadata is a flop array; store data is `DistributedMultiPortRAM`; FIFO discipline |
+| Global ReplayQueue | 20 | `Processor/Src/Scheduler/ReplayQueue.sv` | **Shared across all pipes** — any stall fills it |
+| MSHR | 2 | in DCache | Miss tracking |
+
+#### 1.2.1 Store Queue / Store Buffer Discussion
+
+Why we need it:
+- Stores cannot update cache/memory while speculative, because an older branch, exception, or replay may squash them.
+- Loads younger than a store still need correct data if they read the same address, so the store buffer must support store-to-load forwarding.
+- Stores often miss in cache or wait for memory; buffering lets the core retire the store logically and drain it to the memory hierarchy later.
+- The store buffer preserves memory ordering by keeping stores in program order and by exposing unresolved older stores to younger loads.
+
+Generic store-buffer responsibilities:
+- Allocate an entry at rename/dispatch for every store.
+- Capture address, byte mask, word mask, data, and condition/valid state when the store executes.
+- Forward matching bytes to younger loads.
+- Detect partial-forwarding cases where the store covers only part of the load.
+- Drain committed stores to L1D in order.
+- Recover tail state when younger speculative stores are flushed.
+
+RSD implementation:
+- `StoreQueue.sv` has 16 FIFO entries with `headPtr` / `tailPtr`. The address/control side is a flop array; store data is in a `DistributedMultiPortRAM`.
+- Store address/data are written when the store executes; `finished` marks an address/data entry usable for forwarding.
+- On each load, `StoreQueue.sv` compares the load block address and byte/word enables against older finished SQ entries, then uses `CircularRangePicker` to select the relevant store.
+- If a matching store does not cover all requested bytes, RSD marks a forwarding miss and the load is recovered/replayed.
+- `StoreCommitter.sv` drains retired stores through a commit pipeline: `Commit -> SQ read -> D$ tag -> D$ data`.
+- D$ writes are acknowledged through `dcWriteReqAck`; a store miss can allocate an MSHR and stall the store-commit pipeline until the writeback/refill path completes.
+
+Interview framing:
+- Store queue before commit = speculative memory-order structure.
+- Store commit pipeline after commit = non-speculative drain path into D$ / memory.
+- A high-performance core may add a separate write buffer below L1 so committed dirty data can move toward L2 without blocking the L1 pipeline.
+
+#### 1.2.2 ICache / DCache Port Conflicts and Banking
+
+Port conflicts:
+- Caches are usually built from SRAM macros with limited read/write ports.
+- If two clients need the same physical cache port in the same cycle, one must stall, replay, arbitrate, or use another bank.
+- D$ conflicts are common because loads, retired stores, MSHR fills, MSHR victim reads, flushes, and prefetches all want tag/data access.
+
+RSD D$ implementation:
+- `DCache.sv` exposes one read-side array port and one write-side array port.
+- `DCacheArrayPortArbiter` arbitrates LSU read/write traffic, MSHR traffic, flush traffic, and prefetch probes.
+- Loads use the read-side port; retired stores first read tags and then write data on a hit through `dataWE_OnTagHit`.
+- MSHR fills and dirty victim writebacks compete with demand requests, so arbitration policy affects miss latency and demand-hit interference.
+
+RSD I$ implementation:
+- `ICache.sv` has a demand fetch path, miss handling, flush handling, and a next-line prefetch queue.
+- Demand fetch has priority over queued prefetch probe/fill work.
+- Because RSD has no real TLB/PTW path, I$ indexing/tagging is directly physical-address based in this design.
+
+Banking review:
+- Banking increases bandwidth by splitting arrays into independent banks.
+- Bank conflicts happen when two same-cycle accesses map to the same bank.
+- Common bank selects use low-order set bits or address-interleaving bits; the choice affects sequential access conflicts.
+- Banking is different from associativity: associativity gives placement choices, banking gives parallel access resources.
+
+#### 1.3 SQ lookup today (the CAM)
+On every load in `D$TAG`, a **full associative CAM** runs ([StoreQueue.sv:285-294](design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/StoreQueue.sv#L285-L294)):
+
+```
+for each load i (0..LOAD_ISSUE_WIDTH-1):
+    for each SQ entry j (0..15):
+        addrMatch[i][j] = sq[j].finished
+                        AND sq[j].address == ToBlockAddr(load[i].addr)
+                        AND (sq[j].wordWE & load[i].wordRE) != 0
+                        AND (sq[j].byteWE & load[i].byteRE) != 0
+```
+
+- **16 full block-address comparators active per executed load** in the current core (`CONF_LOAD_ISSUE_WIDTH=1`, `STORE_QUEUE_ENTRY_NUM=16`). This scales as `LOAD_ISSUE_WIDTH × STORE_QUEUE_ENTRY_NUM` if the load pipe is widened later.
+- No gating — every comparator is live regardless of whether a match is plausible.
+- `CircularRangePicker` then selects oldest-matching store between SQ head and load's `storeQueuePtr`.
+
+#### 1.4 Load blocking and replay today
+A load that cannot complete is detected at D$TAG ([MemoryTagAccessStage.sv:493](design_and_perf/rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493) — `ldUpdate[i] && !ldRegValid[i]`) and blocks via the **global ReplayQueue**:
+
+| Block reason | Today's handling |
+|---|---|
+| D$ miss | MSHR allocated; load goes into global ReplayQueue carrying full IQ entry; replays when MSHR completes |
+| SQ partial forwarding | Exec state `STORE_LOAD_FORWARDING_MISS`; **flushed and re-issued by scheduler** |
+| Memory ordering violation | Flushed with memory-dep predictor training |
+
+Problems:
+- Global ReplayQueue is **shared** across int/complex/mem/FP. When it's full, **the whole core stalls** (threshold = 20 − ISSUE_QUEUE_MEM_LATENCY = 17 entries).
+- Each replayed load carries a full IQ entry (operand data + active list ptr + …) — heavy.
+- Replay path goes back through the scheduler, adding latency.
+
+#### 1.5 File inventory
+| File | Role |
+|---|---|
+| `LoadStoreUnitTypes.sv` | LQ/SQ entry structs, addr/data paths, byte/word enable |
+| `LoadStoreUnitIF.sv` | Modports for LQ, SQ, StoreCommitter, main LSU |
+| `LoadQueue.sv` | 16-entry LQ; store→load memory-ordering check |
+| `StoreQueue.sv` | Address/control metadata array + store-data RAM; 16-entry CAM for SQ→load forward |
+| `StoreCommitter.sv` | Commit pipeline; retired stores → D$ |
+| `LoadStoreUnit.sv` | Top-level mux + arbitration (SQ fwd / D$ / MSHR) |
+| `Processor/Src/Cache/DCache.sv` | L1D tag/data pipeline, MSHR, refill, arbiter |
+| `Processor/Src/Cache/DCacheSRAM.sv` | D$ SRAM wrappers |
+| `Processor/Src/Cache/DCacheIF.sv` | D$ interface signals |
+| `Processor/Src/Cache/CacheSystemTypes.sv` | D$ path types, MSHR types, cache parameters |
+
+#### 1.6 Fit of proposed optimizations to current RTL
+
+| Optimization | Current RTL fit | Notes |
+|---|---|---|
+| Selective SQ lookup | Good | `StoreQueue.sv` already has one local 16-entry load→store CAM; adding `ptag` is localized. |
+| Load Replay Buffer | Invasive | RSD has separate LQ/SQ, but blocked loads currently route through global `ReplayQueue`; LRB needs a new capture path, replay mux, and recovery handling. |
+| L1D next-line prefetcher | Medium | DCache already has MSHRs and an array arbiter, but prefetch must be a strictly lowest-priority read-side requester and low-priority MSHR allocator. |
+| L1D way predictor | Medium-high | The predictor table is small, but real power savings require adding per-way tag read enables through `DCacheIF`, `DCacheArray`, and `DCacheTagSRAM_TSMC16`. |
+
+---
+
+### 2. Goals & Non-Goals (v1)
+
+#### Goals
+1. **Selective SQ lookup** — cut CAM power ≥ 60 % by gating the current 16 per-load SQ full comparators with a cheap partial-tag prefilter. Timing-neutral or better.
+2. **Load Replay Buffer** — remove load-replay pressure from the shared ReplayQueue. Blocked loads replay directly from LSU without IQ / scheduler round-trip. Non-load pipes (int, complex, FP) stay free of LSU stalls.
+3. **L1D next-line prefetch** — hide first-pass cold-miss latency on sequential load streams (arrays, memcpy, structure walks). Target IPC uplift ≈ 1–2 % on CoreMark / Dhrystone style loops.
+4. **L1D way prediction** — reduce tag-array activation from 2 ways to 1 predicted way per access. Target tag-array dynamic power ≈ 50 % down at high prediction accuracy.
+5. Correctness preserved — no change to memory-model semantics.
+
+#### Non-Goals
+- No change to SQ / LQ capacity (16 / 16).
+- No store-to-load forwarding policy changes (still oldest-matching, full-word match required; partial → force replay).
+- No speculative disambiguation (e.g. store-set predictor changes).
+- No changes to StoreCommitter or retirement path.
+- No changes to the memory-dependency predictor (MDT) or ReplayQueue itself.
+- Global ReplayQueue remains for non-load pipes.
+- No D$ capacity / associativity change (stays 2-way × 256 × 8 B = 4 KB).
+- No stride or stream prefetcher in v1; next-line only.
+- No prefetch buffer separate from L1D; fills go directly into normal D$ ways through the existing MSHR/refill path.
+- No coherence protocol changes (RSD is single-core).
+
+---
+
+### 3. Optimization A — Selective Store Queue Lookup
+
+#### 3.1 Idea
+
+Add a **partial-tag** column alongside the SQ address array. On every load:
+
+1. Compute load's partial tag (cheap hash of the physical block address).
+2. Compare against all 16 SQ partial tags (narrow, power-cheap).
+3. **Gate** the full-address comparators to fire only on partial-tag-matching entries.
+
+Most loads see 0–2 partial-tag hits out of 16 → only those comparators and their byte/word-enable ANDs toggle.
+
+#### 3.2 Partial-tag definition
+
+| Param | Value | Notes |
+|---|---|---|
+| `SQ_PTAG_WIDTH` | 6 bits | Covers 64 distinct tags; false-positive rate ≈ 1 in 64 per entry |
+| Hash | `block_addr[5:0] ^ block_addr[11:6]` | Cheap XOR fold of low/mid bits of `LSQ_ToBlockAddr(PhyAddrPath)` |
+
+**Why not lower bits only?** Low bits alias heavily for array-walking loads. XOR-folding the mid bits spreads the tag space.
+
+#### 3.3 SQ entry additions
+
+```
+typedef struct packed {
+    // --- existing fields ---
+    logic                        regValid;
+    logic                        finished;
+    LSQ_BlockAddrPath            address;
+    LSQ_BlockWordEnablePath      wordWE;
+    LSQ_WordByteEnablePath       byteWE;
+    // --- new ---
+    logic [SQ_PTAG_WIDTH-1:0]    ptag;           // partial-tag
+} StoreQueueAddrEntry;
+```
+
+`ptag` is computed and written when the store address resolves (same cycle as existing `address` / `wordWE` write). In current RSD this widens the SQ address/control flop array, not an SRAM macro.
+
+#### 3.4 Lookup flow (D$TAG stage, updated)
+
+```
+// Cycle C1 (combinational, in D$TAG):
+load_ptag[i]     = fold_hash(load[i].addr);
+for each sq entry j:
+    ptag_hit[j]  = sq[j].finished && (sq[j].ptag == load_ptag[i]);
+
+// Gated full compare — only fires for ptag-matching entries:
+for each sq entry j:
+    full_match[i][j] =
+        ptag_hit[j]   // GATE
+        && (sq[j].address == ToBlockAddr(load[i].addr))
+        && ((sq[j].wordWE & load[i].wordRE) != 0)
+        && ((sq[j].byteWE & load[i].byteRE) != 0);
+
+// Oldest-match selection unchanged
+```
+
+RTL: use clock-gated or operand-isolated comparators. Under synthesis, `&&` on a known-false `ptag_hit` will let the tool power-gate the downstream compare (with explicit `if (ptag_hit[j])` guard).
+
+#### 3.5 Correctness
+
+- Partial-tag **never produces a false negative** (if the full address matches, the partial tag *also* matches by construction).
+- False positives are harmless — the full compare catches them, and oldest-match still selects correctly.
+- No semantic change; same store→load forwarding discipline.
+
+#### 3.6 Expected impact
+
+- **Full comparators activated per executed load**: 16 → expected `16 × P(ptag-hit)`. With P ≈ 1/64 → ≈ 0.25 full-compare activations per load on average. **≥ 95 % reduction** in full-compare switching.
+- **IPC**: neutral (same result).
+- **Timing**: compare path unchanged; new path is `load_ptag gen` (one XOR) + 16 × 6-bit compare — shorter than existing 16 × addr-width compare, so not critical.
+- **Area**: 16 × 6 = 96 additional flops in SQ address/control metadata.
+
+---
+
+### 4. Optimization B — Load Replay Buffer (LRB)
+
+#### 4.1 Idea
+
+Add a dedicated 8-entry LRB inside LSU for blocked loads. A load that can't complete is detected at D$TAG (reusing legacy `ldUpdate && !ldRegValid` — see §1.4), captured into LRB, and re-injected at the D$ADDR request path when its block condition clears — all without touching the global ReplayQueue or the scheduler.
+
+Non-load pipes see no pressure from load blockage.
+
+#### 4.2 LRB entry
+
+```
+typedef struct packed {
+    logic              valid;
+
+    // Existing RSD payload needed to recreate the memory pipe state.
+    // Captured from MemoryTagAccessStage's ldPipeReg/ldRecordData.
+    MemIssueQueueEntry       memData;
+    MemoryTagAccessStageRegPath tagStagePayload;
+
+    // Resolved address fields; replay does not need to re-read source regs.
+    PhyAddrPath        addr;
+    MemoryMapType      memMapType;
+    MemAccessMode      memAccessMode;
+    ActiveListIndexPath alPtr;
+    LoadQueueIndexPath  lqId;
+
+    // --- why it blocked and what to wait for ---
+    ReplayReason       reason;       // { MSHR_PENDING, SQ_PARTIAL_FWD, GENERIC_RETRY }
+    MSHR_IndexPath     mshrId;       // valid if reason == MSHR_PENDING
+    StoreQueueIndexPath sqBlockerId; // valid if reason == SQ_PARTIAL_FWD
+} LRB_Entry;
+```
+
+This is intentionally closer to the existing RSD replay payload than a minimal load-only record. It reduces decode/rebuild risk because `MemoryTagAccessStage` currently records blocked loads as `MemIssueQueueEntry` for the global ReplayQueue.
+
+**Width**: roughly one compact memory-pipe payload plus address/reason fields. Expect low-kbit flop storage for 8 entries, not a large SRAM.
+
+#### 4.3 LRB parameters
+
+| Param | Value | Notes |
+|---|---|---|
+| `LRB_ENTRY_NUM` | 8 | Power of 2 |
+| `LRB_INDEX_WIDTH` | 3 | |
+
+#### 4.4 Allocate / deallocate
+
+| Event | Action |
+|---|---|
+| Load reaches D$TAG but **can't complete** (cache miss / MSHR not ready, SQ forward miss, operand-not-ready replay) | Capture into LRB (reuses legacy `ldUpdate && !ldRegValid` detection at [MemoryTagAccessStage.sv:493](design_and_perf/rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493)); do **not** enter global ReplayQueue |
+| LRB entry is granted for replay | Free that LRB entry; if the replay still cannot complete, normal D$TAG detection recaptures it |
+| Recovery / flush | Walk LRB; invalidate entries whose `alPtr` is ≥ redirect point |
+| LRB full + new blocked load arrives | **Stall this load in D$TAG** (single-lane stall); do not stall scheduler globally |
+
+#### 4.5 Replay engine
+
+Every cycle the LRB monitors clear conditions:
+- `mshrValid[mshrId] && mshrPhase[mshrId] >= MSHR_PHASE_MISS_WRITE_CACHE_REQUEST` → same readiness test used by the current global ReplayQueue before replaying MSHR-backed loads.
+- `SQ[sqBlockerId]` becomes executable/forwardable → requires a new `StoreQueue.sv` output because current `pickedPtr` / forward-miss blocker information is internal.
+- Operand-not-ready / generic replay entries can use a conservative retry policy or stay in the global ReplayQueue in v1; memory-data waits are the primary LRB target.
+
+When a condition clears:
+1. Select the oldest (by `alPtr`) ready LRB entry.
+2. Re-inject it into `D$ADDR` / `D$TAG` in the next idle load slot (arbitrated against fresh scheduler loads).
+
+#### 4.6 Arbitration at D$ADDR
+
+The load port accepts one of:
+- Fresh load from scheduler (existing `MemoryExecutionStage` path)
+- Replay from LRB
+
+Priority: **LRB replay > scheduler load** for the single load issue lane (`CONF_LOAD_ISSUE_WIDTH=1`). Implementation is a mux around the load request and the `MemoryExecutionStage → MemoryTagAccessStage` payload so the replayed entry sees a normal D$ADDR/D$TAG/D$DATA sequence.
+
+#### 4.7 Interaction with global ReplayQueue
+
+Global ReplayQueue **still exists** for int / complex / FP pipes. Under macro `RSD_MARCH_LSU_LRB`, the load path stops feeding it:
+
+- Loads enter LRB instead.
+- If LRB is full, the *load* stalls — not the whole scheduler.
+- Global RQ's MSHR-readiness logic remains useful as the reference policy, but the memory-load feed is gated off under the macro.
+
+#### 4.8 Interaction with MDP (memory-dep predictor)
+
+Memory-ordering violations still train MDP as today. After training, the offending load is invalidated (redirect from commit); it does not loop via LRB. LRB only holds loads waiting for **data** to arrive, not loads that committed misordered.
+
+#### 4.9 Expected impact
+
+- Loads that would have filled global ReplayQueue now sit in LRB → **fewer full-core stalls**.
+- Replay path is **shorter** (no IQ round-trip). Measured as latency from MSHR-complete to load writeback:
+  - Today: MSHR complete → ReplayQueue pop → scheduler select → IQ issue → D$TAG → D$DATA → D$RW = 5–7 cycles
+  - With LRB: MSHR ready → LRB select → D$ADDR request → D$TAG → D$DATA → D$RW = **4 cycles**
+- Expected IPC gain on memory-latency-bound loops (pointer chasing in CoreMark, Dhrystone D$ array walks): **1–2 %**.
+
+#### 4.10 Implementation effort / risk
+
+LRB is a **medium-to-high effort** change because RSD already has separate LQ/SQ but does **not** have an LSU-local replay injection point. The hard part is not the 8-entry buffer; it is cutting the current blocked-load path out of the global ReplayQueue cleanly.
+
+| Item | Effort | Why |
+|---|---|---|
+| LRB storage + oldest-ready picker | Low | Small 8-entry flop structure; similar age comparison to other queues |
+| Capture at D$TAG | Medium | Reuses `ldUpdate && !ldRegValid`, but must classify reason and preserve the existing memory-pipe payload |
+| Replay injection | High | Needs a mux into the single load lane around `MemoryExecutionStage` / D$ADDR and matching payload into `MemoryTagAccessStage` |
+| MSHR readiness | Low | Current ReplayQueue already uses `mshrValid` / `mshrPhase >= MSHR_PHASE_MISS_WRITE_CACHE_REQUEST` |
+| SQ-forward-miss readiness | Medium | Current `StoreQueue.sv` keeps `pickedPtr` / blocker state internal; LRB needs a blocker pointer or conservative retry policy |
+| Recovery/flush | Medium | LRB entries need active-list based invalidation like existing replay structures |
+| Verification | High | Must prove no duplicate completion, no lost load, no MSHR leak, and no ordering regression |
+
+Practical estimate: **1–2 weeks for a careful prototype**, **2–4 weeks to make it regression-clean** in this codebase. Selective SQ lookup is much smaller and should be landed first.
+
+---
+
+### 5. Optimization C — L1D Next-Line Prefetcher
+
+#### 5.1 Idea
+
+On every demand **load** access in D$ADDR, compute the next cache-line address and enqueue it into a small prefetch queue if simple safety gates pass. A low-priority prefetch engine drains the queue when the D$ read-side array slot is idle, probes the tag array, and allocates an MSHR only on a tag miss.
+
+Stores do not trigger v1 prefetches. Demand load/store traffic always wins arbitration over prefetch traffic.
+
+#### 5.2 Address generation
+
+```
+prefetch_addr = (load_addr & ~(DCACHE_LINE_BYTE_NUM - 1)) + DCACHE_LINE_BYTE_NUM
+              = (load_addr & ~7)                         + 8
+```
+
+Target: the block immediately after the demand block. This is intentionally simple and useful for RSD's tiny 8-byte line size.
+
+#### 5.3 Gating
+
+Drop the prefetch if any condition is true:
+
+| Condition | Reason |
+|---|---|
+| Access is a store | Avoid bandwidth waste on write-only streams |
+| Demand access is uncachable / non-memory | Do not prefetch MMIO or illegal regions |
+| MSHR already has an in-flight fill for this line | Already being fetched |
+| Both MSHRs busy | Demand must be protected |
+| Prefetch queue full | No back-pressure into demand path |
+| Load itself missed and this would alias its own MSHR | Avoid duplicate fill |
+
+#### 5.4 Structures
+
+```
+typedef struct packed {
+    logic              valid;
+    PhyAddrPath        addr;       // line-aligned
+} DC_PrefetchQueueEntry;
+
+DC_PrefetchQueueEntry dc_prefetch_queue [DC_PREFETCH_QUEUE_DEPTH];
+```
+
+| Param | Value | Notes |
+|---|---|---|
+| `DC_PREFETCH_QUEUE_DEPTH` | 2 | Symmetric with the frontend next-line prefetch queue |
+
+#### 5.5 Prefetch engine behavior
+
+Every cycle:
+
+1. If queue not empty, D$ read-side slot idle, and engine not busy:
+   - Pop or reserve the head entry.
+   - Issue a low-priority tag probe at `addr`.
+2. In D$TAG for the prefetch probe:
+   - Tag hit → drop; line already exists.
+   - Tag miss + free MSHR → allocate MSHR with `prefetch_flag = 1`.
+   - Tag miss + no free MSHR → drop or keep in queue; v1 default is drop to protect demand.
+3. Prefetch MSHR fills through the normal cache refill path. The prefetched line is indistinguishable from a demand-filled line once installed; `prefetch_flag` lives only in the MSHR for accounting/priority.
+
+#### 5.6 MSHR priority
+
+Prefetch is inserted below the existing LSU/MSHR read-side arbitration in `DCacheArrayPortArbiter`:
+
+```
+existing LSU/MSHR traffic > prefetch tag probe > prefetch MSHR alloc
+```
+
+Prefetch must never block a demand access. If all MSHRs are busy, the prefetch is dropped or waits in the prefetch queue depending on final policy; v1 default is no reclaim/cancel machinery.
+
+#### 5.7 Expected impact
+
+- Sequential data streams: Dhrystone string ops, CoreMark matrix/list walks, Embench memcpy-like kernels.
+- With 8-byte D$ lines, sequential loads cross lines frequently, so next-line prefetch can cover a meaningful fraction of miss latency.
+- Estimated IPC gain: **+1 % to +2.5 %** depending on MSHR saturation and memory latency.
+
+---
+
+### 6. Optimization D — L1D Way Predictor
+
+#### 6.1 Idea
+
+Current RSD instantiates one tag SRAM wrapper per way, but every read-side access presents the same read address to every way and the `DCacheTagSRAM_TSMC16` wrapper currently has no read-enable input. A 2-way cache only needs a 1-bit way prediction. In D$ADDR, read a small set-indexed prediction table and activate only the predicted way's tag SRAM in D$TAG. If the predicted way misses but the other way would hit, retry the other way in the next cycle and update the predictor.
+
+Prediction is not architecturally visible. It only controls tag-SRAM activation and a 1-cycle retry path.
+
+#### 6.2 Prediction table
+
+```
+logic [0:0] dc_way_pred_table [DCACHE_INDEX_NUM];  // 256 bits total = 32 B in current 2-way config
+```
+
+| Param | Value | Notes |
+|---|---|---|
+| `DC_WAY_PRED_ENTRY_NUM` | 256 | = D$ set count |
+| `DC_WAY_PRED_BIT` | 1 | `$clog2(DCACHE_WAY_NUM)` for 2-way |
+| Storage | 32 bytes | Flops; too small to justify SRAM |
+
+#### 6.3 Access flow
+
+```
+// D$ADDR
+set_idx  = addr[IDX_HI:IDX_LO];
+pred_way = dc_way_pred_table[set_idx];
+tagArrayReadEnable[pred_way][READ_PORT] = 1;  // only predicted way fires
+
+// D$TAG
+pred_hit = tag_out[pred_way_r].valid &&
+           tag_out[pred_way_r].tag == addr_tag_r;
+
+if (pred_hit) {
+    hit_way = pred_way_r;
+    proceed to D$DATA;
+}
+else if (!already_retried) {
+    retry_other_way_next_cycle = 1;
+}
+else if (other_hit) {
+    hit_way = ~pred_way_r;
+    dc_way_pred_table[set_idx] <= ~pred_way_r;
+}
+else {
+    true_miss = 1;             // normal MSHR path
+}
+```
+
+Implementation note for current RSD: this is not only a predictor-table change. It also requires adding per-way tag read enables through `DCacheIF`, `DCacheArray`, and `DCacheTagSRAM_TSMC16` (`REB` is currently tied low). Generic `BlockDualPortRAM` simulation can keep functional reads from both ways, but the synthesis path needs real `tag_rd_en[way]` gating to realize the power benefit.
+
+#### 6.4 Predictor update
+
+| Event | Update |
+|---|---|
+| Hit on predicted way | No update |
+| Hit on other way after retry | `table[set_idx] <= ~pred_way` |
+| Miss fill into way `w` | `table[set_idx] <= w` |
+
+Reset initializes the table to way 0.
+
+#### 6.5 Timing / power impact
+
+- **Power**: tag SRAM activation 2 → 1 per access after per-way read-enable plumbing, so tag-array dynamic power can drop by roughly 50 % when prediction is correct.
+- **Timing**: table lookup is a small set-indexed flop array in D$ADDR.
+- **IPC**: small negative on way mispredicts. At 95 % accuracy, penalty is roughly 1 cycle × 5 % of D$ accesses, usually negligible.
+
+#### 6.6 Correctness
+
+- If prediction is wrong, the retry path checks the other way before declaring a true miss.
+- No memory-ordering, store-forwarding, or coherence semantic changes.
+- Way prediction only changes which tag SRAM toggles first.
+
+---
+
+### 7. Unified Module & Interface Changes
+
+#### 7.1 New files
+| File | Role |
+|---|---|
+| `Processor/Src/LoadStoreUnit/LoadReplayBuffer.sv` | LRB ring buffer + replay engine |
+| `Processor/Src/LoadStoreUnit/LoadReplayBufferIF.sv` | Interface |
+| `Processor/Src/Cache/DCachePrefetcher.sv` | PrefetchQueue + PrefetchEngine + tag-probe arbitration for demand-idle cycles |
+| `Processor/Src/Cache/DCachePrefetcherIF.sv` | Prefetcher ↔ DCache interface |
+| `Processor/Src/Cache/DCacheWayPredictor.sv` | 256-entry prediction table + lookup + update engine |
+| `Processor/Src/Cache/DCacheWayPredictorIF.sv` | WayPredictor ↔ DCache interface |
+
+#### 7.2 Modified files
+| File | Change |
+|---|---|
+| `Processor/Src/LoadStoreUnit/LoadStoreUnitTypes.sv` | Add `ptag` to `StoreQueueAddrEntry`; add `LRB_Entry`, `ReplayReason` |
+| `Processor/Src/LoadStoreUnit/StoreQueue.sv` | Compute + store `ptag` on SQ write; gate full CAM with `ptag_hit`; optionally expose SQ forward-miss blocker pointer |
+| `Processor/Src/Pipeline/MemoryBackEnd/MemoryExecutionStage.sv` | Add LRB replay mux before the D$ADDR load request / next-stage payload |
+| `Processor/Src/LoadStoreUnit/LoadStoreUnitIF.sv` | Signals: `lrb_replay_valid`, `lrb_replay_entry`, `lrb_full`, replay/capture sideband |
+| `Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv` | Route block condition → LRB capture (reuses legacy `ldUpdate && !ldRegValid` hook at line 493) |
+| `Processor/Src/Scheduler/ReplayQueue.sv` | Under `RSD_MARCH_LSU_LRB`, stop taking load entries |
+| `Processor/Src/Cache/DCache.sv` | Add low-priority prefetch probes/MSHR alloc; add way-pred lookup, single-way tag enable, and other-way retry |
+| `Processor/Src/Cache/DCacheSRAM.sv` | Under way predictor: add scalar `tag_rd_en` to each per-way tag SRAM wrapper |
+| `Processor/Src/Cache/DCacheIF.sv` | Add prefetch probe interface and way predictor signals |
+| `Processor/Src/Cache/CacheSystemTypes.sv` | Add `DC_PrefetchQueueEntry`, `UpdateReason`, and `prefetch_flag` in MSHR entry |
+| `Processor/Src/SynthesisMacros.sv` | Add four gate macros |
+| `Processor/Src/MicroArchConf.sv` | Add LSU/L1D optimization parameters listed in §9.1 |
+
+#### 7.3 New interfaces
+
+##### 7.3.1 `LoadReplayBufferIF`
+
+Full interface contract for Optimization B (LRB). Optimization A (selective SQ) is local to `StoreQueue.sv` and does not require a new interface.
+
+```systemverilog
+interface LoadReplayBufferIF(input logic clk, rst);
+
+    // === LSU → LRB : capture a blocked load =================================
+    logic                          captureValid;   // a load cannot complete
+    LRB_Entry                      captureEntry;   // full context (see §4.2)
+    logic                          lrbFull;        // back-pressure to LSU
+
+    // === LRB → LSU : ready-to-replay signalling =============================
+    logic                          replayValid;    // LRB has a ready entry
+    LRB_Entry                      replayEntry;
+    logic [LRB_INDEX_WIDTH-1:0]    replayId;       // pointer into LRB
+    logic                          replayGranted;  // LSU arbiter granted this replay
+
+    // === Watcher inputs (completion events that wake LRB entries) ===========
+    logic [DCACHE_MSHR_NUM-1:0]                mshrValid;
+    MSHR_Phase                                 mshrPhase[DCACHE_MSHR_NUM];
+    logic [STORE_QUEUE_ENTRY_NUM-1:0]          sqBlockerReady; // new StoreQueue sideband
+    logic                                      genericRetryTick;
+
+    // === Recovery ===========================================================
+    logic                          redirValid;     // pipeline flush / redirect
+    ActiveListIndexPath            redirAlPtr;     // oldest surviving instruction
+
+    // === Modports ===========================================================
+    modport LSU (
+        output captureValid, captureEntry,
+               replayGranted,
+        input  lrbFull,
+               replayValid, replayEntry, replayId
+    );
+
+    modport LRB (
+        input  captureValid, captureEntry,
+               replayGranted,
+               mshrValid, mshrPhase, sqBlockerReady, genericRetryTick,
+               redirValid,  redirAlPtr,
+        output lrbFull,
+               replayValid, replayEntry, replayId
+    );
+
+    modport MSHR   (output mshrValid, mshrPhase);
+    modport SQ     (output sqBlockerReady);
+    modport Recov  (output redirValid, redirAlPtr);
+endinterface
+```
+
+**Signal → diagram mapping** (see §0):
+- `captureValid`, `captureEntry` ← orange "capture" arrow from D$TAG to LRB block
+- `replayValid`, `replayEntry`, `replayGranted` ← green "replay" arrow wrapping from LRB back to D$ADDR
+- `mshrValid/mshrPhase`, `sqBlockerReady`, `genericRetryTick` ← "Watchers + Replay Engine" block inside LRB
+- `redirValid`, `redirAlPtr` ← "Recovery Walker" block inside LRB
+
+##### 7.3.2 `DCachePrefetcherIF`
+
+```systemverilog
+interface DCachePrefetcherIF(input logic clk, rst);
+    // LSU/D$ demand side -> prefetcher
+    logic                     demandValid;
+    PhyAddrPath               demandAddr;
+    logic                     demandIsStore;
+
+    // Prefetcher -> DCache low-priority tag probe
+    logic                     prefProbeValid;
+    PhyAddrPath               prefProbeAddr;
+    logic                     prefProbeGranted;
+    logic                     prefProbeHit;
+    logic                     prefProbeMiss;
+
+    // Prefetcher -> MSHR low-priority allocation
+    logic                     prefMshrAllocReq;
+    PhyAddrPath               prefMshrAllocAddr;
+    logic                     prefMshrAllocGranted;
+
+    // DCache/MSHR status back to prefetcher
+    logic [DCACHE_MSHR_NUM-1:0] mshrBusy;
+    logic [DCACHE_MSHR_NUM-1:0] mshrSameLinePending;
+endinterface
+```
+
+##### 7.3.3 `DCacheWayPredictorIF`
+
+```systemverilog
+interface DCacheWayPredictorIF(input logic clk, rst);
+    logic                              lookupValid;
+    logic [DCACHE_INDEX_BIT_WIDTH-1:0] lookupSetIdx;
+    logic [CONF_DC_WAY_PRED_BIT-1:0]   predWay;
+
+    logic                              updateValid;
+    logic [DCACHE_INDEX_BIT_WIDTH-1:0] updateSetIdx;
+    logic [CONF_DC_WAY_PRED_BIT-1:0]   updateWay;
+    UpdateReason                       updateReason; // {HIT_OTHER_WAY, MSHR_FILL}
+endinterface
+```
+
+#### 7.4 Modified Types
+
+| Type | File | Change |
+|---|---|---|
+| `StoreQueueAddrEntry` | `LoadStoreUnitTypes.sv` | add `logic [SQ_PTAG_WIDTH-1:0] ptag` (under `RSD_MARCH_LSU_SEL_SQ`) |
+| `LRB_Entry`          | `LoadStoreUnitTypes.sv` | **new** (under `RSD_MARCH_LSU_LRB`) — see §4.2 |
+| `ReplayReason` enum  | `LoadStoreUnitTypes.sv` | **new** — `{MSHR_PENDING, SQ_PARTIAL_FWD, GENERIC_RETRY}` |
+| `DC_PrefetchQueueEntry` | `CacheSystemTypes.sv` | **new** — `{valid, addr}` |
+| `UpdateReason` enum | `CacheSystemTypes.sv` | **new** — `{HIT_OTHER_WAY, MSHR_FILL}` |
+| `MissStatusHandlingRegister` | `CacheSystemTypes.sv` | add `logic prefetch_flag` under `RSD_MARCH_DC_PREFETCH` |
+| D$ tag read port | `DCacheIF.sv` / `DCacheSRAM.sv` | under `RSD_MARCH_DC_WAYPRED`, add per-way read enables |
+| `ReplayQueueEntry`   | `Scheduler/ReplayQueue.sv` | unchanged structurally, but load-feed path disabled under `RSD_MARCH_LSU_LRB` (see Step 6) |
+| (params)             | `MicroArchConf.sv`       | add LSU/L1D params listed in §9.1 |
+| (macros)             | `SynthesisMacros.sv`     | add `RSD_MARCH_LSU_SEL_SQ`, `RSD_MARCH_LSU_LRB`, `RSD_MARCH_DC_PREFETCH`, `RSD_MARCH_DC_WAYPRED` |
+
+---
+
+### 8. RTL Implementation Plan
+
+All steps compile and regress under every macro combination. A (selective SQ), B (LRB), C (D$ prefetch), and D (D$ way predictor) are orthogonal — land them independently.
+
+LSU configs:
+
+| Config | `RSD_MARCH_LSU_SEL_SQ` | `RSD_MARCH_LSU_LRB` | Meaning |
+|---|---|---|---|
+| A0 | 0 | 0 | Baseline (today's RSD). Must keep working. |
+| A1 | 1 | 0 | Selective SQ only. |
+| A2 | 0 | 1 | LRB only. |
+| A3 | 1 | 1 | Both LSU optimizations. |
+
+L1D configs:
+
+| Config | `RSD_MARCH_DC_PREFETCH` | `RSD_MARCH_DC_WAYPRED` | Meaning |
+|---|---|---|---|
+| B0 | 0 | 0 | Baseline D$. Must keep working. |
+| B1 | 1 | 0 | D$ next-line prefetch only. |
+| B2 | 0 | 1 | D$ way predictor only. |
+| B3 | 1 | 1 | Both L1D optimizations. |
+
+#### Step 1 — Types, params, macros
+**Goal**: add new types and config; no behavior change; all listed LSU/L1D configs compile.
+
+**Actions**
+- `SynthesisMacros.sv` — add `RSD_MARCH_LSU_SEL_SQ`, `RSD_MARCH_LSU_LRB`, `RSD_MARCH_DC_PREFETCH`, `RSD_MARCH_DC_WAYPRED` (default undefined).
+- `MicroArchConf.sv` — add
+  ```
+  localparam CONF_SQ_PTAG_WIDTH  = 6;
+  localparam CONF_LRB_ENTRY_NUM  = 8;
+  localparam CONF_LRB_INDEX_WIDTH = $clog2(CONF_LRB_ENTRY_NUM);
+  localparam CONF_DC_PREFETCH_QUEUE_DEPTH = 2;
+  localparam CONF_DC_WAY_PRED_ENTRY_NUM   = 256;
+  localparam CONF_DC_WAY_PRED_BIT         = $clog2(CONF_DCACHE_WAY_NUM);
+  ```
+- `LoadStoreUnitTypes.sv`:
+  - Add `typedef logic [CONF_SQ_PTAG_WIDTH-1:0] SQ_PTagPath;`
+  - Under `RSD_MARCH_LSU_SEL_SQ`: extend `StoreQueueAddrEntry` with `SQ_PTagPath ptag`.
+  - Under `RSD_MARCH_LSU_LRB`: define `ReplayReason` enum and `LRB_Entry` struct per §4.2.
+- `CacheSystemTypes.sv`:
+  - Add `DC_PrefetchQueueEntry`, `UpdateReason`.
+  - Under `RSD_MARCH_DC_PREFETCH`: add `prefetch_flag` to `MissStatusHandlingRegister`.
+
+**Regression**: `A0` and `B0` bit-identical to current master (no RTL touched).
+
+#### Step 2 — Selective SQ CAM (Optimization A)
+**Goal**: gate the current 16 full block-address comparators per load with a cheap 16 × 6-bit partial-tag filter.
+
+**File: `StoreQueue.sv`** — under `RSD_MARCH_LSU_SEL_SQ`:
+
+*New logic*
+- Compute store's `ptag` on SQ write:
+  ```
+  function SQ_PTagPath foldPTag(LSQ_BlockAddrPath a);
+      return a[5:0] ^ a[11:6];   // see §3.2
+  endfunction
+  ```
+- On SQ execute/update: `storeQueue[idx].ptag <= foldPTag(executedStoreAddr);`
+- On load lookup (D$TAG stage):
+  ```
+  load_ptag[i] = foldPTag(LSQ_ToBlockAddr(port.executedLoadAddr[i]));
+  for j in 0..15:
+      ptag_hit[i][j] = storeQueue[j].finished
+                       && (storeQueue[j].ptag == load_ptag[i]);
+  for j in 0..15:
+      addrMatch[i][j] = ptag_hit[i][j] && <existing full compare>;
+  ```
+
+*New registers*: 16 × 6 ptag flops in the existing SQ address/control metadata array.
+
+*SVA*
+```
+// partial tag is a necessary condition for a real match
+for (genvar i = 0; i < LOAD_ISSUE_WIDTH; i++) begin
+  for (genvar j = 0; j < STORE_QUEUE_ENTRY_NUM; j++) begin
+    assert property(@(posedge clk)
+      (addrMatch[i][j]) |-> (ptag_hit[i][j]));
+  end
+end
+```
+
+*Regression (A0 vs A1)*: identical architectural state on every test. Perf counter `sq_full_cam_fire` should be ≥ 10× lower on A1 vs A0.
+
+#### Step 3 — LRB module skeleton (Optimization B, compile-only)
+**Goal**: add `LoadReplayBuffer.sv` + `LoadReplayBufferIF.sv`. No capture or replay yet.
+
+**New file: `LoadReplayBufferIF.sv`** — per §7.3.1.
+
+**New file: `LoadReplayBuffer.sv`** — skeleton:
+```
+module LoadReplayBuffer(
+    LoadReplayBufferIF.LRB port,
+    input logic clk, rst
+);
+    LRB_Entry  entries [CONF_LRB_ENTRY_NUM];
+    logic      valid   [CONF_LRB_ENTRY_NUM];
+
+    always_ff @(posedge clk) begin
+        if (rst) begin
+            for (int i = 0; i < CONF_LRB_ENTRY_NUM; i++)
+                valid[i] <= 0;
+        end
+        // TODO: capture, replay, watchers, recovery
+    end
+
+    // Stub outputs — safe defaults
+    assign port.lrbFull      = 0;
+    assign port.replayValid  = 0;
+    assign port.replayEntry  = '0;
+    assign port.replayId     = 0;
+endmodule
+```
+
+**Integration stub**: `Core.sv` instantiates LRB under `RSD_MARCH_LSU_LRB` and passes `LoadReplayBufferIF` modports; no wiring of captureValid / replayGranted yet.
+
+**Regression**: A0 and A2 must compile; behaviorally identical to A0 since LRB does nothing.
+
+#### Step 4 — LRB core logic: capture + recovery
+**Goal**: accept captures; track entries; walk on redirect. Still no replay.
+
+**In `LoadReplayBuffer.sv`**:
+- Allocation: on `captureValid && !lrbFull`, write `captureEntry` into first-free slot; set `valid[slot]=1`.
+- `lrbFull` combinational = (all `valid` set).
+- Recovery walker:
+  ```
+  for i in 0..N-1:
+      if valid[i] && redirValid && isOlderOrEqual(redirAlPtr, entries[i].alPtr):
+          valid[i] <= 0;  // squash newer entries
+  ```
+
+**In `MemoryTagAccessStage.sv`** — under macro, hook into the existing `ldUpdate[i] && !ldRegValid[i]` detection at line 493 (today's ReplayQueue trigger):
+- Detect block condition using existing D$TAG signals: `dcReadHit`, `mshrReadHit`, `loadHasAllocatedMSHR/loadMSHRID`, `mshrAddrHit/mshrAddrHitMSHRID`, `storeLoadForwarded`, and `forwardMiss`.
+- Pack `LRB_Entry` from `ldPipeReg[i]` / `ldRecordData[i]` plus resolved `phyAddrOut` and reason.
+- Drive `lrbIF.captureValid = block_condition;` and `lrbIF.captureEntry = packed;`.
+- **Under macro**: do NOT feed this load into the global ReplayQueue (the existing replay-enq path is gated off).
+
+*SVA*
+```
+assert property(@(posedge clk) (lrbIF.captureValid && !lrbIF.lrbFull)
+                               |=> valid[<allocated_idx>]);
+assert property(@(posedge clk) !(lrbIF.captureValid && lrbIF.lrbFull));
+// full LRB: load must stall in D$TAG (no capture, no progress)
+```
+
+*Regression (A0 vs A2)*: identical architectural state. Perf counter: `lrb_capture_count` should be > 0 on load-miss-heavy tests.
+
+#### Step 5 — LRB replay engine + D$ADDR arbitration
+**Goal**: LRB entries wake on their watch events and replay into D$ADDR, preempting fresh scheduler loads.
+
+**In `LoadReplayBuffer.sv`**:
+- Ready mask per entry:
+  ```
+  ready[i] = valid[i] &&
+             ((entries[i].reason == MSHR_PENDING &&
+               mshrValid[entries[i].mshrId] &&
+               mshrPhase[entries[i].mshrId] >= MSHR_PHASE_MISS_WRITE_CACHE_REQUEST)
+           || (entries[i].reason == SQ_PARTIAL_FWD &&
+               sqBlockerReady[entries[i].sqBlockerId])
+           || (entries[i].reason == GENERIC_RETRY &&
+               genericRetryTick));
+  ```
+- Pick oldest ready (by `alPtr`):
+  ```
+  replayId_comb  = oldestReady(ready, entries[].alPtr);
+  replayValid    = |ready;
+  replayEntry    = entries[replayId_comb];
+  ```
+- On `replayGranted`: `valid[replayId] <= 0;`.
+
+**In `MemoryExecutionStage.sv` D$ADDR driver**:
+- Mux the single load lane before `loadStoreUnit.dcReadReq/dcReadAddr` and before `port.nextStage` is written toward `MemoryTagAccessStage`:
+  ```
+  if (lrbIF.replayValid):
+      dcReadReq   = 1;
+      dcReadAddr  = lrbIF.replayEntry.addr;
+      nextStage   = lrbIF.replayEntry.tagStagePayload;
+      lrbIF.replayGranted = 1;
+  else:
+      use existing scheduler-issued load path;
+  ```
+- Priority: LRB > scheduler. Scheduler load is held (stall at IQ) when LRB replays.
+
+*Combinational only*. No new FSM.
+
+*SVA*
+```
+// replay entry must actually have been captured earlier
+assert property(@(posedge clk) lrbIF.replayGranted |-> lrbIF.replayValid);
+// once granted, the slot frees next cycle
+assert property(@(posedge clk) lrbIF.replayGranted |=> !valid[$past(lrbIF.replayId)]);
+```
+
+*Regression (A2)*: IPC ≥ A0 on memory-latency-bound loops (expect +1–2 %).
+
+#### Step 6 — Decouple global ReplayQueue load feed
+**Goal**: under `RSD_MARCH_LSU_LRB`, no load enters the global `ReplayQueue` any more.
+
+**In `Scheduler/ReplayQueue.sv`** — guard load-enqueue logic:
+```
+`ifdef RSD_MARCH_LSU_LRB
+    assign enqLoadValid = 0;                // load-feed path disabled
+`else
+    // legacy load feed (unchanged)
+`endif
+```
+
+Non-load pipes (int / complex / FP) still feed the global RQ as before.
+
+*SVA*: `assert (!enqLoadValid)` under macro (functional assertion — there should never be a load-enq under A2/A3).
+
+#### Step 7 — D$ prefetcher skeleton and body (Optimization C)
+**Goal**: add the D$ next-line prefetcher and integrate it as a low-priority requester.
+
+**New files**
+- `DCachePrefetcherIF.sv` — per §7.3.2.
+- `DCachePrefetcher.sv`:
+  ```
+  module DCachePrefetcher(DCachePrefetcherIF.Prefetcher port, input logic clk, rst);
+      DC_PrefetchQueueEntry queue [CONF_DC_PREFETCH_QUEUE_DEPTH];
+      // addr generation, queue management, engine
+  endmodule
+  ```
+
+**In `DCachePrefetcher.sv`**
+```
+prefetch_addr = (demandAddr & ~(DCACHE_LINE_BYTE_NUM - 1)) + DCACHE_LINE_BYTE_NUM;
+drop = demandIsStore
+    || demandIsUncachable
+    || demandIsNonMemory
+    || |mshrSameLinePending
+    || &mshrBusy
+    || queueFull;
+```
+
+**In `DCache.sv`**
+- `DCacheArrayPortArbiter` gains one lowest-priority read-side requester: prefetch probe. Existing LSU/MSHR arbitration remains above prefetch.
+- MSHR alloc arbiter gains one requester: prefetch miss. Priority: demand miss > prefetch miss.
+- On prefetch MSHR allocation: `mshr[i].prefetch_flag = 1`.
+
+*SVA*
+```
+assert property(@(posedge clk) (demandAccess && prefProbeValid) |-> !prefProbeGranted);
+assert property(@(posedge clk) prefMshrAllocGranted |-> (|~mshrBusy));
+```
+
+*Regression (B1)*: architectural state matches B0; collect `dc_prefetch_issued`, `dc_prefetch_hit`, `dc_prefetch_useful`.
+
+#### Step 8 — D$ way predictor skeleton (Optimization D, compile-only)
+**Goal**: add predictor table and interface; no behavior change yet.
+
+**New files**
+- `DCacheWayPredictorIF.sv` — per §7.3.3.
+- `DCacheWayPredictor.sv`:
+  ```
+  module DCacheWayPredictor(DCacheWayPredictorIF.Predictor port, input logic clk, rst);
+      logic [CONF_DC_WAY_PRED_BIT-1:0] table [CONF_DC_WAY_PRED_ENTRY_NUM];
+      always_ff @(posedge clk) begin
+          if (rst)
+              for (int i = 0; i < CONF_DC_WAY_PRED_ENTRY_NUM; i++) table[i] <= 0;
+          else if (port.updateValid)
+              table[port.updateSetIdx] <= port.updateWay;
+      end
+      assign port.predWay = table[port.lookupSetIdx];
+  endmodule
+  ```
+
+**In `DCache.sv`**
+- Drive `lookupValid`, `lookupSetIdx` from D$ADDR.
+- Consume `predWay`, but still read both tag ways for this step.
+- Add `predWay` / `predWayReg` sideband in `DCacheArrayPortMultiplexer` so D$TAG knows which way was predicted for the read-side request.
+
+*Regression (B2 skeleton)*: bit-identical to B0.
+
+#### Step 9 — D$ single-way tag enable + other-way retry
+**Goal**: activate only predicted way's tag SRAM, recover on misprediction.
+
+**In `DCacheSRAM.sv`**
+```
+`ifdef RSD_MARCH_DC_WAYPRED
+    input logic tag_rd_en;      // scalar because DCache instantiates one tag SRAM wrapper per way
+`else
+    // legacy wrapper: read always enabled
+`endif
+```
+
+**In `DCacheIF.sv` / `DCacheArray` D$ADDR**
+```
+tagArrayReadEnable[way][READ_PORT] = (way == predWay);
+```
+
+**In `DCache.sv` D$TAG**
+```
+pred_hit = tag_out[pred_way_r].valid &&
+           tag_out[pred_way_r].tag == addr_tag_r;
+
+if (pred_hit) {
+    hit_way = pred_way_r;
+}
+else if (!already_retried) {
+    retry_state = RETRYING;
+    tagArrayReadEnable[~pred_way_r][READ_PORT] = 1;  // next cycle
+}
+else if (other_hit) {
+    hit_way = ~pred_way_r;
+    wayPredIF.updateValid  = 1;
+    wayPredIF.updateSetIdx = set_idx_r;
+    wayPredIF.updateWay    = ~pred_way_r;
+}
+else {
+    true_miss = 1;
+}
+```
+
+On MSHR fill, update predictor with the fill way.
+
+*SVA*
+```
+assert property(@(posedge clk) hit |-> (tag_out[hit_way].tag == addr_tag_r));
+assert property(@(posedge clk) (retry_state == RETRYING) |=> (retry_state != RETRYING));
+assert property(@(posedge clk) $onehot0(tagArrayReadEnable[:, READ_PORT]) || retry_state == RETRYING);
+```
+
+#### Step 10 — D$ macro feasibility check
+Before enabling Step 9 as the default path, confirm the TSMC16 tag macro wrapper exposes a real read enable. Current `DCacheTagSRAM_TSMC16` instantiates one wrapper per way, but ties macro `REB` low. The way predictor should plumb `tag_rd_en` to `REB = !tag_rd_en`; otherwise the predictor is functionally correct but has little SRAM-level power benefit.
+
+#### Step 11 — Unified regress & measure
+**Unit tests**: all LSU configs (A0/A1/A2/A3), L1D configs (B0/B1/B2/B3), and combined configs produce bit-identical final architectural state on the RSD regression suite.
+
+**Benchmarks**: Dhrystone / CoreMark / Embench. Record in §9.4:
+- IPC per config
+- `sq_full_cam_fire` / `sq_cam_activation_rate` (confirms A savings)
+- `lrb_capture_count`, `lrb_replay_latency_avg`, `replay_queue_load_enq_count` (confirms B works + displaces global RQ)
+- `core_stall_rq_full` (should go to zero on A2 / A3 for load-caused stalls)
+- `dc_prefetch_issued`, `dc_prefetch_useful`, MSHR occupancy (confirms C works without starving demand)
+- `dc_waypred_accuracy`, tag-SRAM activations/cycle (confirms D power benefit)
+
+---
+
+### 9. Scope, Parameters, Open Questions
+
+#### 9.1 Parameters
+| Param | Value | Notes |
+|---|---|---|
+| `CONF_SQ_PTAG_WIDTH` | 6 | Bits per partial tag; width chosen for ≈ 1/64 false-positive rate |
+| `CONF_LRB_ENTRY_NUM` | 8 | Per-load replay capacity |
+| `CONF_LRB_INDEX_WIDTH` | 3 | = `$clog2(CONF_LRB_ENTRY_NUM)` |
+| `CONF_DC_PREFETCH_QUEUE_DEPTH` | 2 | L1D next-line prefetch queue |
+| `CONF_DC_WAY_PRED_ENTRY_NUM` | 256 | One prediction entry per D$ set |
+| `CONF_DC_WAY_PRED_BIT` | 1 | 2-way cache |
+| `DCACHE_LINE_BYTE_NUM` | 8 | Unchanged |
+| `DCACHE_WAY_NUM` | 2 | Unchanged |
+| `DCACHE_MSHR_NUM` | 2 | Unchanged |
+| `LOAD_ISSUE_WIDTH` | 1 | Unchanged |
+| `STORE_QUEUE_ENTRY_NUM` | 16 | Unchanged |
+| `LOAD_QUEUE_ENTRY_NUM` | 16 | Unchanged |
+
+#### 9.2 Deferred
+- Store-set predictor / speculative load-store disambiguation (v1.1 candidate).
+- Partial store-to-load forwarding (today: full-word required; partial → replay).
+- Multi-bank SQ for higher load issue width.
+- Stride / stream prefetcher for L1D (v1.1 candidate).
+- PC-indexed way predictor; v1 uses set-indexed table.
+- Prefetch confidence/throttling and prefetch MSHR reclaim.
+
+#### 9.3 Open Questions (sign-off before RTL)
+- [ ] **Q1 — Partial-tag width**: 6 vs 8 bits? 8 gives 1/256 false positive but adds 32 flops. Default **6**.
+- [ ] **Q2 — Partial-tag hash**: XOR-fold of `addr[11:0]`? Or include bits from pc? Default **addr-only**, two-level XOR fold.
+- [ ] **Q3 — LRB capacity**: 4 / 8 / 16? Sized against LQ=16 and MSHR=2. Default **8** — covers the common case of 2 in-flight misses + a few SQ-partial stalls.
+- [ ] **Q4 — Replay priority**: LRB > scheduler at D$ADDR by default. Should stores ever preempt? Spec default: **no, loads in LRB win; stores continue as today via StoreCommitter**.
+- [ ] **Q5 — Full-LRB handling**: stall load in D$TAG (current spec) or spill into global ReplayQueue as a fallback? Default **stall** — simpler, keeps cores clean; measure whether spill is needed.
+- [ ] **Q6 — Recovery cost**: walking 8 LRB entries each cycle on redirect is cheap; no open issue.
+- [ ] **Q7 — D$ prefetch stores?** v1 says no; measure store-miss-prefetch only if store streams are a bottleneck.
+- [ ] **Q8 — D$ prefetch MSHR reclaim**: v1 says no reclaim; revisit if demand misses starve behind prefetch fills.
+- [ ] **Q9 — D$ way predictor SRAM feasibility**: confirm per-way tag SRAM enable. If ways are physically packed, power savings drop to logic gating only.
+- [ ] **Q10 — D$ way predictor indexing**: set-indexed by default. PC+set indexing may improve accuracy at area cost.
+
+#### 9.4 Measured results (filled post-implementation)
+| Benchmark | Baseline IPC | +SelSQ | +LRB | +D$PF | +WayPred | All on | CAM activity Δ | D$ prefetch useful | WayPred accuracy |
+|---|---|---|---|---|---|---|---|---|---|
+| Dhrystone | | | | | | | | | |
+| CoreMark | | | | | | | | | |
+| Embench | | | | | | | | | |
+
+---
+
+**Sign-off gate**: §3.2 (partial-tag hash), §4.2 (LRB entry), §4.4 (full-LRB policy), §5.3 (prefetch gates), §6.3 (way-pred retry), §9.3 open questions.
+
+## Part 5 — Branch Predictor Microarchitecture
+
+This section complements the decoupled frontend spec. The frontend section explains the implemented RSD dataflow; this section is the interview review checklist for branch prediction concepts and model knobs.
+
+### 1. What a Branch Predictor Predicts
+
+Direction:
+- Conditional branch taken / not taken.
+- Structures: bimodal counters, local history, global history, gshare, tournament, TAGE, perceptron-like predictors.
+
+Target:
+- BTB predicts the target PC for taken branches and jumps.
+- Return address stack predicts function returns.
+- Indirect predictor handles indirect jumps with many possible targets.
+
+Fetch-block metadata:
+- Which lane in the fetch packet is the first taken branch.
+- Where the fetch block ends.
+- What history snapshot must be restored on misprediction.
+
+### 2. RSD Implementation Anchor
+
+RSD decoupled frontend uses:
+- `DecoupledBPU.sv` with BTB + PHT + global-history indexing.
+- `CONF_BTB_ENTRY_NUM = 1024`.
+- `CONF_PHT_ENTRY_NUM = 2048`.
+- `CONF_BRANCH_GLOBAL_HISTORY_BIT_WIDTH = 10`.
+- A gshare-style PHT index: PC index bits XORed with global history.
+- FTQ entries that carry prediction metadata, GHR snapshots, PHT index/value, branch offset, predicted target, and lane predictions.
+- Predictor update from resolved branch metadata through the FTQ update path.
+
+What RSD does not currently model:
+- RAS.
+- TAGE / tournament predictor.
+- Indirect branch target predictor.
+- Multi-level BTB hierarchy.
+
+### 3. Prediction Flow
+
+1. Use fetch PC to read BTB and PHT.
+2. Match BTB tag for each fetch lane.
+3. Use PHT counter MSB as taken/not-taken direction for BTB-hit lanes.
+4. Pick the first predicted-taken lane in the fetch block.
+5. Set predicted next PC to BTB target if taken, otherwise fall-through fetch end.
+6. Enqueue prediction metadata into FTQ.
+7. Speculatively update global history for predicted conditional branches.
+8. On resolution, update BTB/PHT and restore/update global history if the speculation was wrong.
+
+### 4. Performance-Modeling Knobs
+
+- Direction accuracy by branch class.
+- BTB capacity, associativity, tag width, and aliasing.
+- PHT size/history length and destructive aliasing.
+- Predictor latency and fetch redirection latency.
+- Update timing: execute-time, commit-time, or hybrid.
+- Misprediction penalty: frontend depth + backend recovery + lost issue/commit opportunity.
+- Fetch bandwidth loss from taken branches inside a fetch packet.
+
+### 5. Review Questions
+
+- What is the difference between a direction miss and a target miss?
+- Why does a BTB miss on a taken branch look like a not-taken prediction?
+- Why do global-history predictors alias?
+- What metadata must be checkpointed to recover history after a misprediction?
+- Why is RAS important for return-heavy workloads?
+
+## Part 6 — TLB, MMU, and Page Table Walker
+
+RSD note: the inspected RSD tree does not appear to implement a real TLB, MMU, `satp`, or page-table walker. The cache paths use physical-address-style indexing/tagging and the verification environment uses a pretranslated memory map. Treat this section as external architecture review unless we later find a different RSD branch with MMU support.
+
+### 1. Translation Pipeline
+
+Common high-performance path:
+- I-side: fetch VA -> ITLB lookup -> I$ access.
+- D-side: load/store VA -> DTLB lookup -> D$ access.
+- VIPT L1 cache can overlap TLB lookup with cache set indexing when index+offset bits fit inside the page offset.
+- On L1 TLB hit, translation returns PPN, permissions, memory attributes, page size, and possibly cacheability.
+- On L1 TLB miss, the request probes L2 TLB / shared TLB.
+- On L2 TLB hit, refill L1 TLB.
+- On L2 TLB miss, page table walker reads PTEs from memory and then fills L2 TLB, usually followed by L1 refill.
+
+### 2. L1 and L2 TLB Organization
+
+Typical organization:
+- L1 ITLB / DTLB: small, low-latency, often fully associative or highly associative.
+- L2 TLB / STLB: larger, usually set associative.
+- Entries include VPN tag, PPN, ASID/VMID, page size, permissions, valid bit, global bit, and replacement state.
+- Fully associative L1 reduces conflict misses but costs CAM power.
+- Set-associative L2 scales better but can suffer set conflicts.
+
+Important policy questions:
+- Does an L2 TLB hit fill only the requesting L1 or both ITLB/DTLB?
+- Are superpage entries duplicated in a separate CAM or mixed into the normal arrays?
+- Does the PTW fill L2 first and then L1, or fill both directly?
+- How are stale entries invalidated on `SFENCE.VMA` or context switch?
+
+### 3. RISC-V Page Sizes
+
+Sv32:
+- 2-level page table.
+- 4 KB base pages.
+- 4 MB megapages.
+
+Sv39:
+- 3-level page table.
+- 4 KB base pages.
+- 2 MB megapages.
+- 1 GB gigapages.
+
+Sv48:
+- 4-level page table.
+- 4 KB base pages.
+- 2 MB, 1 GB, and 512 GB superpages.
+
+Interview point:
+- Larger pages reduce TLB pressure but increase internal fragmentation and can complicate OS allocation.
+
+### 4. Page Table Walker Flow
+
+For an L2 TLB miss:
+
+1. Capture the faulting VPN, privilege mode, access type, ASID, and page-table root from `satp`.
+2. Read the top-level PTE from memory.
+3. Check PTE validity and permissions.
+4. If the PTE is a pointer to the next level, compute the next PTE address and repeat.
+5. If the PTE is a leaf, check alignment for the page size.
+6. Check R/W/X/U/G/A/D bits and privilege rules.
+7. On success, form the physical address from PPN + page offset.
+8. Fill L2 TLB with page size and permissions.
+9. Refill L1 TLB from L2 or directly from the PTW result.
+10. Replay or restart the original fetch/load/store.
+
+Fault cases:
+- Invalid PTE.
+- Permission violation.
+- Misaligned superpage.
+- Accessed/dirty bit handling fault if hardware does not update A/D bits.
+- Page-table memory access fault.
+
+### 5. Modeling Hooks
+
+- ITLB miss rate, DTLB miss rate, L2 TLB hit rate.
+- PTW latency distribution and cache hit/miss behavior of page-table reads.
+- Number of outstanding PTW walks.
+- PTW contention with normal D$ or memory traffic.
+- Page size mix.
+- TLB shootdown and `SFENCE.VMA` overhead.
+
+### 6. Review Questions
+
+- Why is L1 TLB often fully associative while L2 TLB is set associative?
+- What is the difference between a page fault and an access fault?
+- What state must be included in a TLB tag besides VPN?
+- How do huge pages improve performance?
+- Why can page-table walks create cache pollution?
+
+## Part 7 — Cache, Coherence, and Memory System
+
+This is the broader memory-system review section beyond the RSD L1D optimization spec.
+
+### 1. Cache Write Policies
+
+Write-back:
+- Store updates the cache line and sets dirty bit.
+- Memory/lower cache is updated only on eviction or writeback.
+- Lower bandwidth, more complexity.
+
+Write-through:
+- Store updates both cache and lower level immediately.
+- Simpler coherence and recovery, but much higher write traffic.
+
+Write-allocate:
+- On write miss, fetch the line into cache, then write it.
+- Good when stores have locality or later reads use the line.
+
+No-write-allocate:
+- On write miss, send write to lower level without filling the cache.
+- Good for streaming writes with little reuse.
+
+Common modern pairing:
+- L1D usually write-back + write-allocate.
+- Non-temporal stores may bypass or reduce allocation to avoid pollution.
+
+### 2. Write Buffers Between Caches
+
+Why write buffers exist:
+- Decouple the core/L1 from slower lower-level cache or memory.
+- Merge adjacent writes.
+- Hold dirty evictions while the L1 continues serving hits.
+- Reduce structural stalls when the lower-level interface is busy.
+
+Things to model:
+- Capacity and backpressure.
+- Store-to-load forwarding from buffer if needed.
+- Write merging and byte masks.
+- Ordering rules for fences, atomics, uncached MMIO, and release/acquire operations.
+- Deadlock avoidance when write buffer competes with refill traffic.
+
+### 3. MESI and MOESI
+
+MESI states:
+- Modified: only this cache has the line, dirty.
+- Exclusive: only this cache has the line, clean.
+- Shared: multiple caches may have the line, clean.
+- Invalid: line is not valid.
+
+MOESI adds:
+- Owned: dirty data may be shared; owner supplies data and eventually writes back.
+
+Common transitions:
+- Read miss: get line in Exclusive or Shared depending on other sharers.
+- Write to Shared: invalidate other sharers, move to Modified.
+- Read by another core while Modified: supply data, downgrade to Shared/Owned depending on protocol.
+- Evict Modified/Owned: write back or transfer ownership.
+
+### 4. Snooping vs Directory Coherence
+
+Snooping bus:
+- All coherent caches observe transactions on a shared bus.
+- A core broadcasts read, read-exclusive, upgrade, or invalidate requests.
+- Other caches snoop the address and respond if they have the line.
+- Simple and fast for small core counts, but bus bandwidth and electrical scaling limit it.
+
+Directory:
+- A directory tracks which cores may have each cache line.
+- Requests go to the directory/home agent, which sends targeted invalidations or forwards.
+- Scales better to many cores or chiplets, but adds directory storage and indirection latency.
+
+Interview contrast:
+- Snooping = broadcast and observe.
+- Directory = lookup sharer set and send targeted messages.
+
+### 5. Interconnect Types
+
+Shared bus:
+- Single shared medium.
+- Simple arbitration.
+- Natural fit for snooping.
+- Poor bandwidth scaling.
+
+Crossbar:
+- Multiple masters can connect to multiple slaves simultaneously when paths do not conflict.
+- Needs arbitration per target.
+- Higher area/wiring cost than a bus.
+
+Ring:
+- Packets circulate around a ring.
+- Moderate scalability and regular layout.
+- Latency depends on hop count and congestion.
+
+Mesh / NoC:
+- Packet network with routers and links.
+- Scales to many agents.
+- Needs routing, virtual channels or buffering, ordering rules, and deadlock avoidance.
+
+Point-to-point coherent fabric:
+- Used in many modern SoCs.
+- Often combines request, response, snoop, and data channels with credits or valid/ready handshakes.
+
+### 6. Handshake Rules
+
+Valid/ready basics:
+- Transfer happens only when `valid && ready`.
+- Producer holds data stable while `valid` is asserted and transfer has not happened.
+- Consumer may assert/deassert `ready` based on capacity.
+- Avoid combinational loops between `valid` and `ready`.
+- Multi-channel protocols need ordering IDs, response matching, and deadlock rules.
+
+AXI-style ideas to remember:
+- Separate address, data, and response channels.
+- Reads and writes are independent.
+- Burst transactions amortize address overhead.
+- IDs allow multiple outstanding transactions.
+- Backpressure is legal on every channel.
+
+### 7. Port Conflicts and Banking
+
+Port conflict examples:
+- Load hit vs store commit write to same L1D array resource.
+- Demand miss refill vs dirty victim read/writeback.
+- I$ demand fetch vs I$ prefetch probe.
+- PTW memory request vs normal load/store miss.
+
+Banking examples:
+- Bank by cache set index.
+- Bank by line-interleaving address bit.
+- Split tag/data arrays separately.
+- Multi-bank conflict policy: replay loser, stall loser, or schedule around predicted bank conflicts.
+
+Performance-modeling hook:
+- Track cache misses separately from structural access conflicts. They can have very different fixes.
+
+## Part 8 — Retire, Commit, ROB State, and Recovery
+
+This section overlaps with backend commit, but keeps retire-specific interview questions in one place.
+
+### 1. Instruction States in a ROB
+
+Typical states:
+- Not allocated: free ROB slot.
+- Allocated / busy: instruction is in-flight and not complete.
+- Issued: instruction has left the issue queue.
+- Executed: result is ready or memory op has produced a completion state.
+- Writeback complete: destination physical register or completion bit is updated.
+- Exception/replay pending: instruction has a non-success completion state.
+- Commit-ready: instruction and all older instructions are complete.
+- Committed / retired: architectural state updated; ROB head can advance.
+- Squashed: entry is younger than a redirect/recovery point.
+
+RSD simplification:
+- `ActiveList.sv` stores metadata and uses a compact execution-state bit for normal completion, plus a recovery register for the oldest exceptional/refetch state.
+- Debug/reference logic retains full execution-state checking for verification.
+
+### 2. ROB Pointer Movement
+
+Tail pointer:
+- Moves on rename/dispatch allocation.
+- Must not overrun head.
+- On recovery, younger speculative entries are removed by moving/recovering tail state.
+
+Head pointer:
+- Moves only at commit.
+- Can move by up to commit width per cycle.
+- Stops at the first not-finished instruction or at an instruction that triggers recovery/fault handling.
+
+Commit width:
+- A 2-wide commit core can retire up to two ops/instructions per cycle, but only if they form an oldest contiguous completed group.
+- Multi-uop instruction commit requires tracking instruction boundaries.
+
+### 3. Branch Misprediction: Commit-Time vs Early Recovery
+
+Commit-time recovery:
+- Detect or record the misprediction, but wait until the branch reaches ROB head before redirect/flush.
+- Simpler precise-state reasoning.
+- Worse performance because wrong-path fetch/execute continues longer.
+
+Early recovery:
+- When a branch resolves in execute/writeback, redirect frontend immediately and squash younger backend work using ROB age/range.
+- Must prove that older unresolved exceptions still take priority.
+- Needs checkpoints or recovery state for rename map, LSQ pointers, predictor history, and frontend queues.
+
+Frontend-only early restart:
+- Redirect fetch as soon as the correct PC is known.
+- Temporarily block new wrong-path instructions from entering backend while older backend work drains or until recovery is safe.
+- Reduces fetch bubble cost but still needs careful handling of backend resources and architectural side effects.
+
+RSD anchor:
+- RSD records refetch/recovery events from writeback and can start recovery before the op reaches commit for branch/refetch-style events.
+- CSR-visible traps/faults wait for commit-stage handling to keep precise exception semantics.
+
+### 4. Flush Rules
+
+Flush on:
+- Branch misprediction.
+- Exception/fault/trap.
+- Store-load forwarding failure or memory-order violation.
+- FENCE.I refetch after cache flush.
+- Interrupt entry.
+- Atomic/fence serialization failure or unsupported operation, if implemented.
+
+Flush range:
+- `THIS_PC`: flush starting at the offending instruction and refetch it.
+- `NEXT_PC`: let offending instruction commit/effect complete, flush younger, refetch next.
+- `BRANCH_TARGET`: redirect to resolved target.
+- CSR target: redirect to trap vector or `mepc`.
+
+### 5. Review Questions
+
+- Why does commit happen in order even when execution is out of order?
+- What exactly moves head and tail pointers?
+- Why can branch recovery often be early but exceptions wait until commit?
+- What state is restored during recovery?
+- How do stores interact with commit and memory visibility?
+
+## Part 9 — Vector and SIMD
+
+RSD note: the inspected RSD source does not show a full RISC-V Vector extension pipeline. This section is for external review and for discussing your prior vector/SIMD kernel optimization work.
+
+### 1. SIMD vs RISC-V Vector
+
+Fixed-width SIMD:
+- Programmer/compiler targets a fixed register width such as 128/256/512 bits.
+- Code may need separate versions for different widths.
+
+RISC-V Vector:
+- Vector length is implementation-defined through `VLEN`.
+- Software uses `vsetvl` / `vsetvli` to choose `vl` based on remaining elements.
+- Same binary can scale across different vector lengths.
+
+Key RVV terms:
+- `VLEN`: hardware vector register length in bits.
+- `SEW`: selected element width.
+- `LMUL`: register grouping multiplier.
+- `vl`: active element count for current loop strip.
+- `vtype`: encodes SEW, LMUL, tail policy, mask policy.
+- Mask register: controls per-element predication.
+- Tail policy: what happens to inactive tail elements.
+
+### 2. Vector Memory Operations
+
+Patterns:
+- Unit-stride load/store: best bandwidth and simplest coalescing.
+- Strided load/store: useful for regular non-contiguous layout.
+- Indexed/gather/scatter: flexible but expensive, stresses memory ordering and cache/TLB.
+- Segment loads/stores: useful for AoS-style structures.
+- Fault-only-first loads: help vectorize loops with uncertain termination.
+
+Performance questions:
+- Are accesses aligned?
+- Are they cache-line friendly?
+- Do they cross pages often?
+- Do they create bank conflicts?
+- Is the bottleneck memory bandwidth, vector ALU throughput, or scalar loop overhead?
+
+### 3. Chaining, Convoys, and Chimes
+
+Chaining:
+- A dependent vector instruction can start consuming elements as soon as the producer creates the first elements.
+- It avoids waiting for an entire vector instruction to finish.
+- Example: vector load produces element group 0, vector multiply consumes it, vector add follows, all overlapped as a pipeline.
+
+Convoy:
+- A group of vector instructions that can execute together without structural hazards.
+
+Chime:
+- Roughly one vector-length time step for a convoy.
+- Old vector-performance models estimate runtime as number of chimes times vector length plus startup costs.
+
+Modern modeling note:
+- Real cores also need startup latency, memory latency, bank conflicts, issue bandwidth, mask overhead, and tail effects.
+
+### 4. Kernel Optimization Topics
+
+Min/max:
+- Use vector reductions when possible.
+- Handle tails with masks instead of scalar cleanup when efficient.
+- Avoid horizontal reduction every iteration; reduce partial vectors then final-reduce.
+
+FIR / BKFIR-style kernels:
+- Exploit sliding-window reuse.
+- Consider vector loads of samples and coefficients.
+- Unroll taps to expose ILP.
+- Use fused multiply-add if available.
+- Watch alignment, coefficient layout, and cache reuse.
+
+Matmul:
+- Tile for L1/L2/cache reuse.
+- Use vector registers as accumulators.
+- Pack matrices to make inner loops unit-stride.
+- Choose blocking based on vector length, register pressure, and cache capacity.
+
+Memory-bound kernels:
+- Prefetch if latency dominates and access pattern is predictable.
+- Avoid gather/scatter unless data layout cannot be changed.
+- Use non-temporal stores only when reuse is unlikely.
+
+Library names to verify later:
+- BLAS / CBLAS, OpenBLAS, Eigen, oneDNN, xNNPACK, Halide.
+- RISC-V RVV intrinsic kernels and vendor math/DSP libraries.
+- Qualcomm ecosystem names may include QNN / SNPE / Hexagon-oriented libraries, but we should verify which one matches your project before using it in interview answers.
+
+### 5. Review Questions
+
+- Why does RVV use strip mining?
+- How does `LMUL` trade register capacity against wider operations?
+- Why are gather/scatter operations harder to optimize than unit-stride loads?
+- What is vector chaining and why does it help?
+- How would you model a vectorized FIR kernel bottleneck?
+
+## Part 10 — Interrupt and Exception Implementation
+
+To fill with RSD implementation evidence and interview explanation.
+
+Topics to cover:
+- Synchronous exception vs asynchronous interrupt.
+- Precise exception point.
+- Trap vector target selection.
+- CSR state updates: `mepc`, `mcause`, `mtval`, `mstatus`.
+- Pipeline drain or flush requirements.
+- Interrupt priority and masking.
+
+## Part 11 — FENCE and FENCE.I Implementation
+
+To fill with RSD implementation evidence and interview explanation.
+
+Topics to cover:
+- Memory-ordering fence vs instruction-cache synchronization fence.
+- Why `FENCE` serializes memory ordering.
+- Why `FENCE.I` needs instruction-side visibility after data-side code writes.
+- Cache flush, pipeline refetch, and store-buffer drain requirements.
+
+## Part 12 — Atomic, LR/SC, and AMO Implementation
+
+To fill with RSD implementation evidence and interview explanation.
+
+Topics to cover:
+- LR/SC reservation set and failure conditions.
+- AMO read-modify-write atomicity.
+- Coherence permission requirements for atomics.
+- Store-buffer interaction.
+- Memory-ordering acquire/release bits.
+- RSD implementation status versus what a full RISC-V A-extension core would need.
