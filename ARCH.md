@@ -15,7 +15,381 @@ This file has these major review blocks:
 9. Vector / SIMD review.
 10. Operation-specific implementation notes: interrupt/exception, fences, atomics.
 
+The interviewer focus map below is a preparation router: use it to prioritize likely topics for each second-round interviewer, then jump into the detailed sections linked from that map.
+
 The original FE and LSU source markdown files and their diagram assets remain in place. Local markdown links in the merged sections are rewritten relative to this `interview/` directory so the SVG/PNG pipeline diagrams still resolve from here.
+
+## Interviewer Focus Map
+
+### Ajay Rathee — Likely Interview Focus
+
+Public-signal basis:
+- Public LinkedIn preview: focus listed as modeling and analysis of high-performance CPU cores; older projects include C++ cache/memory hierarchy simulation, trace processor with trace cache/trace predictor, checkpoint recovery, speculative load forwarding, and memory-dependence prediction.
+- Public patent listings: instruction fetch / branch / fetch-bundle work and instruction-side TLB prefetching.
+- Treat this as preparation speculation, not a claim about what he will definitely ask.
+
+Highest-priority map:
+
+| Likely topic | Why it may come up | Existing review section |
+|---|---|---|
+| Decoupled frontend, FTQ, fetch bubbles | Public work points toward instruction fetch and branch/fetch-bundle behavior | [Part 2 — Decoupled Frontend Specification](#part-2--decoupled-frontend-specification), [Frontend Extra Topics to Review](#frontend-extra-topics-to-review) |
+| Branch prediction and predictor metadata | Fetch patents mention branch history and fetch groups; frontend work often tests direction/target/update/recovery reasoning | [Part 5 — Branch Predictor Microarchitecture](#part-5--branch-predictor-microarchitecture), [TAGE Predictor Review](#5-tage-predictor-review) |
+| Fetch beyond predicted-taken branch | Direct public patent theme; likely discussion around using fetch-bundle slots after a predicted-taken branch | Ajay-only notes below, plus [Decode Bandwidth and Frontend Bubbles](#decode-bandwidth-and-frontend-bubbles) |
+| Instruction TLB and ITLB prefetch | Public patent listing includes instruction TLB prefetching from retired-page history | [Part 6 — TLB, MMU, and Page Table Walker](#part-6--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#6-tlb-and-virtual-memory-corner-cases) |
+| Trace cache / trace processor | His older project explicitly mentions trace processor, trace cache, trace predictor, and checkpoint recovery | Ajay-only notes below, plus [Uop Cache / Decoded Instruction Cache](#uop-cache--decoded-instruction-cache) |
+| Memory dependence prediction and speculative load forwarding | His older project mentions Alpha 21264-inspired MDP and speculative load forwarding | [Memory Dependence Prediction](#141-memory-dependence-prediction), [OoO Load/Store Consistency](#142-ooo-loadstore-consistency), [Store Queue / Store Buffer Discussion](#121-store-queue--store-buffer-discussion) |
+| Cache and memory hierarchy modeling | His older project includes C++ cache hierarchy simulation and validation | [Part 7 — Cache, Coherence, and Memory System](#part-7--cache-coherence-and-memory-system), [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs) |
+| Performance model debug and validation | Role is CPU performance modeling; likely asks how to prove model results and debug regressions | [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks), [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [Validation and Calibration](#10-validation-and-calibration) |
+
+Lower-priority possible angles:
+
+| Possible topic | Why it may come up | Existing review section |
+|---|---|---|
+| Memory fabric, address decoding, CXL/HDM-style address translation | Public patent listings include CXL host-managed device memory decoding and reduced-area/power sequencing | [Interconnect Types](#5-interconnect-types), [ACE / CHI Coherent Interconnect Basics](#6-ace--chi-coherent-interconnect-basics), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints) |
+| Compiler/codegen and intrinsic-aware performance | Public coursework includes code generation/optimization; your BKFIR/intrinsics work is a good bridge if he asks software-to-microarchitecture questions | [Compiler, Intrinsics, and Scheduling Notes](#5-compiler-intrinsics-and-scheduling-notes), [Vector and SIMD](#part-9--vector-and-simd) |
+
+Expected question style:
+- Mechanism-first: explain the microarchitecture structure, not only the high-level definition.
+- Model-first: identify what state/counters/latencies the performance model needs.
+- Validation-first: explain how to prove the result with counters, directed tests, RTL evidence, or workload deltas.
+- Tradeoff-first: mention performance benefit, power/timing/area cost, and failure cases.
+
+Preparation priority for Ajay:
+1. Be able to draw and explain `BP_S0 -> BP_S1 -> FTQ -> IF_S0 -> IF_S1 -> Decode`.
+2. Be able to explain why taken branches inside a fetch block waste bandwidth, and how fetching beyond a predicted-taken branch could help loops.
+3. Be able to explain gshare vs TAGE, BTB target misses, GHR checkpoint/restore, and predictor update timing.
+4. Be able to explain ITLB miss handling and how instruction-side TLB prefetch could help instruction-stream page crossings.
+5. Be able to explain memory-dependence prediction, store-load forwarding, violation detection, and replay.
+6. Be able to debug an IPC regression with CPI stack, MPKI, branch MPKI, ITLB MPKI, MSHR occupancy, replay count, and frontend-bubble counters.
+
+Likely mock questions:
+- How would you model lost fetch bandwidth from a taken branch in the middle of a fetch bundle?
+- What is the difference between BTB miss, direction misprediction, and target misprediction?
+- How does TAGE reduce destructive aliasing compared with gshare?
+- What state must be checkpointed for branch recovery in a decoupled frontend?
+- What is a trace cache, and how is it different from a uop cache?
+- How would an ITLB prefetcher work, and what are its risks?
+- Why can a memory-dependence predictor improve IPC, and how do you recover from a wrong prediction?
+- If your model predicts a frontend speedup, what counters would you inspect to validate it?
+
+Ajay-only topic: fetching beyond a predicted-taken branch:
+- Baseline fetch usually stops useful extraction at the first predicted-taken branch in a fetch bundle, because the next PC is predicted to be the branch target.
+- If the branch is a loop branch and the next loop iteration also fits in the same fetch bundle or can be reconstructed predictively, the frontend may extract useful instructions beyond the predicted-taken branch rather than wasting later fetch lanes.
+- Potential benefit: higher effective fetch bandwidth for tight loops and fewer frontend bubbles.
+- Risks: wrong-path fetch/extract work, more complex branch metadata, duplicated loop-iteration bookkeeping, predictor-history update complexity, and recovery corner cases.
+- Model counters: useful fetched lanes, wasted fetched lanes after taken branch, loop-iteration extraction hit rate, branch recovery count, and frontend power/activity.
+
+Ajay-only topic: trace cache / trace processor:
+- A trace cache stores dynamic instruction traces, often spanning multiple basic blocks and taken branches, instead of only static cache-line-aligned instruction bytes.
+- A trace predictor predicts which trace to fetch next, so frontend bandwidth can follow hot dynamic paths.
+- Benefit: bypasses repeated decode/fetch steering for hot control-flow paths and can deliver high effective fetch bandwidth across taken branches.
+- Costs and risks: trace construction complexity, trace-cache capacity/aliasing, partial trace exits, self-modifying code invalidation, exception/debug mapping, and recovery metadata.
+- Modeling hooks: trace-cache hit rate, average trace length, trace exit reason, mispredicted trace count, useful uops per trace, and trace-cache replacement effects.
+
+Ajay-only topic: instruction TLB prefetch from retired-page history:
+- Idea: when retirement observes instruction-stream progress into a new page, record retired instruction pages and prefetch likely next instruction translations before the frontend demands them.
+- Benefit: hides ITLB miss/page-walk latency for instruction streams that move predictably across pages.
+- Risks: ASID/context correctness, page-boundary prediction accuracy, TLB pollution, page-walk bandwidth, wrong-path instruction streams, and interaction with `SFENCE.VMA`.
+- Model counters: ITLB MPKI, ITLB prefetch accuracy, ITLB prefetch coverage, late prefetches, page-walk traffic, L2 TLB pollution, and frontend cycles blocked on translation.
+
+Ajay lower-priority topic: CXL/HDM-style address decoding:
+- CXL host-managed device memory uses decoder logic to map host physical address ranges to device memory regions.
+- The performance-modeling angle is not CXL protocol detail; it is address decode latency, area/power of decoder structures, memory-region selection, and traffic routing.
+- Possible questions could resemble cache/TLB address decode: what bits select region, how many parallel compares are needed, how to reduce decoder power, and what happens on remap/reconfiguration.
+- Model counters: decoder lookup count, decoder miss/error count, fabric request latency, memory-region bandwidth, queue occupancy, and power proxy from active decoder comparisons.
+
+Ajay lower-priority topic: compiler/codegen bridge:
+- If he asks about compiler-aware performance, connect your BKFIR/intrinsics work to microarchitecture: register reuse reduces reloads, fused intrinsics reduce uop count/latency, and branch-to-predicate conversion can improve scheduling when branches are unpredictable.
+- Mention that compiler scheduling is usually easiest within basic blocks; branches, aliasing, calls, and exception-visible memory operations constrain motion.
+- Model counters: instruction count, uop count if available, load/store count, vector utilization, branch count/mispredicts, register spills/reloads, and memory bandwidth.
+
+### David Palframan — Likely Interview Focus
+
+Public-signal basis:
+- Public LinkedIn preview: computer architect with experience in performance modeling; publications include `COP: To Compress and Protect Main Memory` and `Precision-Aware Soft Error Protection for GPUs`.
+- UW-Madison architecture group lists him as PhD, May 2015, current employment Qualcomm Research.
+- Public Qualcomm patent listing includes `Intelligent data prefetching using address delta prediction`.
+- Earlier research includes redundant intermediate bitslices for process variation, critical paths, reliability, and performance.
+- Treat this as preparation speculation, not a claim about what he will definitely ask.
+
+Highest-priority map:
+
+| Likely topic | Why it may come up | Existing review section |
+|---|---|---|
+| Data prefetching beyond next-line | Public patent signal is address-delta data prefetching; likely asks accuracy/coverage/timeliness/pollution tradeoffs | [L1D Next-Line Prefetcher](#5-optimization-c--l1d-next-line-prefetcher), [Beyond Next-Line Prefetching](#58-beyond-next-line-prefetching), David-only notes below |
+| MSHRs, bandwidth, and demand interference | Prefetch benefit depends on miss concurrency and whether prefetches steal demand resources | [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs), [Port Conflicts and Banking](#8-port-conflicts-and-banking), [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases) |
+| Cache/memory hierarchy modeling | Publications and patent point toward memory hierarchy, cache behavior, and performance-model evidence | [Part 7 — Cache, Coherence, and Memory System](#part-7--cache-coherence-and-memory-system), [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks) |
+| Main-memory compression and ECC | `COP` publication combines compression, main-memory capacity, and error protection | David-only notes below, plus [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases) |
+| Reliability and soft errors | HPCA publication and Spare RIBs work point toward selective protection, register-file/execution logic vulnerability, and reliability/cost tradeoffs | David-only notes below, plus [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs) |
+| Power/performance/critical path tradeoffs | Spare RIBs work is about critical paths, variation, redundancy, area, and performance | [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints) |
+| Model validation and counter interpretation | Performance modeling role plus research background likely means he will care about proof, not just claims | [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [Validation and Calibration](#10-validation-and-calibration) |
+
+Lower-priority possible angles:
+
+| Possible topic | Why it may come up | Existing review section |
+|---|---|---|
+| Register file ports and backend scaling | `CRAM: Coded Registers for Amplified Multiporting` points to multi-ported RF cost, wide OoO scaling, and area/power/timing tradeoffs | [Backend Microarchitecture Details](#part-3--backend-microarchitecture-details), [Wakeup / Select](#5-wakeup--select), [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs) |
+| Low-cost error detection and memory fault patching | Public work includes time-redundant parity and patching memory faults using existing memory hierarchy structures | David-only notes below, plus [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases), [Validation and Calibration](#10-validation-and-calibration) |
+
+Expected question style:
+- Tradeoff-heavy: performance gain versus bandwidth, power, area, latency, and reliability cost.
+- Evidence-heavy: what counters prove the mechanism helped, and what counters prove it did not cause damage.
+- Modeling-heavy: what state must be represented in the simulator, and what simplifying assumption is acceptable.
+- Corner-case-heavy: pollution, MSHR pressure, replacement effects, ECC metadata overhead, and critical-path impact.
+
+Preparation priority for David:
+1. Be able to explain prefetch metrics: accuracy, coverage, timeliness, pollution, bandwidth, MSHR pressure, and demand interference.
+2. Be able to describe a beyond-next-line prefetcher, especially PC-correlated address-delta prediction.
+3. Be able to explain why lower MPKI may not improve IPC: MLP, ROB head blocking, bandwidth, hit latency, and unrelated bottlenecks.
+4. Be able to explain MSHR merge/full behavior and how prefetches interact with demand misses.
+5. Be able to discuss ECC, soft errors, selective protection, and memory compression at a high level.
+6. Be able to validate a memory-system change with counters and directed tests.
+
+Likely mock questions:
+- Design a prefetcher for pointer-chasing or irregular memory patterns. What state do you store?
+- A prefetcher improves MPKI but hurts IPC. What happened?
+- What counters show whether a prefetcher is accurate, timely, and non-interfering?
+- How do MSHRs affect memory-level parallelism and prefetch usefulness?
+- Why are multi-ported register files expensive, and how can a core reduce RF port pressure?
+- Why can main-memory compression improve capacity but hurt latency or bandwidth?
+- What is the tradeoff between ECC protection, memory capacity, power, and performance?
+- What is the difference between parity detection, ECC correction, and full duplication?
+- How would you model soft-error protection or selective hardening in a performance/power study?
+- A design improves frequency by changing a critical path but adds area or redundancy. How do you evaluate it?
+
+David-only topic: address-delta data prefetching:
+- Idea: identify correlated load instructions whose virtual addresses have a repeating delta, then use the first load's PC/address to prefetch the second load's future address.
+- Difference from stride prefetching: stride prefetching tracks one load stream; address-delta/correlation prefetching can learn relationships between different load PCs or dependent misses.
+- Useful for irregular but repeatable allocation/layout patterns where normal sequential or stride prefetchers fail.
+- Core state to model: miss-tracking table, address-delta prediction table, PC tags, delta value, confidence, replacement policy, and prefetch request queue.
+- Training signal: prior D$ misses, resolved miss order, dependence/time correlation, or ROB-walk-based older-miss correlation.
+- Risks: virtual-address alias/context issues, page crossing, DTLB pressure, low confidence, MSHR pollution, wrong prefetch target, and demand bandwidth interference.
+- Model counters: ADP table hit rate, trained pairs, confidence distribution, prefetch accuracy, coverage, timeliness, MSHR merge/drop rate, demand miss latency, and pollution-induced demand MPKI.
+
+David-only topic: main-memory compression with ECC protection:
+- Compression can create space for ECC metadata or increase effective memory capacity, but it adds metadata, layout, and access complexity.
+- Key performance issue: can the memory controller locate compressed blocks without expensive variable-size address calculation?
+- A linearly compressed page style idea keeps blocks within a page at a uniform compressed size so address calculation remains simple.
+- ECC angle: storing check bits protects against soft errors; stronger protection costs capacity, bandwidth, latency, or extra chips unless compression creates room.
+- Model questions: compression ratio distribution, compress/decompress latency, memory bandwidth change, metadata access overhead, row-buffer locality, and error coverage.
+- Interview framing: compression is useful only if the capacity/reliability benefit is not erased by address-lookup latency, decompression latency, or extra memory traffic.
+
+David-only topic: reliability, soft errors, and variation:
+- Soft errors can corrupt architectural state, register files, queues, or execution logic; not every bit has equal impact on final program output.
+- Selective protection hardens the most valuable or vulnerable structures rather than paying full protection cost everywhere.
+- Precision-aware protection idea: for numeric/GPU-style workloads, the magnitude of the error can matter, not only whether any bit flipped.
+- Process variation can slow critical paths; redundancy or bitslice-level techniques can avoid the slowest slice, but at area/power/design-complexity cost.
+- Model questions: which structure is protected, what is the performance overhead, what is the area/power cost, and what reliability metric improves.
+- Interview framing: reliability mechanisms should be evaluated like performance features: define the fault model, cost, coverage, workload impact, and validation method.
+
+David lower-priority topic: register file multiporting and backend scaling:
+- Wide OoO cores need many RF read/write ports because multiple issued instructions may each read two or more operands and write back results in the same cycle.
+- True multi-port RFs are expensive: more ports increase cell size, bitline/wordline loading, sense amps, muxing, area, leakage, dynamic energy, and often critical-path delay.
+- Common alternatives: banked RF, clustered execution, operand caching, bypass-heavy designs, read-port scheduling, limiting issue width per cluster, multi-cycle RF read, or encoded/coded storage ideas.
+- Performance tradeoff: reducing RF ports saves power/timing/area but can create operand-read conflicts, issue restrictions, or extra bypass complexity.
+- Model counters: RF read/write port utilization, RF port conflict stalls, bypass hit rate, issue slots lost to operand-read conflicts, cluster imbalance, and writeback conflicts.
+
+David lower-priority topic: low-cost error detection and memory fault patching:
+- Parity detects many errors cheaply but usually cannot correct them without replay, redundant state, or recovery support.
+- ECC can detect and correct within its code strength but costs storage, encode/decode latency, power, and sometimes extra memory chips or metadata storage.
+- Full duplication gives stronger checking but is usually high area/power overhead.
+- Time-redundant parity style ideas trade time/checking latency for lower area/power than full duplication.
+- Memory fault patching idea: if one memory location is faulty, use redundant copies already present in the hierarchy, such as cache lines or other storage, and increase their persistence so the faulty location is effectively patched.
+- Performance/modeling questions: how often faults occur, what recovery latency is, whether protected entries reduce usable cache capacity, whether persistence blocks normal replacement, and whether checking is on the critical path.
+- Model counters: detected parity events, ECC corrected/uncorrected events, replay/recovery cycles, protected-entry occupancy, blocked evictions due to persistence, and protection energy/access overhead.
+
+### Sabine Francis — Likely Interview Focus
+
+Public-signal basis:
+- Public LinkedIn preview: Qualcomm, Austin; education at UT Austin.
+- Public Qualcomm patent listings include pointer prefetching, non-stalling cacheline-triggered prefetch pipeline optimization for indirect memory accesses, and differential training for indirect memory prefetching.
+- UT Austin poster work includes SystemC/TLM, OMNeT++, host-compiled simulation, design-space exploration, latency/throughput/QoS modeling.
+- Treat this as preparation speculation, not a claim about what she will definitely ask.
+
+Highest-priority map:
+
+| Likely topic | Why it may come up | Existing review section |
+|---|---|---|
+| Pointer / indirect prefetching | Public patent signal is strongest around pointer and indirect-memory prefetchers | [Beyond Next-Line Prefetching](#58-beyond-next-line-prefetching), Sabine-only notes below |
+| Prefetch accuracy, coverage, timeliness, pollution | Pointer prefetchers can easily become late, wrong, or bandwidth-destructive | [Beyond Next-Line Prefetching](#58-beyond-next-line-prefetching), [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation) |
+| MSHR pressure and non-stalling prefetch pipeline | Public patent signal includes non-stalling prefetch pipeline optimization | [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs), [Port Conflicts and Banking](#8-port-conflicts-and-banking), Sabine-only notes below |
+| TLB/page-crossing correctness for prefetch | Pointer/indirect prefetch often uses virtual addresses and can cross pages or contexts | [Part 6 — TLB, MMU, and Page Table Walker](#part-6--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#6-tlb-and-virtual-memory-corner-cases) |
+| Cache pollution and replacement side effects | Indirect prefetch can bring low-usefulness lines and evict useful demand lines | [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases), [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs) |
+| Performance model validation | She may ask how to prove a prefetcher helps and does not damage demand traffic | [Validation and Calibration](#10-validation-and-calibration), [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks) |
+
+Lower-priority possible angles:
+
+| Possible topic | Why it may come up | Existing review section |
+|---|---|---|
+| SystemC/TLM and fast design-space exploration | UT Austin poster signal includes SystemC/TLM and simulation methodology | [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks), [Validation and Calibration](#10-validation-and-calibration) |
+| QoS / latency / throughput modeling | NoS work mentions latency, throughput, and QoS; lower priority for CPU-core interview but relevant to performance modeling style | [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [ACE / CHI Coherent Interconnect Basics](#6-ace--chi-coherent-interconnect-basics) |
+
+Expected question style:
+- Practical prefetch-design questions: what state is stored, what triggers training, and when to issue/drop a prefetch.
+- Damage-control questions: how to detect pollution, late prefetches, MSHR pressure, and demand interference.
+- Implementation-aware questions: how to avoid prefetch pipeline stalls, critical-path growth, and expensive arithmetic.
+- Validation questions: what counters and directed tests prove correctness and usefulness.
+
+Preparation priority for Sabine:
+1. Be able to explain why pointer chasing is hard for stride/next-line prefetchers.
+2. Be able to design a pointer/indirect prefetcher with trigger PC, pointer load, target address, confidence, and throttling.
+3. Be able to explain prefetch metrics: accuracy, coverage, timeliness, pollution, and demand interference.
+4. Be able to explain MSHR merge/full behavior and how prefetches should be lower priority than demand misses.
+5. Be able to discuss VA/PA, page crossing, DTLB pressure, ASID/context correctness, and MMIO/non-cacheable filtering for prefetch.
+6. Be able to validate a prefetcher with directed pointer-chase, linked-list, sparse-array, and graph-like tests.
+
+Likely mock questions:
+- Why is pointer chasing hard to prefetch?
+- How would you design a hardware pointer prefetcher?
+- What is a trigger access, and how do you train the prefetcher?
+- How can a prefetcher improve MPKI but reduce IPC?
+- What counters tell you a prefetcher is late versus inaccurate?
+- How do you avoid MSHR pollution and demand interference?
+- How do page crossings and DTLB misses affect a pointer prefetcher?
+- What does a non-stalling prefetch pipeline need to avoid blocking demand access?
+
+Sabine-only topic: pointer / indirect prefetching:
+- Pointer-chasing load pattern: load address A to get pointer P, then later load from address P. The second address is not known until the first load returns.
+- Normal next-line/stride prefetchers fail because the target stream may not have a constant address delta.
+- A pointer prefetcher tries to identify a producer load whose data value is a future memory address, then prefetches the cache line pointed to by that value.
+- Core state to model: trigger PC, pointer-load PC, last pointer value, confidence counter, prefetch distance, prefetch queue, and filter bits for cacheable/valid address ranges.
+- Useful workloads: linked lists, trees, graph traversal, sparse data structures, object graphs, hash chains, and some ML/recommender access patterns.
+- Risks: wrong pointer interpretation, stale pointer value, low reuse, page faults, DTLB pressure, MMIO/non-cacheable addresses, security/speculation policy, and cache pollution.
+- Model counters: trigger count, generated pointer prefetches, useful pointer prefetches, late pointer prefetches, dropped unsafe prefetches, DTLB misses caused by prefetch, MSHR occupancy, and pollution-induced demand misses.
+
+Sabine-only topic: trigger/training for indirect prefetchers:
+- A trigger access is an earlier demand access that indicates a later indirect access is likely.
+- Training can observe repeated relationships between a producer load and a consumer load, such as `consumer_addr = load_value_from_producer` or `consumer_addr = producer_value + offset`.
+- Differential training idea: learn a compact delta/offset relationship rather than storing full target addresses when possible.
+- Confidence is essential; low-confidence relationships should not issue prefetches.
+- Replacement policy matters because training tables can be polluted by one-time pointer relationships.
+- Model counters: trained entries, confidence promotions/demotions, table hit rate, table eviction rate, false trigger rate, and relationship age.
+
+Sabine-only topic: non-stalling prefetch pipeline:
+- Demand load/store traffic should not wait behind prefetch address generation, prefetch tag probes, or prefetch MSHR allocation.
+- Prefetch generation should be decoupled through a queue so the load pipeline can enqueue hints and continue.
+- Prefetch probes should use idle cache ports or low-priority arbitration.
+- Expensive address-generation math should be kept off the demand critical path; use simple shifts/masks/adders when possible, or pipeline the computation.
+- If resources are full, the prefetcher should drop or defer the request rather than stalling demand.
+- Model counters: prefetch queue full drops, prefetch-generation stalls avoided, demand-port wins over prefetch, prefetch port conflicts, MSHR allocation failures, and prefetch issue latency.
+
+Sabine-only topic: directed tests for pointer prefetchers:
+- Linked list traversal: one pointer per node; tests pure pointer-chase latency hiding.
+- Tree traversal: branch-dependent pointer path; tests confidence and wrong-path prefetch filtering.
+- Graph BFS/DFS: irregular adjacency traversal; tests coverage, MSHR pressure, and cache pollution.
+- Sparse matrix / CSR: indirect index array followed by value array; tests producer/consumer relationship detection.
+- Hash table chains: pointer chains with low spatial locality; tests trigger quality and pollution.
+- Object-pointer chains: pointer-to-struct layouts; tests sub-cacheline usefulness and field-offset relationships.
+- Array of pointers versus pointer-to-struct layout: tests whether prefetcher learns pointer array loads and target object loads separately.
+- Measurements: pointer-prefetch coverage, useful/late/useless prefetches, MSHR occupancy, DTLB pressure, demand MPKI, pollution-induced evictions, and speedup by access pattern.
+
+Sabine lower-priority topic: SystemC/TLM and design-space exploration:
+- TLM abstracts transactions rather than every cycle, so it is useful for fast design-space exploration and system-level latency/throughput studies.
+- CPU-core performance modeling usually needs more microarchitectural detail than TLM, but the same discipline applies: define abstraction level, timing contracts, validation targets, and error tolerance.
+- If asked, connect this to Sparta/Olympia-style modeling: use modular components, clear ports/events, parameterized latency/capacity, and counters for throughput/QoS.
+
+### Pratishtha Dehadray — Likely Interview Focus
+
+Public-signal basis:
+- Public LinkedIn preview: Qualcomm, Santa Clara; CMU education.
+- Public project history includes C++ models of global/local/tournament/perceptron/YAGS branch predictors.
+- Public project history includes SystemVerilog ROB and issue queue with custom arbitration, VCS simulation, Genus synthesis, max-frequency analysis, and energy optimization.
+- Public project history includes dynamic cache partitioning, BLISS/ATLAS DRAM scheduling, Snapdragon 855 profiling, cache coherence stress tests, Linux frequency governors, cache simulator with MESI, and latency modeling for DL workloads.
+- Treat this as preparation speculation, not a claim about what she will definitely ask.
+
+Highest-priority map:
+
+| Likely topic | Why it may come up | Existing review section |
+|---|---|---|
+| Branch predictor modeling | Public project directly lists global/local/tournament/perceptron/YAGS predictors and BTB hit rate | [Part 5 — Branch Predictor Microarchitecture](#part-5--branch-predictor-microarchitecture), [TAGE Predictor Review](#5-tage-predictor-review), Pratishtha-only notes below |
+| ROB and issue queue arbitration | Public project lists SystemVerilog ROB/IQ with custom arbitration and synthesis | [ROB / ActiveList](#3-rob--activelist), [Issue Queue](#4-issue-queue), [Wakeup / Select](#5-wakeup--select) |
+| Backend power/timing/energy tradeoffs | Public project includes Genus synthesis, max frequency, and energy optimization | [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints) |
+| Cache partitioning and DRAM scheduling | Public project lists dynamic cache partitioning, BLISS, and ATLAS | [Part 7 — Cache, Coherence, and Memory System](#part-7--cache-coherence-and-memory-system), Pratishtha-only notes below |
+| Cache coherence and MESI | Public project lists C cache simulator and MESI protocol | [MESI and MOESI](#3-mesi-and-moesi), [Snooping vs Directory Coherence](#4-snooping-vs-directory-coherence) |
+| Snapdragon profiling and governors | Public project lists Snapdragon 855 stress tests and schedutil/ondemand/performance/powersave governor analysis | [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints), Pratishtha-only notes below |
+| C++/RTL model validation | Public project mix includes C++ models, SystemVerilog, VCS, synthesis, and profiling | [Validation and Calibration](#10-validation-and-calibration), [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks) |
+
+Expected question style:
+- Broad microarchitecture coverage: branch predictor, backend, cache, DRAM, and power/perf.
+- Implementation-aware: not only what a structure does, but how arbitration, timing, and energy affect the design.
+- Model-building: define state, update rules, counters, and validation for a predictor, ROB, IQ, cache, or DRAM scheduler.
+- Profiling-aware: real SoC behavior, PMU counters, frequency governors, and workload sensitivity.
+
+Preparation priority for Pratishtha:
+1. Be able to implement/explain a branch predictor model: index, tag/history, prediction, update, aliasing, and accuracy metric.
+2. Be able to explain ROB/IQ behavior, custom arbitration policies, and oldest-ready versus fairness/energy tradeoffs.
+3. Be able to explain why wakeup/select and multi-ported structures are timing/power sensitive.
+4. Be able to discuss shared-cache partitioning and DRAM scheduling fairness/throughput tradeoffs.
+5. Be able to explain MESI and cache coherence stress-test patterns.
+6. Be able to profile mobile SoC performance under different governors and explain DVFS effects.
+
+Likely mock questions:
+- Implement or describe a branch predictor model. What state does it keep and how is it updated?
+- Compare global, local, tournament, perceptron, YAGS, and TAGE predictors.
+- How does issue-queue arbitration affect IPC, fairness, and energy?
+- What happens when the ROB is full, IQ is full, or commit is blocked?
+- How would you partition a shared LLC among threads?
+- What is the difference between optimizing system throughput and fairness?
+- How do BLISS and ATLAS-style DRAM schedulers think about fairness?
+- How would you profile branch predictor behavior on Snapdragon hardware?
+- How do Linux governors such as `schedutil`, `ondemand`, `performance`, and `powersave` affect benchmark measurements?
+
+Pratishtha-only topic: YAGS and perceptron predictors:
+- YAGS: "Yet Another Global Scheme"; uses a choice predictor plus exception caches for taken/not-taken exceptions to reduce aliasing versus a simple global predictor.
+- YAGS intuition: most branches have a bias; store the common bias cheaply and use tagged exception tables for cases that disagree with the bias.
+- Perceptron predictor: treats branch prediction as a weighted sum of global history bits. Positive sum predicts taken; negative sum predicts not taken.
+- Perceptron benefit: can learn linearly separable long-history correlations with less table explosion than some counter-based predictors.
+- Perceptron cost: dot-product latency, weight storage, update complexity, and frontend timing risk.
+- Interview contrast: gshare is simple and fast; tournament chooses among predictors; YAGS reduces destructive aliasing with exception caches; perceptron learns long correlations; TAGE is often stronger practical high-end baseline.
+- Model counters: prediction accuracy by branch class, table hit rate, aliasing/conflict rate, update count, wrong-path update pollution, and predictor latency.
+
+Pratishtha-only topic: issue queue arbitration policy:
+- Oldest-ready arbitration improves fairness and reduces starvation risk, but can cost timing/power because age comparisons across many ready entries are expensive.
+- Round-robin or banked arbitration can be cheaper but may issue a younger op while an older ready op waits.
+- Criticality-aware arbitration may prioritize branches, cache-miss-dependent ops, or long-latency ops to reduce overall stalls.
+- Energy-aware arbitration may avoid waking/selecting too many entries or may partition the queue to reduce CAM activity.
+- Model counters: ready-but-not-issued cycles, select conflicts, oldest-ready violations, starvation age, issue-port utilization, replay pressure, and IQ CAM access count.
+
+Pratishtha-only topic: shared cache partitioning:
+- Goal: prevent one thread from evicting another thread's useful shared-cache lines.
+- Way partitioning: allocate ways per core/thread/class; simple but can reduce flexibility.
+- Utility-based partitioning: give more cache to the thread that gains more misses saved per way.
+- Dynamic partitioning: adjust based on miss rate, occupancy, reuse, or QoS target.
+- Tradeoff: improves fairness/isolation but can lower total hit rate if partition boundaries are too rigid.
+- Model counters: per-thread occupancy, per-thread MPKI, evictions caused by other threads, hit-rate change per allocated way, STP, ANTT, and QoS violations.
+
+Pratishtha-only topic: BLISS and ATLAS DRAM scheduling:
+- BLISS idea: blacklist applications that generate too many consecutive memory requests, reducing interference from memory-intensive threads.
+- BLISS goal: simple fairness improvement by preventing one aggressive thread from dominating DRAM service.
+- ATLAS idea: prioritize threads that have received the least attained memory service over a scheduling quantum.
+- ATLAS goal: improve system throughput while limiting starvation by periodically ranking threads based on attained service.
+- Model counters: per-thread memory requests served, row-buffer hit rate, average memory latency per thread, slowdown estimate, STP, ANTT, and starvation/outlier latency.
+
+Pratishtha-only topic: Snapdragon governor profiling:
+- `performance`: tends to hold high frequency; useful for reducing DVFS noise but higher power.
+- `powersave`: biases low frequency; useful for energy studies but can hide microarchitecture improvements behind frequency limits.
+- `ondemand`: reacts to utilization with threshold-based frequency changes.
+- `schedutil`: integrates scheduler utilization signals with DVFS; can respond differently by workload phase and core class.
+- Heterogeneous cores such as silver/gold/gold-prime complicate analysis because migration changes both microarchitecture and frequency.
+- Profiling rule: record governor, frequency trace, core placement, thermal state, input size, warmup, PMU counters, and run-to-run variance.
+
+Pratishtha-only topic: C++ model contracts to practice:
+- Branch predictor model:
+  - Input trace: `{pc, taken, target}` plus optional branch type.
+  - State: predictor tables, local/global history, chooser table for tournament, BTB tags/targets, optional RAS.
+  - API: `predict(pc)`, `update(pc, actual_taken, actual_target)`.
+  - Metrics: predictions, mispredictions, direction accuracy, BTB hit rate, MPKI-style miss rate, aliasing/conflict count if modeled.
+  - Key choice: update at execute/retire versus immediately after reading the trace; explain speculative-history limitations if simplified.
+- ROB/IQ model:
+  - State: circular ROB with head/tail/count, IQ entries with source-ready bits, physical tags, age, op type, and port requirements.
+  - API: `allocate`, `wakeup(tag)`, `select(issue_width)`, `complete(rob_id)`, `commit(commit_width)`, `flush(recovery_id)`.
+  - Invariants: no ROB overrun, in-order commit, no completed-but-unallocated instruction, no issue before operands ready, no starvation under arbitration policy.
+  - Metrics: ROB-full cycles, IQ-full cycles, ready-not-issued cycles, port conflicts, commit bandwidth utilization, and average instruction age.
+- Cache / DRAM scheduler model:
+  - State: cache sets/ways/replacement, per-thread request queues, row-buffer state, bank/channel mapping, per-thread service counters.
+  - API: `access(thread_id, addr, type)`, `enqueue_mem_request`, `schedule_next_request`, `complete_request`.
+  - Metrics: per-thread MPKI, row-buffer hit rate, average memory latency, bandwidth, queue occupancy, STP, ANTT, and fairness/outlier slowdown.
+  - Key choice: define whether timing is cycle-level, event-driven, or trace-level; explain what overlap/MLP assumptions are included.
 
 ## Part 1 — Computer Architecture Fundamentals
 
@@ -1006,6 +1380,70 @@ If a prefetch probe hits, it updates NRU state and pops the queue entry. If a
 demand fetch appears during a prefetch probe, demand fetch wins and the prefetch
 entry is retried later.
 
+### Frontend Extra Topics to Review
+
+These are not implemented in the inspected RSD decoupled frontend, but they are useful interview topics if the discussion moves beyond BTB/gshare/FTQ basics.
+
+#### Uop Cache / Decoded Instruction Cache
+
+Purpose:
+- Cache decoded uops or decoded instruction metadata so hot loops can bypass part of fetch/decode.
+- Reduce frontend power by avoiding repeated decode work.
+- Improve frontend bandwidth when decode is the bottleneck.
+
+Design questions:
+- Is it indexed by virtual PC or physical PC?
+- Does it store fixed uops, macro-ops, or decoded instruction packets?
+- How are branch boundaries and taken targets represented?
+- How is it invalidated on self-modifying code, I-cache maintenance, context switch, or `FENCE.I`?
+- What happens when the uop cache hits but branch prediction metadata misses?
+
+Modeling hooks:
+- Uop-cache hit rate.
+- Decode-bypass cycles.
+- Frontend power proxy from decode activity reduction.
+- Mispredict recovery latency when refetching from uop cache versus I-cache.
+
+#### Macro-Op / Uop Fusion
+
+Fusion idea:
+- Combine multiple architectural instructions or decoded uops into one internal uop when the pair is common and safe.
+- Common examples in other ISAs include compare+branch, address-generation combinations, and load-op forms.
+
+Performance benefit:
+- Reduces rename/dispatch/issue/retire pressure.
+- Can improve effective frontend bandwidth and ROB occupancy.
+- May reduce register-file and bypass traffic.
+
+Constraints:
+- Fusion must preserve exceptions, flags/predicate semantics, debug behavior, and precise retirement.
+- Fused instructions may need special handling in branch recovery and commit accounting.
+
+#### Decode Bandwidth and Frontend Bubbles
+
+Decode bandwidth:
+- Fetch bandwidth, decode width, rename width, and dispatch width must be balanced.
+- A 4-wide fetch feeding 2-wide decode can still bottleneck at decode.
+- Variable-length instructions or compressed instructions can create alignment and packet-boundary issues.
+
+Taken-branch bubbles:
+- A taken branch inside a fetch block can waste later lanes in that same block.
+- If the predictor/BTB target is late, the next useful fetch block may be delayed.
+- Direction hit but target miss still creates redirect bubbles.
+
+Fetch alignment:
+- Fetch groups are usually aligned to I-cache lines or fetch blocks.
+- A hot loop crossing a cache-line boundary can require two fetches per iteration.
+- Branch targets landing near the end of a fetch block may reduce useful fetched instructions.
+
+Modeling hooks:
+- Fetched instructions versus useful decoded instructions.
+- Decode queue empty/full cycles.
+- Taken branch lane position.
+- Fetch-block crossing count.
+- I-cache line split count.
+- Redirect latency by source: decode redirect, execute branch, exception, interrupt.
+
 ### FTQ Metadata Full Lifecycle
 
 The implemented design keeps the FTQ entry live from prediction until the fetch
@@ -1245,7 +1683,82 @@ RSD-specific notes:
 - `RecoveryManager.sv` always flushes the frontend during recovery; backend structures use selective flush based on ActiveList pointer range.
 - This gives a concrete example for discussing full flush versus early restart.
 
-### 8. Backend Review Checklist
+### 8. Architecture Performance Evaluation Hooks
+
+This section is the architecture-side view of performance modeling: what state, counters, and model knobs should exist so a backend proposal can be evaluated cleanly.
+
+Core methodology:
+- Start from a baseline core and define the one design question being tested.
+- Choose metrics before running experiments: IPC/CPI, miss penalty, queue occupancy, replay count, port conflict count, utilization, energy proxy, and area/timing risk.
+- Separate functional misses from structural stalls. A D$ miss, MSHR-full stall, D$ port conflict, and replay-queue-full event need different fixes.
+- Use CPI-stack style accounting when possible, because CPI components are additive and easier to explain than raw IPC deltas.
+- Run sensitivity sweeps on one or two key parameters: ROB size, issue queue size, MSHR count, LQ/SQ size, branch penalty, cache latency, memory latency.
+- Validate the model against code evidence, waveforms, counters, or known RTL behavior before using the result to justify an architecture change.
+
+Interview framing:
+- A good performance model is not only a fast simulator. It should make bottlenecks visible, preserve the right resource constraints, and avoid attributing a speedup to the wrong mechanism.
+- For RSD-based discussion, tie each claim to a concrete block such as `ActiveList.sv`, `SelectLogic.sv`, `LoadQueue.sv`, `StoreQueue.sv`, `DCache.sv`, or `RecoveryManager.sv`.
+
+### 9. PMU and Performance Counter Interpretation
+
+Why this matters:
+- Performance counters are the bridge between model results, RTL simulation, and real silicon measurement.
+- They help answer "what changed?" after an IPC delta, but they can mislead if the event definitions are unclear.
+
+Counters to know:
+- Retired instructions and cycles: base for IPC/CPI.
+- Frontend stalls: I-cache miss, ITLB miss, branch redirect, fetch bubble, decode queue empty/full.
+- Branch events: conditional branches, mispredictions, BTB misses, RAS misses, indirect misses.
+- Backend stalls: ROB full, issue queue full, physical register free-list empty, LQ/SQ full, commit blocked.
+- Memory events: L1/L2/LLC accesses and misses, DTLB misses, page walks, MSHR full, replay count, store-forwarding failure.
+- Structural events: port conflicts, bank conflicts, FU utilization, cache-array arbitration losses.
+- Power proxies: active cycles, gated cycles, SRAM/CAM access counts, predictor table accesses.
+
+CPI-stack discipline:
+- CPI components should be mutually exclusive when possible.
+- If events overlap, report them as diagnostic counters, not additive CPI components.
+- Normalize counters: MPKI, branch MPKI, miss latency, bandwidth, occupancy, utilization, and replay rate.
+- Always pair a top-line metric with a bottleneck metric. Example: IPC improved because MSHR-full cycles dropped, not merely because L1D MPKI changed.
+
+Common pitfalls:
+- Counter skid: sampled PC may point after the causing instruction.
+- Multiplexing: limited hardware counters can require multiple runs, which adds run-to-run noise.
+- Event ambiguity: "stall cycle" may mean no dispatch, no issue, no retire, or resource-specific backpressure.
+- Double counting: a D$ miss, replay, and ROB-full cycle may all describe the same root cause.
+- Warmup effects: early misses or predictor cold-start can distort short measurements.
+- User/kernel attribution and interrupts can matter for full-system workloads.
+
+Interview framing:
+- I would first ask what each counter precisely counts and whether events are exclusive. Then I would build a small CPI-stack or bottleneck table and confirm the diagnosis with directed microbenchmarks.
+
+### 10. Validation and Calibration
+
+Validation goal:
+- Prove that the model is accurate enough for the design question being asked. It does not need to be perfect for all workloads, but it must preserve the bottlenecks under discussion.
+
+Validation levels:
+- Unit tests: queues, predictors, cache tag/index decode, MSHR merging, replay behavior, and counter updates.
+- Directed microbenchmarks: isolate branch penalty, cache miss latency, MSHR capacity, TLB miss latency, store-forwarding cases, and fence serialization.
+- RTL/waveform comparison: check per-cycle behavior for selected sequences when RTL exists.
+- Silicon/perf-counter comparison: compare aggregate counters and trends when hardware is available.
+- Sensitivity checks: sweep latency/capacity knobs and verify monotonic or explainable behavior.
+
+Calibration method:
+- Start with architectural constants: widths, queue sizes, latencies, associativity, MSHR count, predictor sizes.
+- Tune uncertain timing parameters only after structural behavior is correct.
+- Use separate workloads for calibration and validation to avoid overfitting.
+- Report error with both top-line metrics and bottleneck metrics: IPC error, MPKI error, branch miss error, latency distribution error, and stall-breakdown error.
+
+Failure modes:
+- Matching IPC for the wrong reason.
+- Using average latency where queue occupancy or overlap matters.
+- Missing wrong-path, OS, interrupt, TLB, or coherence effects for workloads where they matter.
+- Calibrating to one benchmark and losing generality.
+
+Interview framing:
+- I would rather explain a model's limitations explicitly than claim cycle accuracy without evidence. Credibility comes from clear assumptions, code evidence, validation tests, and counter agreement.
+
+### 11. Backend Review Checklist
 
 - Can I draw rename -> dispatch -> schedule -> issue -> register-read -> execute -> writeback -> commit?
 - Can I explain what each ROB/ActiveList entry stores?
@@ -1405,6 +1918,41 @@ Problems:
 - Global ReplayQueue is **shared** across int/complex/mem/FP. When it's full, **the whole core stalls** (threshold = 20 − ISSUE_QUEUE_MEM_LATENCY = 17 entries).
 - Each replayed load carries a full IQ entry (operand data + active list ptr + …) — heavy.
 - Replay path goes back through the scheduler, adding latency.
+
+#### 1.4.1 Memory Dependence Prediction
+
+Why it exists:
+- OoO cores want to issue loads before all older stores have drained, but doing so blindly can violate program order when an older store later resolves to the same address.
+- A memory-dependence predictor predicts which loads should wait for older stores and which can safely issue early.
+- Correctness still comes from violation detection and recovery; the predictor only improves the performance/correctness tradeoff.
+
+Generic implementation topics:
+- Store-set style predictors use a table such as SSIT to map loads/stores into dependence sets and LFST to track the youngest in-flight store for each set.
+- A conservative predictor blocks or delays risky loads behind unresolved older stores.
+- If a load violates ordering, the core flushes/replays younger work and trains the predictor to be more conservative for that load/store pair.
+- Useful counters: predicted-dependent loads, blocked cycles, false dependences, violations, replay count, and predictor-table aliasing.
+
+RSD anchor:
+- RSD already has memory-order violation detection and MDP training hooks in the LSU/recovery path.
+- `LoadQueue.sv` checks store-load ordering, and memory-order violations are handled as recovery/replay events rather than silent data corruption.
+- The current LRB proposal keeps MDP behavior unchanged: MDP-trained ordering violations are recovered, while LRB is only for loads waiting on data availability.
+
+#### 1.4.2 OoO Load/Store Consistency
+
+Rules to explain:
+- Loads may execute before older stores only when the core can prove or predict that no address conflict exists.
+- Stores become globally visible only after they are non-speculative, usually after commit and store-buffer drain.
+- If a younger load reads before an older same-address store resolves, the violation must trigger recovery and predictor training.
+- Fences, atomics, acquire/release operations, and MMIO accesses tighten ordering and may require serialization or store-buffer drain.
+
+RISC-V review angle:
+- Base RISC-V uses RVWMO, which allows more memory reordering than TSO but relies on fences and acquire/release annotations for stronger ordering.
+- `FENCE` orders memory operations according to predecessor/successor masks.
+- `FENCE.I` is about instruction-side visibility after data-side code writes, not normal data-memory ordering.
+
+Performance-modeling hooks:
+- Model unresolved older-store blocking separately from store-buffer-full stalls and D$ misses.
+- Track memory-order replays as a distinct recovery class, because the fix may be predictor policy rather than cache size or latency.
 
 #### 1.5 File inventory
 | File | Role |
@@ -1711,6 +2259,28 @@ Prefetch must never block a demand access. If all MSHRs are busy, the prefetch i
 - Sequential data streams: Dhrystone string ops, CoreMark matrix/list walks, Embench memcpy-like kernels.
 - With 8-byte D$ lines, sequential loads cross lines frequently, so next-line prefetch can cover a meaningful fraction of miss latency.
 - Estimated IPC gain: **+1 % to +2.5 %** depending on MSHR saturation and memory latency.
+
+#### 5.8 Beyond Next-Line Prefetching
+
+Next-line is a good first implementation because it is simple and low-risk, but interview discussion should include the broader design space:
+
+- Stride prefetcher: detects fixed address deltas per PC; useful for array walks with regular strides.
+- Stream prefetcher: detects consecutive cache-line streams and can prefetch multiple lines ahead.
+- Spatial/region prefetcher: predicts nearby lines within a page or region after observing access patterns.
+- Correlation prefetcher: learns address sequences that are not simple strides.
+- Pointer-chase prefetcher: follows dependent load chains, but is harder because the next address is data-dependent.
+- Runahead-style execution: uses speculative execution past a long miss to discover future misses.
+
+Key metrics:
+- Accuracy: fraction of prefetches that are later used.
+- Coverage: fraction of demand misses eliminated by prefetching.
+- Timeliness: whether the prefetched line arrives before demand.
+- Pollution: useful lines evicted by prefetches.
+- Bandwidth/MSHR pressure: demand traffic must keep priority.
+
+RSD fit:
+- RSD currently has only two D$ MSHRs, so aggressive prefetching can easily hurt demand misses.
+- Any extension beyond next-line should include throttling based on MSHR occupancy, prefetch usefulness, and demand-miss interference.
 
 ---
 
@@ -2380,13 +2950,60 @@ What RSD does not currently model:
 - Misprediction penalty: frontend depth + backend recovery + lost issue/commit opportunity.
 - Fetch bandwidth loss from taken branches inside a fetch packet.
 
-### 5. Review Questions
+### 5. TAGE Predictor Review
+
+TAGE idea:
+- TAGE means tagged geometric history length predictor.
+- It keeps multiple predictor tables indexed with different global-history lengths.
+- Short-history tables learn local/simple patterns; long-history tables learn long-range correlations.
+- Each non-base table stores a partial tag to reduce destructive aliasing.
+
+Core structures:
+- Base predictor: simple bimodal predictor used when no tagged table matches.
+- Tagged tables: each entry usually has prediction counter, tag, and usefulness bit.
+- Geometric history lengths: table history lengths grow roughly geometrically, such as short, medium, long, and very long histories.
+- Provider: the longest-history matching table that supplies the main prediction.
+- Alternate provider: a shorter-history matching table or base predictor used when the provider is weak or newly allocated.
+- Usefulness tracking: tells whether an entry has been helpful enough to keep during replacement.
+
+Prediction flow:
+1. Hash PC with different global-history slices for each table.
+2. Read base predictor and tagged tables in parallel if timing allows.
+3. Compare tags in tagged tables.
+4. Choose the longest matching provider.
+5. If provider confidence is weak, optionally use alternate prediction.
+6. Carry provider/alternate metadata into the FTQ or branch metadata for update.
+
+Update/allocation:
+- Correct prediction: strengthen the provider counter and possibly usefulness.
+- Misprediction: update provider, then allocate entries in longer-history tables that did not match.
+- Replacement prefers entries with low usefulness.
+- History update timing is critical because speculative GHR must be recoverable on misprediction.
+
+Performance-modeling knobs:
+- Number of tables.
+- History lengths.
+- Table entry count and associativity.
+- Tag width.
+- Counter width and allocation policy.
+- Predictor latency: single-cycle vs pipelined prediction.
+- Update timing and wrong-path history pollution.
+
+Interview contrast:
+- Gshare is compact and simple but aliases many unrelated branches into one counter.
+- TAGE uses multiple tagged history lengths to reduce aliasing and learn both short and long branch correlations.
+- TAGE improves accuracy but costs more SRAM, history bookkeeping, update complexity, and possibly frontend latency.
+
+### 6. Review Questions
 
 - What is the difference between a direction miss and a target miss?
 - Why does a BTB miss on a taken branch look like a not-taken prediction?
 - Why do global-history predictors alias?
 - What metadata must be checkpointed to recover history after a misprediction?
 - Why is RAS important for return-heavy workloads?
+- How does TAGE choose between provider and alternate prediction?
+- Why do TAGE tables use geometric history lengths?
+- What is the usefulness bit protecting against?
 
 ## Part 6 — TLB, MMU, and Page Table Walker
 
@@ -2470,13 +3087,52 @@ Fault cases:
 - Page size mix.
 - TLB shootdown and `SFENCE.VMA` overhead.
 
-### 6. Review Questions
+### 6. TLB and Virtual Memory Corner Cases
+
+Synonyms and homonyms:
+- Synonym: two different virtual addresses map to the same physical address. This can create VIPT cache aliasing if both VAs can occupy different L1 sets.
+- Homonym: the same virtual address in different address spaces maps to different physical addresses. ASID/VMID tags prevent stale cross-process hits.
+
+ASID / VMID / global entries:
+- ASID distinguishes user processes within an address space regime.
+- VMID distinguishes virtual machines or guest contexts in virtualized systems.
+- Global mappings can be shared across ASIDs, such as kernel mappings, but must be used carefully.
+
+TLB invalidation:
+- RISC-V uses `SFENCE.VMA` to order page-table updates and invalidate stale translations.
+- Context switches can either flush TLBs or rely on ASIDs to avoid full flushes.
+- Multiprocessor systems need TLB shootdown so other cores stop using stale translations.
+- Shootdowns are expensive because they involve inter-processor coordination and serialization.
+
+Page fault vs TLB miss:
+- TLB miss: translation is not cached; PTW may find a valid PTE and refill the TLB.
+- Page fault: translation or permission is invalid architecturally; OS must handle it.
+- Access fault: page-table memory access or physical memory access failed for a reason other than normal page permission.
+
+Superpage corner cases:
+- Superpages improve TLB reach, but leaf PTEs at upper levels require physical-address alignment.
+- Misaligned superpage PTEs fault.
+- Mixed page sizes complicate TLB lookup, replacement, and page-walk refill policy.
+
+VIPT cache constraints:
+- VIPT L1 can overlap TLB lookup with cache indexing only if set-index bits fit inside the page offset.
+- If index bits extend above page offset, synonyms can map the same PA into different sets.
+- Common fixes include page coloring, lower associativity/index constraints, or physical-indexed lookup.
+
+Memory attributes:
+- TLB/PTE result may carry cacheability, ordering, executable, user/supervisor, dirty/accessed, and device-memory attributes.
+- MMIO/device mappings are usually non-cacheable and strongly ordered relative to normal cacheable memory.
+
+### 7. Review Questions
 
 - Why is L1 TLB often fully associative while L2 TLB is set associative?
 - What is the difference between a page fault and an access fault?
 - What state must be included in a TLB tag besides VPN?
 - How do huge pages improve performance?
 - Why can page-table walks create cache pollution?
+- What is the difference between a synonym and a homonym?
+- Why do ASIDs reduce context-switch overhead?
+- Why are TLB shootdowns expensive?
 
 ## Part 7 — Cache, Coherence, and Memory System
 
@@ -2581,7 +3237,52 @@ Point-to-point coherent fabric:
 - Used in many modern SoCs.
 - Often combines request, response, snoop, and data channels with credits or valid/ready handshakes.
 
-### 6. Handshake Rules
+### 6. ACE / CHI Coherent Interconnect Basics
+
+Why this matters:
+- Qualcomm/Arm-style SoC discussions often use Arm coherent-fabric vocabulary even when the core-level concept is generic cache coherence.
+- ACE and CHI are Arm coherent interconnect protocols/families; details vary by implementation, but the concepts are useful for interview discussion.
+
+ACE high-level:
+- ACE extends AXI with coherent transactions and snoop channels.
+- It is commonly described around read/write address/data/response channels plus snoop request and snoop response/data behavior.
+- It fits smaller coherent systems better than very large mesh fabrics.
+
+CHI high-level:
+- CHI is a packetized coherent interconnect protocol designed for scalable systems.
+- It separates request, response, snoop, and data traffic into protocol channels.
+- It uses transaction IDs, credits, ordering rules, and explicit node roles.
+
+Common node roles:
+- Request node: usually a CPU, GPU, accelerator, or coherent master that initiates requests.
+- Home node: owns ordering/serialization for an address region and tracks coherence state or directory information.
+- Slave node / memory node: provides access to memory or lower-level storage.
+- Snoop target: a cache that may hold a copy and must respond to snoop requests.
+
+Important terms:
+- Snoop filter: structure that tracks which caches may hold a line so the fabric can avoid broadcasting unnecessary snoops.
+- Home agent: coherence manager for an address range; may consult directory/snoop filter state.
+- Credits: flow-control tokens that prevent overrunning downstream buffers.
+- Request channel: carries read/write/atomic/coherence requests.
+- Response channel: carries completion, permission, and ordering responses.
+- Snoop channel: asks other caches to invalidate, downgrade, or supply data.
+- Data channel: carries cache-line data separately from control messages.
+
+Modeling hooks:
+- Snoop traffic volume.
+- Home-node queue occupancy.
+- Credit stalls.
+- Data-channel bandwidth.
+- Directory/snoop-filter hit rate.
+- Coherence-induced invalidations and ownership transfers.
+- Latency split between request path, snoop path, and data response path.
+
+Interview framing:
+- Snooping bus is conceptually broadcast-and-observe.
+- Directory/home-node coherence is lookup-and-target.
+- CHI-style fabrics make this scalable by separating message classes and using credits and node roles, but add queues, ordering rules, and latency.
+
+### 7. Handshake Rules
 
 Valid/ready basics:
 - Transfer happens only when `valid && ready`.
@@ -2597,7 +3298,7 @@ AXI-style ideas to remember:
 - IDs allow multiple outstanding transactions.
 - Backpressure is legal on every channel.
 
-### 7. Port Conflicts and Banking
+### 8. Port Conflicts and Banking
 
 Port conflict examples:
 - Load hit vs store commit write to same L1D array resource.
@@ -2613,6 +3314,130 @@ Banking examples:
 
 Performance-modeling hook:
 - Track cache misses separately from structural access conflicts. They can have very different fixes.
+
+### 9. Replacement Policy and MSHRs
+
+Replacement policy:
+- True LRU: tracks exact recency, simple for 2-way, expensive for high associativity.
+- Pseudo-LRU: cheaper approximation commonly used for larger associative caches.
+- NRU/second-chance: low-cost valid/reference-bit style policy.
+- Random: simple and sometimes competitive, but harder to reason about for deterministic debugging.
+- RRIP/DRRIP-style ideas: predict re-reference distance to protect high-reuse lines and reduce pollution.
+
+RSD anchor:
+- Current RSD D$ fills use a tree-LRU style replacement path.
+- With a tiny 2-way L1D, replacement policy is less important than port conflicts, MSHR count, line size, and miss latency, but it is still part of any cache-performance explanation.
+
+MSHR responsibilities:
+- Track outstanding cache misses: address, target way, request type, waiting loads/stores, refill state, and writeback/victim metadata.
+- Merge secondary misses to the same line so multiple loads do not allocate duplicate memory requests.
+- Allow hit-under-miss and miss-under-miss when the cache pipeline and MSHR resources permit it.
+- Enforce backpressure when all MSHRs are full.
+- Prioritize demand requests over prefetch requests.
+
+Performance-modeling hooks:
+- Count primary misses, secondary misses, MSHR merges, MSHR-full stalls, refill-port conflicts, and dirty-victim writebacks separately.
+- Model MSHR occupancy and service time, not only average miss latency, because a design can be limited by memory-level parallelism rather than raw cache hit rate.
+
+### 10. Power, Timing, and Area Tradeoffs
+
+Common tradeoffs:
+- More ports increase bandwidth but make SRAM macros, muxing, wires, and timing harder.
+- Banking is cheaper than true multi-porting but introduces bank conflicts and arbitration policy.
+- Larger CAM-based structures such as issue queues, load/store queues, and wakeup logic scale poorly in dynamic power and critical-path delay.
+- Bigger ROBs and queues improve tolerance of latency but increase area, energy, recovery bookkeeping, and wakeup/select pressure.
+- Larger predictors reduce misspeculation but consume SRAM/flops and can add frontend latency.
+- More MSHRs improve memory-level parallelism but increase bookkeeping and lower-memory pressure.
+
+Architecture interview framing:
+- Do not describe an optimization only by IPC. Also describe the hardware cost and the bottleneck it moves.
+- A good low-risk proposal reduces switching or stalls without widening a critical path.
+- Examples from this file: selective SQ lookup reduces full-CAM toggle activity; way prediction reduces tag-SRAM activation but adds a retry path; LRB reduces replay-queue pressure but adds LSU-local storage and replay arbitration.
+
+### 11. Mobile Power / Performance Constraints
+
+Qualcomm/mobile framing:
+- Mobile CPU design is often constrained by perf-per-watt, burst performance, sustained thermals, and battery energy rather than only peak IPC.
+- A feature that improves benchmark IPC can still be a bad mobile tradeoff if it increases always-on power or causes thermal throttling sooner.
+
+DVFS:
+- Dynamic voltage and frequency scaling changes both performance and energy.
+- Higher frequency usually requires higher voltage; dynamic power scales roughly with capacitance, activity, voltage squared, and frequency.
+- A microarchitecture change can be evaluated at fixed frequency, fixed power, or iso-performance energy; those answer different questions.
+
+Thermal throttling:
+- Peak performance may last only until thermal limits force frequency reduction.
+- Sustained performance depends on average power, workload phase behavior, package cooling, and scheduler policy.
+- A power-hungry prefetcher or predictor can improve short-run IPC but hurt sustained performance if it raises thermal pressure.
+
+Perf-per-watt:
+- Useful metric for mobile and datacenter efficiency, but must be paired with absolute performance.
+- A design can improve perf/W by saving power at the same performance, improving performance at the same power, or both.
+- Use energy per task when comparing two designs that finish at different times.
+
+Clock gating and power gating:
+- Clock gating disables switching when a block is idle.
+- Power gating cuts leakage but has wakeup latency and state-retention cost.
+- Good model counters include active cycles, idle cycles, gated cycles, and access counts per structure.
+
+SRAM/CAM access power:
+- Large CAMs such as issue queues, store queues, TLBs, and wakeup logic are expensive because many entries compare in parallel.
+- SRAM power depends on read/write count, wordline/bitline activity, banking, and port count.
+- Gating, way prediction, banking, and hierarchical lookup reduce dynamic energy when they do not add harmful latency.
+
+Prefetch power tradeoff:
+- Prefetching can save miss latency but consumes bandwidth, MSHRs, cache-array accesses, and replacement capacity.
+- Track prefetch accuracy, coverage, timeliness, pollution, dropped prefetches, and demand interference.
+- Mobile-friendly prefetchers usually need throttling based on usefulness, bandwidth pressure, MSHR occupancy, and thermal/power state.
+
+Interview framing:
+- For Qualcomm, always discuss both the performance mechanism and the power mechanism: what toggles less, what toggles more, whether sustained thermals improve, and how to validate the tradeoff with counters.
+
+### 12. Cache and Memory-System Corner Cases
+
+VIPT aliasing:
+- VIPT L1 caches are fast because index lookup can overlap with TLB lookup.
+- If virtual index bits are not fully contained in the page offset, synonyms can place the same physical line into multiple sets.
+- Page coloring or cache geometry constraints are common ways to avoid this.
+
+Non-cacheable and MMIO accesses:
+- MMIO should not be speculatively cached like normal memory.
+- Device memory often requires stronger ordering, side-effect preservation, and no silent merging/reordering.
+- Loads/stores to MMIO may need to bypass normal speculation, prefetching, and write combining.
+
+Self-modifying code and instruction visibility:
+- If software writes code through D$, the I$ may still contain stale instructions.
+- `FENCE.I` or architecture-specific cache maintenance makes the instruction side observe the new code.
+- Performance model should count the flush/refetch penalty if this path matters.
+
+Unaligned and split-line accesses:
+- An unaligned load/store may touch two cache lines or pages.
+- Split-line accesses can require two tag/data accesses, two TLB translations, and more complex exception ordering.
+- Atomics often require stricter alignment; misaligned atomics may trap or fall back to slow handling.
+
+False sharing:
+- Two cores write different words in the same cache line.
+- Coherence sees line-level ownership transfers even though software data are logically independent.
+- Symptoms include high invalidation traffic and poor scaling.
+
+Inclusivity and exclusivity:
+- Inclusive caches require upper-level lines to also exist in lower levels; lower-level eviction may invalidate upper levels.
+- Exclusive caches avoid duplication and increase effective capacity but make fills/evictions more complex.
+- Non-inclusive caches avoid strict guarantees and require directory/snoop filters to track presence.
+
+Dirty eviction and deadlock risks:
+- A cache miss can require victim writeback before refill.
+- If writeback buffers, MSHRs, or interconnect credits are full, the cache can deadlock unless protocols reserve escape resources.
+- Demand refills, writebacks, prefetches, and coherence probes need priority rules.
+
+Replacement pathologies:
+- Direct-mapped and low-associativity caches can thrash on regular strides.
+- Pseudo-LRU may evict useful lines under cyclic access patterns.
+- Prefetching can make replacement worse if prefetch usefulness is not tracked or throttled.
+
+ECC/parity:
+- Caches often protect tags/data with parity or ECC.
+- Correctable errors may add latency or counters; uncorrectable errors can raise machine checks or poison data paths.
 
 ## Part 8 — Retire, Commit, ROB State, and Recovery
 
@@ -2783,13 +3608,51 @@ Library names to verify later:
 - RISC-V RVV intrinsic kernels and vendor math/DSP libraries.
 - Qualcomm ecosystem names may include QNN / SNPE / Hexagon-oriented libraries, but we should verify which one matches your project before using it in interview answers.
 
-### 5. Review Questions
+### 5. Compiler, Intrinsics, and Scheduling Notes
+
+Personal experience anchor:
+- I optimized kernels such as BKFIR using compiler intrinsics rather than relying only on the auto-vectorizer.
+- I worked closely with the compiler team, so I can discuss not only the algorithmic transformation but also how source structure affects the generated instruction stream.
+
+Intrinsic-level optimization ideas:
+- Keep hot data in different vector registers across loop iterations to avoid unnecessary reloads.
+- Use register blocking / accumulator blocking so partial sums stay live in registers.
+- Unroll enough to expose ILP, but not so much that register pressure causes spills.
+- Put operations that map to fused instructions next to each other in the intrinsic source when possible. If the ISA/compiler supports fused multiply-add or other fused patterns, write the code so the compiler can emit the fused instruction or use the explicit fused intrinsic.
+- Prefer unit-stride loads/stores and contiguous data layout. Change AoS to SoA or pack data when the kernel is bandwidth-bound.
+- Use masks for tails and conditionals when that avoids scalar cleanup or branch overhead.
+- For fixed-point/DSP-style kernels, be explicit about saturation, rounding, widening, narrowing, and overflow behavior.
+
+Compiler scheduling notes:
+- A compiler generally schedules instructions within a basic block, meaning a straight-line region bounded by control-flow instructions such as branches.
+- Across branches, calls, memory operations with unknown aliasing, or exception-visible operations, the compiler may be conservative.
+- If the loop body has frequent branches, converting control flow into predicated/select operations can expose more straight-line scheduling freedom.
+- Ternary expressions may lower to a conditional select or predicated instruction sequence when profitable. Conceptually: taken-path operations are guarded by predicate `p`, and fall-through operations are guarded by `!p`; the exact lowering depends on target ISA, cost model, and side effects.
+- Predication is not always free. It can increase instruction count or execute work from both paths, so it helps most when branches are unpredictable and both bodies are small.
+
+Compiler-facing details to remember:
+- Aliasing matters. Use `restrict`-style assumptions, `const`, and clear pointer separation when valid so the compiler can reorder and vectorize memory operations.
+- Alignment matters. Communicate alignment through APIs, allocation, pragmas, or compiler builtins when valid.
+- `volatile` blocks many useful optimizations and should not be used for normal benchmark data.
+- Check generated assembly, not just source. Look for spills, reloads, missed fusions, scalarized vector ops, extra `vsetvl`, poor unrolling, and unexpected branches.
+- Compiler flags matter: target ISA flags, vector-extension flags, optimization level, LTO, and math flags can change code generation. Be careful with fast-math-style flags because they can change numerical semantics.
+- Use small directed kernels to isolate compiler/codegen issues before judging full application performance.
+
+Microarchitecture connection:
+- Intrinsics are a contract with both compiler and hardware. Good intrinsic code exposes ILP, avoids alias ambiguity, controls register pressure, and creates memory access patterns that the cache/TLB/vector unit can actually sustain.
+- When discussing a kernel speedup, separate algorithmic improvement, compiler/codegen improvement, and microarchitecture effect.
+
+### 6. Review Questions
 
 - Why does RVV use strip mining?
 - How does `LMUL` trade register capacity against wider operations?
 - Why are gather/scatter operations harder to optimize than unit-stride loads?
 - What is vector chaining and why does it help?
 - How would you model a vectorized FIR kernel bottleneck?
+- When should I use intrinsics instead of trusting auto-vectorization?
+- How can source code structure help the compiler emit fused instructions?
+- Why can predication help an unpredictable branch, and when can it hurt?
+- What signs in generated assembly indicate register pressure or poor scheduling?
 
 ## Part 10 — Interrupt and Exception Implementation
 

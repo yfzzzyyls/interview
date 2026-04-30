@@ -15,6 +15,245 @@ Source: `../riscv-perf-model-fengze/review.md`
 
 Build a structural understanding of the RISC-V performance model repo, with enough clarity to explain the framework, code organization, profiling/debug flow, and how it compares to a hand-written cycle model.
 
+### Book Notes: Computer Architecture Performance Evaluation Methods
+
+Source: `docs/Computer Architecture Performance Evaluation Methods.pdf`
+
+Book-level takeaway:
+- Performance evaluation is not just running a simulator. It is a methodology: choose the right metric, choose representative workloads, pick an appropriate model, understand model limitations, and validate conclusions against evidence.
+- For a CPU performance-modeling interview, use the book to explain why a model result is credible, not only what the model reported.
+
+#### Chapter 1 - Introduction
+
+- 1.1 Structure of computer architecture evolution: architecture work is an iterative loop of identifying a problem, proposing a design, evaluating against a baseline, interpreting the result, and refining the design.
+- 1.2 Importance of performance evaluation: weak workload choice, weak baseline choice, or weak metrics can make a good idea look bad or a bad idea look good.
+- 1.3 Book outline: the book moves from metrics and workloads to analytical models, simulation, sampling, statistical simulation, parallel acceleration, and validation.
+- Key insight: an architecture claim is only as strong as the evaluation setup behind it.
+
+#### Chapter 2 - Performance Metrics
+
+- 2.1 Single-threaded workloads: execution time is the real metric; the iron law decomposes it into instruction count, CPI, and clock frequency. IPC/CPI are useful only when instruction count and frequency context are clear.
+- 2.2 Multi-threaded workloads: IPC can be misleading because OS behavior, spin loops, idle loops, synchronization, and nondeterministic interleavings can change the instruction stream. Time-to-solution or transactions per unit time are safer.
+- 2.3 Multiprogram workloads: shared resources change each program's progress, so evaluate both system throughput and user-perceived slowdown.
+- 2.3.1 System throughput: STP measures aggregate normalized progress across programs. Weighted speedup is the common equivalent framing.
+- 2.3.2 Average normalized turnaround time: ANTT measures average slowdown relative to alone-run time, so it captures fairness/user impact better than throughput alone.
+- 2.3.3 Comparison to prevalent metrics: some common multiprogram metrics hide starvation or overemphasize one program. Always know what behavior a metric rewards.
+- 2.3.4 STP versus ANTT performance evaluation: report both because a design can improve throughput while hurting fairness.
+- 2.4 Average performance: averages are not neutral; the right average depends on what is being averaged and what is held constant.
+- 2.4.1 Harmonic and arithmetic average: use arithmetic or harmonic mean when the underlying rates and denominators make physical sense.
+- 2.4.2 Geometric average: geometric mean is common for normalized ratios, but it relies on assumptions that may not match a benchmark suite.
+- 2.4.3 Final thought on averages: if the workload mix is known, weighted arithmetic or harmonic metrics are more defensible than unweighted summary numbers.
+- 2.5 Partial metrics: MPKI, miss rate, branch-mispredict rate, bus utilization, and queue occupancy explain causes, but they are not full performance metrics by themselves.
+- Key insight: for interview answers, separate "top-line performance metric" from "diagnostic bottleneck metric."
+
+#### Chapter 3 - Workload Design
+
+- 3.1 From workload space to representative workload: the target workload space is usually too large, so we build a reference workload and then a reduced workload.
+- 3.1.1 Reference workload: the reference set should reflect the real domain being studied; SPEC CPU may be useful for core pipelines but weak for OS-heavy, server, memory, and I/O behavior.
+- 3.1.2 Towards a reduced workload: reduced workloads save simulation time but can introduce selection bias if chosen informally.
+- 3.2 PCA-based workload design: use measured characteristics to reduce correlated dimensions, cluster similar workloads, and pick representatives.
+- 3.2.1 General framework: collect workload characteristics, normalize, reduce dimensions, cluster, and select representative points.
+- 3.2.2 Workload characterization: hardware counters are convenient but can mix workload behavior with machine behavior; microarchitecture-independent metrics are often better for portable workload selection.
+- 3.2.3 Principal component analysis: PCA transforms many correlated measurements into fewer independent dimensions that explain most variance.
+- 3.2.4 Cluster analysis: clustering finds groups of similar benchmarks; representatives should cover all major behavioral clusters.
+- 3.2.5 Applications: PCA/clustering can select benchmark subsets, compare input sets, visualize workload space, and identify missing coverage.
+- 3.3 Plackett and Burman based workload design: design-of-experiments can rank which parameters matter and compare benchmarks by bottleneck sensitivity.
+- 3.4 Limitations and discussion: a reduced workload is representative only with respect to the chosen reference set and measured characteristics.
+- Key insight: if evaluating a new feature, make sure the selected workloads actually exercise the behavior the feature targets.
+
+#### Chapter 4 - Analytical Performance Modeling
+
+- 4.1 Empirical versus mechanistic modeling: empirical models learn from data; mechanistic models encode first-principles behavior; hybrid models combine both.
+- 4.2 Empirical modeling: black-box models are useful for fast prediction after training, but they can lose interpretability and extrapolate poorly.
+- 4.2.1 Linear regression: useful for parameter importance and interaction terms when behavior is close to linear.
+- 4.2.2 Non-linear and spline-based regression: captures non-linear responses such as cache-size knees or queue saturation.
+- 4.2.3 Neural networks: can predict complex relationships but are harder to explain and validate in architecture discussions.
+- 4.3 Mechanistic modeling: interval modeling divides execution into steady-state dispatch intervals interrupted by miss events.
+- 4.3.1 Interval model fundamentals: ideal dispatch proceeds at a core width until branch, I-cache, I-TLB, D-cache, D-TLB, or dependency events create gaps.
+- 4.3.2 Modeling I-cache and I-TLB misses: frontend misses block fetch and create visible fetch bubbles.
+- 4.3.3 Modeling branch mispredictions: penalty includes frontend redirect/fill plus backend drain or branch-resolution delay.
+- 4.3.4 Modeling short back-end miss events using Little's law: small misses can be hidden by ROB/window capacity; throughput depends on occupancy divided by latency.
+- 4.3.5 Modeling long back-end miss events: long misses at the ROB head can stall commit and eventually block dispatch.
+- 4.3.6 Miss event overlaps: frontend misses often serialize, while backend misses may overlap through memory-level parallelism.
+- 4.3.7 The overall model: total time combines ideal dispatch cycles plus non-overlapped frontend and backend miss penalties.
+- 4.3.8 Input parameters to the model: locality data, miss rates, branch behavior, latency, window size, width, and memory-level parallelism are model inputs.
+- 4.3.9 Predecessors to interval modeling: earlier models used simplified CPI stacks and first-order processor/memory decompositions.
+- 4.3.10 Follow-on work: interval ideas extend to CPI stacks, hardware-counter modeling, multicore simulation, prefetching, MSHRs, and design-space exploration.
+- 4.3.11 Multiprocessor modeling: multicore models often represent memory and interconnect as queues/delay centers and reason about contention.
+- 4.4 Hybrid mechanistic-empirical modeling: use first-principles structure, then fit uncertain parameters with data.
+- Key insight: analytical models are excellent for intuition and sweeps, but detailed simulation or RTL/hardware evidence is needed before making final claims.
+
+#### Chapter 5 - Simulation
+
+- 5.1 The computer architect's toolbox: simulators trade accuracy, run time, development time, and coverage. No single simulator is best for every question.
+- 5.2 Functional simulation: functional models execute instructions without timing and are useful for correctness, trace generation, and workload inspection.
+- 5.2.1 Alternatives: instrumentation and direct execution can be faster but may constrain ISA, portability, or observability.
+- 5.2.2 Operating system effects: system calls, scheduling, interrupts, and I/O can matter enough that user-mode-only simulation becomes misleading.
+- 5.3 Full-system simulation: required when OS, devices, interrupts, page tables, or kernel paths materially affect behavior.
+- 5.4 Specialized trace-driven simulation: component simulators such as cache or branch-predictor models are fast but narrow.
+- 5.5 Trace-driven simulation: traces decouple instruction capture from timing simulation, enabling repeatability and many parameter sweeps, but lose wrong-path and timing-dependent behavior.
+- 5.6 Execution-driven simulation: combines functional execution and timing so wrong-path effects, timing-dependent interleavings, and feedback can be modeled.
+- 5.6.1 Taxonomy: timing-directed, functional-first, and timing-first designs differ in who leads progress and how rollback/correction is handled.
+- 5.6.2 Dealing with non-determinism: multithreading, OS scheduling, and shared-resource timing can change execution paths; use long runs, deterministic replay, or repeated runs with confidence intervals.
+- 5.7 Modular simulation infrastructure: reusable units, ports, parameters, events, stats, and reports reduce simulator development cost and help maintain model consistency.
+- 5.8 Need for simulation acceleration: cycle-level simulation is slow compared with real hardware, so sampling, statistical simulation, parallelism, and hardware acceleration matter.
+- Key insight: Sparta/Olympia fits the modular simulation infrastructure story: reusable scheduler, resources, ports, parameters, counters, and reports wrapped around an architecture model.
+
+#### Chapter 6 - Sampled Simulation
+
+- 6.1 What sampling units to select: sampled simulation models only selected regions, so sample choice determines accuracy.
+- 6.1.1 Statistical sampling: random or periodic samples can support confidence intervals, but periodic sampling can alias with program phases.
+- 6.1.2 Targeted sampling: phase-based methods such as SimPoint choose representative regions using code/behavior vectors and cluster weights.
+- 6.1.3 Comparing design alternatives through sampled simulation: compare designs on the same sampling units and watch for sample-specific bias.
+- 6.2 How to initialize architecture state: sampled regions need correct architectural state before timing simulation starts.
+- 6.2.1 Fast-forwarding: execute quickly to the sample point, then switch to detailed timing; simple but still serial.
+- 6.2.2 Checkpointing: save architectural state for parallel and repeated sample simulation, but checkpoint size and restore cost matter.
+- 6.3 How to initialize microarchitecture state: caches, TLBs, predictors, and pipeline history need warmup or checkpointed state.
+- 6.3.1 Cache state warmup: no warmup, fixed warmup, adaptive warmup, stale state, and checkpointed cache state trade speed against accuracy.
+- 6.3.2 Predictor warmup: branch and prefetch predictors can need meaningful history, but their warmup is often less directly handled than caches.
+- 6.3.3 Processor core state: short-history core state can often be warmed up with a fixed pre-sample window.
+- 6.4 Sampled multiprocessor and multi-threaded processor simulation: sampling is harder because relative thread progress and shared-resource interference change behavior.
+- Key insight: when using sampled results, always ask what state was warmed up and whether the sample exercises the mechanism being measured.
+
+#### Chapter 7 - Statistical Simulation
+
+- 7.1 Methodology overview: profile a real workload into statistical distributions, generate a short synthetic trace, and simulate that trace quickly.
+- 7.2 Applications: useful for design-space exploration, workload-space exploration, stressmark generation, workload characterization, and large-system what-if studies.
+- 7.3 Single-threaded workloads: statistical profiles capture instruction mix, dependencies, branches, locality, and miss behavior.
+- 7.3.1 Statistical profiling: collect microarchitecture-independent behavior when possible, then add controlled microarchitecture-dependent labels for caches/TLBs/predictors.
+- 7.3.2 Synthetic trace generation: generate representative instruction and memory behavior from the profile distributions.
+- 7.3.3 Synthetic trace simulation: use a simplified timing model because decode, cache, and branch outcomes can be abstracted through labels.
+- 7.4 Multi-program workloads: shared-cache and memory contention require profiles that can represent inter-program interference.
+- 7.5 Multi-threaded workloads: synchronization, lock hold times, barriers, thread spawning, and coherence behavior must be represented.
+- 7.6 Other work in statistical modeling: includes Markov models, synthetic benchmarks, stressmarks, reuse profiles, and SMART-style approaches.
+- Key insight: statistical simulation is not a replacement for detailed simulation; it is a fast exploration tool whose value depends on whether the profile captures the target bottleneck.
+
+#### Chapter 8 - Parallel Simulation and Hardware Acceleration
+
+- 8.1 Parallel sampled simulation: distribute independent samples or checkpoints across machines; this improves throughput and can reduce wall time for sampled studies.
+- 8.2 Parallel simulation: partition the simulator across host cores, but preserve timing causality using barriers, conservative synchronization, slack, or optimistic rollback.
+- 8.3 FPGA-accelerated simulation: map the model or parts of it into FPGA hardware for speed.
+- 8.3.1 Taxonomy: functional emulators, prototypes, structural emulators, and abstract models trade speed, fidelity, and flexibility differently.
+- 8.3.2 Example projects: FPGA simulation projects show large speedups but also high development effort and long iteration time for model changes.
+- Key insight: acceleration helps only if it preserves the fidelity needed for the design question; faster wrong modeling is still wrong.
+
+#### Chapter 9 - Concluding Remarks
+
+- 9.1 Topics not covered yet: the book highlights measurement bias, design-space exploration, and simulator validation as major open practical issues.
+- 9.1.1 Measurement bias: binary layout, environment variables, link order, address placement, and run conditions can perturb cache/TLB behavior.
+- 9.1.2 Design space exploration: one-parameter-at-a-time sweeps can miss interactions; use systematic exploration or first-pass models to narrow the space.
+- 9.1.3 Simulator validation: "cycle-level" does not automatically mean accurate; validate against hardware, RTL, microbenchmarks, or known invariants.
+- 9.2 Future work: increasingly complex software stacks and hardware platforms make performance evaluation harder.
+- 9.2.1 Challenges related to software: VMs, JITs, managed runtimes, consolidated workloads, and QoS/SLA targets complicate evaluation.
+- 9.2.2 Challenges related to hardware: multicore, manycore, chiplets, and datacenter-scale systems require both high-level and detailed models.
+- 9.2.3 Final comment: performance evaluation remains a moving target because both workloads and hardware keep changing.
+- Key insight: validation and bias control are not optional polish; they are part of the model's credibility.
+
+### Performance Model Implementation Design Checklist
+
+This is the practical C++/simulator-design side of performance modeling.
+
+Core blocks to be able to implement or review:
+- Cycle/event scheduler with deterministic ordering for same-cycle events.
+- Pipeline stage objects with input queues, output queues, latency, bandwidth, and backpressure.
+- Resource models for issue ports, functional units, cache ports, MSHRs, TLBs, ROB, LQ, SQ, and store buffer.
+- State split between current-cycle visible state and next-cycle updates, or an event discipline that gives the same ordering guarantees.
+- Stats hooks for occupancy, utilization, stalls, retries, conflicts, and per-op timelines.
+- Configurable parameters loaded from YAML/JSON/CLI without spreading constants through the code.
+- Trace/debug hooks that let one instruction be followed from fetch to retire.
+
+Questions to answer in code review:
+- Does the model preserve enough ordering to make backpressure and recovery realistic?
+- Are structural hazards modeled explicitly, or hidden inside average latency constants?
+- Can one event complete, wake dependents, and be observed in the same cycle only if the target microarchitecture allows it?
+- Are counters mutually exclusive enough to build a useful CPI stack?
+- Is the model deterministic and reproducible under the same input trace and configuration?
+
+### Workload and Benchmark Analysis Checklist
+
+Use this section for interview discussion about picking and interpreting workloads.
+
+Before running:
+- Define the target domain: mobile CPU, server, embedded, DSP-like kernels, compiler-generated code, or synthetic stress.
+- Choose benchmarks that exercise the suspected bottleneck: branch behavior, pointer chasing, L1/L2 capacity, TLB reach, store forwarding, atomics, vector throughput, or memory bandwidth.
+- Include microbenchmarks when isolating one mechanism, but do not use them as the only performance claim.
+- Record input size, warmup policy, sample region, compiler flags, ISA extensions, and system configuration.
+
+After running:
+- Start with top-line metric: time, IPC/CPI, STP, ANTT, or throughput depending on workload type.
+- Then diagnose with partial metrics: MPKI, branch MPKI, TLB MPKI, MSHR occupancy, queue full cycles, replay count, port conflicts, prefetch accuracy, and bandwidth.
+- Check whether the speedup comes from the intended mechanism.
+- Look for regression cases and explain why the design hurts them.
+- Avoid overclaiming from one benchmark; use workload clusters or representative groups when possible.
+
+### Interview Case-Study Templates
+
+Use these as short spoken frameworks when the interviewer asks an open-ended debug/modeling question.
+
+#### Case 1: IPC Dropped, How Do You Debug?
+
+Answer structure:
+1. Confirm the setup: same workload, input, compiler flags, seed, warmup, sampling region, model config, and instruction count.
+2. Check top-line decomposition: IPC, CPI, retired instructions, cycles, frequency/latency assumptions if relevant.
+3. Build a stall breakdown: frontend empty, backend full, commit blocked, memory stalls, branch recovery, replay, resource conflicts.
+4. Compare key counters against baseline: branch MPKI, I/D cache MPKI, TLB MPKI, MSHR full, LQ/SQ full, IQ full, ROB full, port conflicts, prefetch usefulness.
+5. Localize the phase: whole benchmark regression or one hot region/phase.
+6. Reduce to a directed test if one mechanism dominates.
+
+Interview wording:
+> I would first make sure this is a real apples-to-apples regression, then use a CPI stack and differential counters to identify whether the lost cycles are frontend, backend, memory, or recovery. Once one bucket dominates, I would build a small directed workload or trace slice to prove the root cause.
+
+#### Case 2: Model Predicts Speedup, How Do You Validate?
+
+Answer structure:
+1. State the hypothesis: which bottleneck should improve and why.
+2. Check mechanism counters: the predicted bottleneck should move in the expected direction.
+3. Check side-effect counters: new port conflicts, bandwidth, MSHR pressure, replay count, prefetch pollution, or branch recovery should not offset the gain.
+4. Run sensitivity sweeps: vary latency, queue size, MSHR count, predictor size, or cache size to see if the trend is explainable.
+5. Compare against stronger evidence: RTL simulation, waveform, hardware PMU counters, or directed microbenchmarks if available.
+6. Validate on held-out workloads so the result is not overfit to one benchmark.
+
+Interview wording:
+> I would not trust only the IPC number. I would validate that the counter tied to the hypothesis improves, that no hidden side effect creates the speedup, and that the trend holds under directed tests or RTL/hardware evidence when available.
+
+#### Case 3: Prefetcher Regressed a Benchmark, What Counters Do You Inspect?
+
+Answer structure:
+1. Prefetch usefulness: accuracy, coverage, timeliness, late prefetches, unused prefetches.
+2. Demand interference: MSHR full cycles, demand miss latency, demand requests delayed by prefetch probes/fills.
+3. Cache pollution: demand lines evicted by prefetch, increase in demand MPKI, replacement victim changes.
+4. Bandwidth pressure: L2/memory bandwidth, interconnect queue occupancy, writeback/refill conflicts.
+5. Power/activity: extra tag/data array probes, prefetch queue activity, lower-level traffic.
+6. Phase behavior: prefetch may help streaming phases and hurt pointer-chase or small-working-set phases.
+7. Throttling policy: disable on low accuracy, high MSHR occupancy, high bandwidth pressure, or thermal/power constraints.
+
+Interview wording:
+> I would split the regression into usefulness and interference. If accuracy or timeliness is bad, the prefetcher is not predicting well. If accuracy is good but IPC drops, I would look for MSHR pressure, cache pollution, bandwidth contention, or power/thermal side effects.
+
+#### Case 4: New Cache Design Improves MPKI But IPC Barely Moves
+
+Answer structure:
+1. Check whether misses were on the critical path or already overlapped by OoO execution.
+2. Inspect MLP: number of outstanding misses, MSHR occupancy, ROB head blocking, and long-latency miss overlap.
+3. Check whether the benchmark is limited by branch recovery, frontend bandwidth, decode/rename width, issue ports, or commit.
+4. Compare miss latency, not only miss count; a lower MPKI with longer latency may not help.
+5. Verify that the cache change did not add hit latency or new port/bank conflicts.
+
+Interview wording:
+> Lower MPKI does not guarantee higher IPC. I would ask whether those misses were on the critical path, whether OoO already hid them, and whether the new design changed hit latency or structural conflicts.
+
+#### Case 5: Counter Results Do Not Match Model Prediction
+
+Answer structure:
+1. Check event definitions and whether counters are exclusive or overlapping.
+2. Check warmup, sampling, OS noise, interrupts, and run-to-run variance.
+3. Confirm the model has the relevant structure: queue capacity, port conflicts, MSHR merge, replay, TLB walk, coherence, or wrong-path effects.
+4. Reproduce with a directed microbenchmark.
+5. Decide whether the model needs calibration, a new mechanism, or a narrower validity statement.
+
+Interview wording:
+> I would treat the mismatch as useful information. Either the counter is not measuring what I think, the experiment is noisy, or the model is missing a mechanism. The next step is to isolate the mechanism with a directed workload.
+
 ### Core Distinction
 
 #### Sparta
@@ -3025,6 +3264,75 @@ Microarch coding rule:
   - What state is stored?
   - What is the per-cycle or per-access API?
   - What are the invariants?
+
+#### Part 4.5 — Additional Simulator Modeling Drills
+
+Goal: practice C++ problems that look like small pieces of a CPU performance model. Each drill should have a clear state model, a small API, and table-driven tests.
+
+Recommended location:
+
+- `/home/fy2243/interview/c++coding/modeling_drills/`
+
+High-priority drills:
+
+1. `event_scheduler.cpp`
+   - Implement a deterministic cycle/event scheduler.
+   - API target: `schedule(cycle, callback)` and `run_until(cycle)`.
+   - Must handle: multiple events in same cycle, stable ordering, cancellation optional.
+   - Interview reason: maps directly to Sparta-style event-driven simulation.
+
+2. `valid_ready_channel.cpp`
+   - Model a valid/ready pipeline channel with backpressure.
+   - Must handle: producer holds data stable while `valid && !ready`, consumer stalls, bubble insertion.
+   - Interview reason: useful for explaining pipeline handshakes and simulator timing.
+
+3. `rob_retire_model.cpp`
+   - Implement in-order allocation, completion marking, and retire from a circular ROB.
+   - Must handle: full/empty, commit width, exception at head, squash younger entries.
+   - Interview reason: tests precise-state and OoO/in-order-retire understanding.
+
+4. `store_set_predictor.cpp`
+   - Implement a simple memory-dependence predictor with SSIT/LFST-style tables.
+   - Input: load/store PC, store age/id, violation updates.
+   - Output: whether a load should wait for an older store.
+   - Interview reason: directly connects C++ modeling to LSU memory ordering.
+
+5. `tage_predictor_skeleton.cpp`
+   - Implement a small TAGE-like predictor with base table, two tagged tables, provider selection, and update.
+   - Must handle: folded history or simple hash, tag match, alternate prediction, usefulness bit simplified.
+   - Interview reason: branch predictor modeling beyond 2-bit/gshare.
+
+6. `tlb_ptw_model.cpp`
+   - Implement L1 TLB, L2 TLB, and a page-table-walk latency model.
+   - Must handle: TLB hit/miss, L2 refill to L1, PTW miss, page size, ASID tag, permission fault.
+   - Interview reason: covers TLB/MMU topics that often appear in CPU roles.
+
+7. `cache_with_mshr_and_prefetch.cpp`
+   - Extend set-associative cache with MSHRs and a next-line prefetcher.
+   - Must handle: primary miss, secondary miss merge, MSHR full, prefetch drop/throttle, demand priority.
+   - Interview reason: close to real cache performance-model structure.
+
+8. `cpi_stack_aggregator.cpp`
+   - Given per-cycle stall reasons or per-instruction events, build a CPI stack.
+   - Must handle: mutually exclusive stall classes, overlapping diagnostic counters, normalized output.
+   - Interview reason: bridges C++ coding with performance counter interpretation.
+
+9. `pipeline_replay_model.cpp`
+   - Model a small load pipeline where D$ miss, store-forwarding failure, or MSHR full causes replay.
+   - Must handle: capture, replay, duplicate completion prevention, and recovery flush.
+   - Interview reason: directly supports LSU/replay discussion.
+
+10. `coherence_state_machine.cpp`
+    - Implement a minimal MESI line state machine.
+    - Must handle: local read/write, remote read, remote invalidate, eviction, dirty writeback.
+    - Interview reason: useful if the discussion moves from core model to memory system.
+
+Implementation standard:
+- Start each file with a short model contract.
+- Keep the API small and deterministic.
+- Add 5-10 table-driven tests in `main()` using `assert`.
+- Print compact stats only after tests pass.
+- After coding, write three interview sentences: what state is modeled, what timing/ordering assumption is made, and what limitation remains.
 
 #### Simulator-Style Warmup Checklist and Interview Key Points
 
