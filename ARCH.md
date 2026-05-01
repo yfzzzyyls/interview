@@ -1024,6 +1024,99 @@ request generation. Under `RSD_MARCH_DECOUPLED_FRONTEND`, this is split:
 The predictor algorithm remains BTB plus gshare. The change is the pipeline
 organization and metadata lifetime, not a replacement of the predictor.
 
+### Frontend Deep-Dive Questions to Resolve
+
+Use this checklist for the next detailed frontend walkthroughs. For each topic,
+compare the implemented RSD path against a more advanced out-of-order CPU
+frontend.
+
+1. Lane PC generation:
+   - What exactly is a lane PC?
+   - Why does RSD create one PC per fetch lane instead of only one fetch-block
+     PC?
+   - How do lane PCs flow into BTB/PHT lookup, FTQ metadata, PreDecode, Decode,
+     Execute branch comparison, and `ftqLast` marking?
+   - RSD anchor: `DecoupledBPU` creates `bpS1LanePC`; `NextPCStage` recreates
+     fetch lane PCs from `ftq.headEntry.startPC`.
+
+2. RAS, indirect jump predictor, and BTB structure:
+   - RSD does not currently implement RAS or an indirect target predictor in
+     the inspected decoupled frontend, so treat these as advanced CPU review
+     topics.
+   - Need a detailed review of return-address-stack push/pop/repair behavior.
+   - Need a detailed review of indirect jump target prediction, indexing,
+     tags, target selection, and update timing.
+   - Need a detailed review of RSD BTB fields, indexing, partial tags, target
+     encoding, valid bits, `isCondBr`, lane-based lookup, and replacement
+     behavior.
+
+3. BTB working with gshare/TAGE:
+   - Direction predictor predicts taken/not-taken; BTB predicts the taken
+     target and identifies branch lanes.
+   - What happens if multiple branch instructions are in one fetch line?
+   - What happens on BTB miss: do we simply predict fall-through?
+   - How does earliest-taken-lane selection work?
+   - How would this change with TAGE instead of gshare?
+   - When should the frontend learn that a predicted non-branch was actually a
+     branch: PreDecode, Execute, Commit, or some hybrid?
+   - RSD anchor: current predictor update is commit-driven; BTB updates only
+     for resolved taken branches.
+
+4. FTQ structure, purpose, and lifetime:
+   - What exactly does the FTQ store: `startPC`, `fetchEndPC`, `predTarget`,
+     `predTaken`, branch offset, BTB hit, conditional bit, GHR snapshot, PHT
+     index/value, resolved result, and per-lane predictions?
+   - Why does each FTQ entry need a GHR snapshot instead of relying only on one
+     global GHR?
+   - What are `FTQ_ID` and `ftqLast`?
+   - How are `FTQ_ID`, `headPtr`, `tailPtr`, and `commitPtr` related but not
+     identical?
+   - When is an FTQ entry allocated: every predicted fetch block or only every
+     predicted branch?
+   - When is it released: branch execute, branch writeback, commit, recovery,
+     or interrupt flush?
+
+5. BTB update timing:
+   - Is the BTB updated when PreDecode discovers a branch?
+   - Is it updated at Execute when the real branch target is known?
+   - Is it updated only at Commit to avoid wrong-path pollution?
+   - What are the tradeoffs between early update and commit-only update?
+   - RSD anchor: current decoupled BPU updates BTB from committed, resolved,
+     taken branch metadata.
+
+6. BTB partial target and partial tag:
+   - RSD stores a partial BTB tag and partial target bits.
+   - This is not because all branches have small architectural offsets; it is a
+     storage/latency/energy tradeoff.
+   - Need to understand what happens for long jumps, indirect jumps, calls,
+     returns, and far targets when upper target bits differ from the current PC.
+   - Need to distinguish partial target aliasing from BTB tag aliasing.
+
+7. Fetch packet / instruction buffer format:
+   - What exactly enters the fetch buffer?
+   - Is it raw cacheline bytes, decoded instructions, predecode metadata, or
+     lane packets?
+   - What fields are carried per lane: valid bit, PC, instruction bits,
+     `ftqID`, `ftqLast`, branch prediction metadata, and stage-control fields?
+   - RSD anchor: the implemented buffer stores `PreDecodeStageRegPath
+     lane[FETCH_WIDTH]`, not a raw byte stream.
+
+8. TAGE-SC-L:
+   - Need a detailed explanation of TAGE-SC-L because it is a common
+     high-performance direction predictor family.
+   - Cover TAGE provider/alternate provider, geometric histories, tagged
+     tables, allocation, usefulness bits, statistical corrector, loop predictor,
+     speculative history, update metadata, and frontend timing impact.
+   - Compare against RSD's simpler BTB plus gshare PHT implementation.
+
+9. Micro-op cache:
+   - What is a micro-op cache or decoded instruction cache?
+   - How is it different from I-cache, trace cache, loop buffer, and normal
+     decode queue?
+   - What does it store, how is it indexed, how does it interact with branch
+     prediction, and how is it invalidated by self-modifying code or `FENCE.I`?
+   - RSD anchor: not implemented in the inspected decoupled frontend.
+
 ### Real Pipeline Stage Mapping
 
 The original RSD frontend has two live frontend pipeline stages:
@@ -3666,7 +3759,7 @@ Topics to cover:
 - Pipeline drain or flush requirements.
 - Interrupt priority and masking.
 
-## Part 11 — FENCE and FENCE.I Implementation
+## Part 11 — FENCE and FENCE.I and ecall/ebreak/csr/sret/mret Implementation
 
 To fill with RSD implementation evidence and interview explanation.
 
