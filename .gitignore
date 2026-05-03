@@ -1,0 +1,20 @@
+# Build outputs
+a.out
+*.out
+*.o
+*.obj
+*.exe
+*.dSYM/
+
+# Local C++ practice binaries that are named after source files.
+c++/qualcomm_final_round/**/[0-9][0-9]_*
+!c++/qualcomm_final_round/**/*.c
+!c++/qualcomm_final_round/**/*.cc
+!c++/qualcomm_final_round/**/*.cpp
+!c++/qualcomm_final_round/**/*.md
+
+# Independent repositories kept beside the interview-prep files.
+/riscv-boom-fengze/
+/riscv-perf-model-fengze/
+/rsd_fengze/
+/SoC_Project/

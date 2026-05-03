@@ -3119,13 +3119,20 @@ Goal: rebuild C++ coding fluency from syntax and fundamentals before solving int
 
 Recommended location:
 
-- `/home/fy2243/interview/c++coding/basics/`
+- `interview/c++/qualcomm_final_round/01_basics_coding/`
 
 Coding blocks, in order:
 
 1. `01_compile_io_types.cpp`
    - Practice: `main()`, headers, `std::cout`, `std::cin`, fixed-width integer types, `sizeof`, signed vs unsigned.
    - Done when: can compile/run from command line and explain each type choice.
+   - Review notes:
+     - Prefer `std::cout` for basic C++ practice because it is type-safe and avoids `printf` format-string mistakes.
+     - `printf` prints to standard output; `fprintf` requires an explicit stream such as `stdout` or `stderr`.
+     - Integer literal suffixes matter: `u` means unsigned, `LL` means long long, `ULL` means unsigned long long; there is no standard `s` suffix for signed integer.
+     - Use unsigned fixed-width types such as `std::uint32_t` or `std::uint64_t` for address-like values and bit manipulation.
+     - `std::hex` changes later integer output until `std::dec` switches it back.
+     - Signed/unsigned mixing is dangerous because a negative signed value can convert to a very large unsigned value.
 
 2. `02_control_flow_functions.cpp`
    - Practice: `if`, `switch`, loops, helper functions, pass-by-value return values.
@@ -3174,45 +3181,37 @@ Interview framing:
 - These are not the final target, but they remove friction.
 - The goal is to stop losing time on C++ syntax when the real question is about simulator structures, cache behavior, or LSU modeling.
 
-#### Part 3 — Warmup Coding, 60-90 Min
+#### Part 3 — C++ Fluency Bridge, 45-60 Min
 
-Goal: regain C++ fluency before microarchitecture-specific problems. These should be quick, clean, and compiled with small tests.
+Goal: bridge from basic syntax blocks into simulator-style code without spending time on generic LeetCode patterns. This section should reinforce small C++ mechanics that will be reused in the microarchitecture drills.
 
 Recommended location:
 
-- `/home/fy2243/interview/c++coding/warmup/`
+- `interview/c++/qualcomm_final_round/02_fluency_bridge/`
 
-Problems, in order:
+Practice blocks, in order:
 
-1. `two_sum.cpp`
-   - Practice: arrays, loops, `unordered_map` or sorted two-pointer version.
-   - Done when: handles duplicate values, no-solution case, and reports complexity.
+1. `01_unsigned_address_math.cpp`
+   - Practice: `uint64_t`, shifts, masks, alignment, line address, index, tag.
+   - Done when: can decode cache fields and explain why unsigned math is used.
 
-2. `three_sum.cpp`
-   - Practice: sort + two pointers, duplicate skipping.
-   - Done when: avoids duplicate triplets and explains `O(n^2)`.
+2. `02_struct_state_update.cpp`
+   - Practice: small structs for `Instruction`, `CacheLine`, or `QueueEntry`; explicit valid bits; update helpers.
+   - Done when: state transitions are clear and printed/debuggable.
 
-3. `reverse_bits_count_bits.cpp`
-   - Practice: shifts, masks, unsigned integers.
-   - Done when: can explain why unsigned types are safer for bit operations.
+3. `03_container_lookup_update.cpp`
+   - Practice: `unordered_map::find`, `vector` indexed state, `deque`, iterator-safe updates.
+   - Done when: no accidental insertion through `operator[]` in read-only lookup paths.
 
-4. `merge_sorted_arrays.cpp`
-   - Practice: two pointers, in-place merge from the back.
-   - Done when: handles empty arrays and repeated values.
-
-5. `ring_buffer.cpp`
-   - Practice: fixed-capacity queue, wraparound, full/empty state.
-   - Done when: push/pop/front all work across wraparound.
-
-6. `lru_cache.cpp`
-   - Practice: `list + unordered_map`, iterator validity, capacity eviction.
-   - Done when: `get` promotes to MRU, `put` updates existing keys, and eviction is correct.
+4. `04_table_driven_assert_tests.cpp`
+   - Practice: compact `assert` tests for boundary cases and state transitions.
+   - Done when: every later microarchitecture file can reuse this testing style.
 
 Interview framing:
 
-- These are not the main interview target, but they remove syntax friction.
-- Keep each solution under 25-35 minutes.
-- After each one, write down one bug, one edge case, and final complexity.
+- This section is deliberately not LeetCode-style.
+- The goal is to remove C++ friction before implementing hardware-like structures.
+- Keep each block under 15 minutes and compile with `g++ -std=c++17 -Wall -Wextra -pedantic`.
 
 #### Part 4 — Microarchitecture Coding, Highest Priority
 
@@ -3220,39 +3219,67 @@ Goal: practice the coding problems most aligned with CPU performance modeling. T
 
 Recommended location:
 
-- `/home/fy2243/interview/c++coding/microarch/`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/`
 
 Do these in this order:
 
-1. `set_associative_cache.cpp`
+1. `ring_buffer.cpp`
+   - Implement a fixed-capacity queue with wraparound.
+   - API target: `push`, `pop`, `front`, `empty`, `full`, `size`.
+   - Must handle: full vs empty disambiguation, wraparound, single-entry capacity, overflow/underflow behavior.
+   - Interview reason: directly maps to ROB, fetch queue, replay queue, store queue, and event queues.
+
+2. `lru_cache.cpp`
+   - Implement capacity-limited LRU with `std::list` and `std::unordered_map`.
+   - API target: `get(key)` and `put(key, value)`.
+   - Must handle: promote hit to MRU, update existing key, evict LRU on capacity overflow, iterator validity.
+   - Interview reason: practical C++ structure for replacement policy and recency tracking.
+
+3. `direct_mapped_cache.cpp`
+   - Implement line address, index, tag, valid bit, hit/miss update, and stats.
+   - API target: `access(uint64_t addr)` returns hit/miss and updates counters.
+   - Must handle: power-of-two line size, line alignment, compulsory misses, repeated hits.
+   - Interview reason: smallest complete cache model and a good sanity check before associativity.
+
+4. `set_associative_cache.cpp`
    - Implement configurable sets, ways, line size, and replacement policy.
    - Minimum policies: LRU first; FIFO or random optional.
    - API target: `access(uint64_t addr)` returns hit/miss and updates stats.
    - Must handle: tag/index/offset decode, line alignment, replacement, hit rate report.
    - Interview reason: very likely for a CPU perf-modeling role; directly tests cache modeling and C++ data structures.
 
-2. `store_to_load_forwarding.cpp`
+5. `mshr_table.cpp`
+   - Implement allocate, merge same cache line, reject when full, complete refill.
+   - Must handle: line address matching, outstanding miss limit, multiple waiting requests.
+   - Interview reason: common cache-modeling structure; tests state-machine discipline.
+
+6. `load_replay_buffer.cpp`
+   - Model replay entries for loads waiting on cache miss, store resolution, or retry delay.
+   - Must handle: valid entries, age ordering, ready check, selected replay, entry removal.
+   - Interview reason: directly connects cache/LSU modeling to pipeline recovery and replay behavior.
+
+7. `store_queue_forwarding.cpp`
    - Model an older store queue and a younger load request.
    - Cases:
      - full overlap: forward value;
      - partial overlap: stall/replay;
      - no older matching store: miss/no forward.
    - Must handle: address, size, age ordering, byte overlap.
-   - Interview reason: highly relevant to LSU modeling and Adarsh's likely specialty.
+   - Interview reason: highly relevant to LSU modeling and memory-ordering questions.
 
-3. `branch_predictor_sim.cpp`
+8. `branch_predictor.cpp`
    - Implement 2-bit saturating counter predictor.
    - Add gshare if time allows.
    - Input: small trace of `PC, taken`.
    - Output: prediction count, misprediction count, misprediction rate.
    - Must handle: index extraction, counter update, initial state.
 
-4. `mshr_model.cpp`
-   - Implement allocate, merge same cache line, reject when full, complete refill.
-   - Must handle: line address matching, outstanding miss limit, multiple waiting requests.
-   - Interview reason: common cache-modeling structure; tests state-machine discipline.
+9. `event_queue.cpp`
+   - Implement target-cycle ordered events using `priority_queue`.
+   - Must handle: stable ordering for same-cycle events, callback or event-id dispatch, compact tests.
+   - Interview reason: simulator infrastructure question; tests deterministic ordering discipline.
 
-5. `wakeup_select_issue_queue.cpp`
+10. `wakeup_select_issue_queue.cpp`
    - Model issue queue entries with source readiness and age.
    - Select up to `issue_width` ready entries per cycle.
    - Must handle: wakeup by physical register tag, oldest-ready selection, removal after issue.
@@ -3271,7 +3298,7 @@ Goal: practice C++ problems that look like small pieces of a CPU performance mod
 
 Recommended location:
 
-- `/home/fy2243/interview/c++coding/modeling_drills/`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/`
 
 High-priority drills:
 
@@ -3334,21 +3361,21 @@ Implementation standard:
 - Print compact stats only after tests pass.
 - After coding, write three interview sentences: what state is modeled, what timing/ordering assumption is made, and what limitation remains.
 
-#### Simulator-Style Warmup Checklist and Interview Key Points
+#### Microarchitecture Coding Checklist and Interview Key Points
 
-Completed warmup files:
+Core microarchitecture coding files:
 
-1. `warmup/ring_buffer.cpp`
-2. `warmup/lru_cache.cpp`
-3. `warmup/direct_mapped_cache.cpp`
-4. `warmup/set_associative_cache.cpp`
-5. `warmup/mshr_table.cpp`
-6. `warmup/load_replay_buffer.cpp`
-7. `warmup/event_queue.cpp`
-8. `warmup/branch_predictor.cpp`
-9. `warmup/store_queue_forwarding.cpp`
-10. `warmup/rob_active_list.cpp`
-11. `warmup/simple_pipeline_simulator.cpp`
+1. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/ring_buffer.cpp`
+2. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/lru_cache.cpp`
+3. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/direct_mapped_cache.cpp`
+4. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/set_associative_cache.cpp`
+5. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/mshr_table.cpp`
+6. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/load_replay_buffer.cpp`
+7. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/event_queue.cpp`
+8. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/branch_predictor.cpp`
+9. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/store_queue_forwarding.cpp`
+10. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/rob_active_list.cpp`
+11. `interview/c++/qualcomm_final_round/03_microarchitecture_coding/simple_pipeline_simulator.cpp`
 
 Key interview points:
 
@@ -3418,7 +3445,7 @@ Goal: remove C++ callback syntax weakness before discussing Sparta/Olympia-style
 
 Recommended location:
 
-- `/home/fy2243/interview/c++coding/callbacks/`
+- `interview/c++/qualcomm_final_round/02_fluency_bridge/`
 
 Create one small file:
 
@@ -3588,241 +3615,6 @@ For each new question:
 - Resume from this document if the session context is lost.
 
 ---
-
-### Study Plan — Priority Order for Interview Prep
-
-Problems sourced from [LeetCode Top Interview 150](https://leetcode.com/studyplan/top-interview-150/). Organized by topic, ordered easy → medium → hard within each section. Problems the user has already solved are marked with ✅.
-
-#### Phase 1 — Fundamentals (do these first)
-
-These are the bread and butter. If you only have a few hours, focus here.
-
-##### 01 — Arrays & Strings
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 88 | Merge Sorted Array | Easy | ✅ |
-| 🔴 | 27 | Remove Element | Easy | ✅ |
-| 🔴 | 26 | Remove Duplicates from Sorted Array | Easy | ✅ |
-| 🔴 | 169 | Majority Element | Easy | ✅ |
-| 🔴 | 121 | Best Time to Buy and Sell Stock | Easy | ✅ |
-| 🔴 | 13 | Roman to Integer | Easy | ✅ |
-| 🔴 | 58 | Length of Last Word | Easy | ✅ |
-| 🔴 | 14 | Longest Common Prefix | Easy | ✅ |
-| 🔴 | 28 | Find the Index of First Occurrence | Easy | ✅ |
-| 🔴 | 238 | Product of Array Except Self | Medium | ✅ |
-| 🔴 | 55 | Jump Game | Medium | ✅ |
-| 🟡 | 189 | Rotate Array | Medium | |
-| 🟡 | 80 | Remove Duplicates from Sorted Array II | Medium | |
-| 🟡 | 45 | Jump Game II | Medium | |
-| 🟡 | 134 | Gas Station | Medium | |
-| 🟡 | 151 | Reverse Words in a String | Medium | |
-| 🟡 | 6 | Zigzag Conversion | Medium | ✅ |
-| 🟢 | 274 | H-Index | Medium | |
-| 🟢 | 380 | Insert Delete GetRandom O(1) | Medium | |
-| 🟢 | 42 | Trapping Rain Water | Hard | |
-| 🟢 | 135 | Candy | Hard | |
-| 🟢 | 68 | Text Justification | Hard | |
-
-##### 02 — Math & Bit Manipulation
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 9 | Palindrome Number | Easy | ✅ |
-| 🔴 | 66 | Plus One | Easy | ✅ |
-| 🔴 | 69 | Sqrt(x) | Easy | ✅ |
-| 🔴 | 136 | Single Number | Easy | ✅ |
-| 🔴 | 191 | Number of 1 Bits | Easy | ✅ |
-| 🔴 | 190 | Reverse Bits | Easy | ✅ |
-| 🟡 | 67 | Add Binary | Easy | |
-| 🟡 | 137 | Single Number II | Medium | |
-| 🟡 | 50 | Pow(x, n) | Medium | |
-| 🟡 | 172 | Factorial Trailing Zeroes | Medium | |
-| 🟢 | 201 | Bitwise AND of Numbers Range | Medium | |
-| 🟢 | 149 | Max Points on a Line | Hard | |
-
-##### 05 — Hashmap
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 383 | Ransom Note | Easy | ✅ |
-| 🔴 | 205 | Isomorphic Strings | Easy | ✅ |
-| 🔴 | 1 | Two Sum | Easy | |
-| 🔴 | 242 | Valid Anagram | Easy | |
-| 🔴 | 49 | Group Anagrams | Medium | ✅ |
-| 🟡 | 290 | Word Pattern | Easy | |
-| 🟡 | 202 | Happy Number | Easy | |
-| 🟡 | 219 | Contains Duplicate II | Easy | |
-| 🟡 | 128 | Longest Consecutive Sequence | Medium | ✅ |
-
-#### Phase 2 — Core Patterns (high ROI techniques)
-
-These patterns show up repeatedly. Master the technique, not just individual problems.
-
-##### 06 — Two Pointers
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 125 | Valid Palindrome | Easy | ✅ |
-| 🔴 | 392 | Is Subsequence | Easy | ✅ |
-| 🔴 | 167 | Two Sum II | Medium | |
-| 🔴 | 11 | Container With Most Water | Medium | ✅ |
-| 🔴 | 15 | 3Sum | Medium | ✅ |
-
-##### 07 — Sliding Window
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 209 | Minimum Size Subarray Sum | Medium | ✅ |
-| 🔴 | 3 | Longest Substring Without Repeating Characters | Medium | ✅ |
-| 🟡 | 30 | Substring with Concatenation of All Words | Hard | |
-| 🟡 | 76 | Minimum Window Substring | Hard | |
-
-##### 08 — Binary Search
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 35 | Search Insert Position | Easy | ✅ |
-| 🔴 | 74 | Search a 2D Matrix | Medium | |
-| 🔴 | 162 | Find Peak Element | Medium | ✅ |
-| 🔴 | 33 | Search in Rotated Sorted Array | Medium | ✅ |
-| 🟡 | 34 | Find First and Last Position | Medium | |
-| 🟡 | 153 | Find Minimum in Rotated Sorted Array | Medium | |
-| 🟢 | 4 | Median of Two Sorted Arrays | Hard | |
-
-##### 04 — Stack & Queue
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 20 | Valid Parentheses | Easy | ✅ |
-| 🔴 | 150 | Evaluate Reverse Polish Notation | Medium | ✅ |
-| 🟡 | 155 | Min Stack | Medium | |
-| 🟡 | 71 | Simplify Path | Medium | |
-| 🟢 | 224 | Basic Calculator | Hard | |
-
-#### Phase 3 — Data Structures (linked lists, trees, graphs)
-
-##### 03 — Linked List
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 141 | Linked List Cycle | Easy | ✅ |
-| 🔴 | 21 | Merge Two Sorted Lists | Easy | ✅ |
-| 🔴 | 2 | Add Two Numbers | Medium | ✅ |
-| 🔴 | 92 | Reverse Linked List II | Medium | ✅ |
-| 🟡 | 19 | Remove Nth Node From End of List | Medium | |
-| 🟡 | 82 | Remove Duplicates from Sorted List II | Medium | |
-| 🟡 | 61 | Rotate List | Medium | |
-| 🟡 | 86 | Partition List | Medium | |
-| 🟡 | 138 | Copy List with Random Pointer | Medium | |
-| 🟢 | 25 | Reverse Nodes in k-Group | Hard | |
-| 🟢 | 146 | LRU Cache | Medium | |
-
-##### 09 — Tree & BST
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 104 | Maximum Depth of Binary Tree | Easy | ✅ |
-| 🔴 | 100 | Same Tree | Easy | ✅ |
-| 🔴 | 226 | Invert Binary Tree | Easy | |
-| 🔴 | 101 | Symmetric Tree | Easy | |
-| 🔴 | 112 | Path Sum | Easy | |
-| 🔴 | 102 | Binary Tree Level Order Traversal | Medium | ✅ |
-| 🔴 | 98 | Validate Binary Search Tree | Medium | ✅ |
-| 🔴 | 236 | Lowest Common Ancestor | Medium | ✅ |
-| 🔴 | 108 | Convert Sorted Array to BST | Easy | ✅ |
-| 🟡 | 530 | Minimum Absolute Difference in BST | Easy | ✅ |
-| 🟡 | 637 | Average of Levels in Binary Tree | Easy | ✅ |
-| 🟡 | 105 | Construct BT from Preorder and Inorder | Medium | |
-| 🟡 | 114 | Flatten Binary Tree to Linked List | Medium | |
-| 🟡 | 199 | Binary Tree Right Side View | Medium | |
-| 🟡 | 129 | Sum Root to Leaf Numbers | Medium | |
-| 🟡 | 222 | Count Complete Tree Nodes | Easy | |
-| 🟡 | 173 | Binary Search Tree Iterator | Medium | |
-| 🟢 | 124 | Binary Tree Maximum Path Sum | Hard | |
-
-##### 10 — Graph
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 200 | Number of Islands | Medium | ✅ |
-| 🔴 | 433 | Minimum Genetic Mutation | Medium | ✅ |
-| 🟡 | 130 | Surrounded Regions | Medium | |
-| 🟡 | 133 | Clone Graph | Medium | |
-| 🟡 | 207 | Course Schedule | Medium | |
-| 🟡 | 210 | Course Schedule II | Medium | |
-| 🟢 | 127 | Word Ladder | Hard | |
-
-#### Phase 4 — Advanced (if time allows)
-
-##### 11 — Dynamic Programming
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 70 | Climbing Stairs | Easy | ✅ |
-| 🔴 | 198 | House Robber | Medium | ✅ |
-| 🔴 | 53 | Maximum Subarray (Kadane's) | Medium | ✅ |
-| 🟡 | 322 | Coin Change | Medium | |
-| 🟡 | 139 | Word Break | Medium | |
-| 🟡 | 300 | Longest Increasing Subsequence | Medium | |
-| 🟡 | 64 | Minimum Path Sum | Medium | |
-| 🟡 | 120 | Triangle | Medium | |
-| 🟡 | 5 | Longest Palindromic Substring | Medium | |
-| 🟡 | 72 | Edit Distance | Medium | |
-| 🟡 | 918 | Maximum Sum Circular Subarray | Medium | |
-| 🟢 | 97 | Interleaving String | Medium | |
-| 🟢 | 221 | Maximal Square | Medium | |
-| 🟢 | 63 | Unique Paths II | Medium | |
-
-##### 12 — Interval & Matrix
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 228 | Summary Ranges | Easy | ✅ |
-| 🔴 | 56 | Merge Intervals | Medium | ✅ |
-| 🔴 | 57 | Insert Interval | Medium | ✅ |
-| 🔴 | 48 | Rotate Image | Medium | ✅ |
-| 🔴 | 73 | Set Matrix Zeroes | Medium | ✅ |
-| 🔴 | 36 | Valid Sudoku | Medium | ✅ |
-| 🟡 | 452 | Minimum Number of Arrows | Medium | |
-| 🟡 | 54 | Spiral Matrix | Medium | |
-| 🟡 | 289 | Game of Life | Medium | |
-
-##### 13 — Backtracking, Heap & Trie
-
-| Priority | LC# | Problem | Difficulty | Status |
-|----------|-----|---------|------------|--------|
-| 🔴 | 22 | Generate Parentheses | Medium | ✅ |
-| 🔴 | 215 | Kth Largest Element in Array | Medium | ✅ |
-| 🔴 | 208 | Implement Trie | Medium | ✅ |
-| 🟡 | 46 | Permutations | Medium | |
-| 🟡 | 39 | Combination Sum | Medium | |
-| 🟡 | 77 | Combinations | Medium | |
-| 🟡 | 17 | Letter Combinations of Phone Number | Medium | |
-| 🟡 | 79 | Word Search | Medium | |
-| 🟡 | 148 | Sort List | Medium | |
-| 🟡 | 23 | Merge k Sorted Lists | Hard | |
-| 🟡 | 211 | Design Add and Search Words | Medium | |
-| 🟢 | 52 | N-Queens II | Hard | ✅ |
-| 🟢 | 295 | Find Median from Data Stream | Hard | |
-| 🟢 | 212 | Word Search II | Hard | |
-
----
-
-### Priority Legend
-
-- 🔴 **Must do** — very high frequency in interviews, do these first
-- 🟡 **Should do** — common patterns, do if time allows
-- 🟢 **Nice to have** — less common or harder, skip under time pressure
-
-### Night-Before Strategy
-
-If you only have a few hours:
-
-1. **Review your ✅ solved problems** — re-read solutions, make sure you can reproduce them
-2. **Do 2-3 unsolved 🔴 problems** from Phase 1-2 — focus on Two Sum, Two Sum II, Min Stack
-3. **Review patterns** — make sure you can recognize when to use two pointers, sliding window, binary search, BFS/DFS
-4. **Practice talking through your approach** — interviewers care about communication as much as code
 
 ### C/C++ Interview Tips
 
