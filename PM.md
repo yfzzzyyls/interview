@@ -3137,22 +3137,80 @@ Coding blocks, in order:
 2. `02_control_flow_functions.cpp`
    - Practice: `if`, `switch`, loops, helper functions, pass-by-value return values.
    - Done when: code is split into small functions and handles basic edge cases.
+   - Review notes:
+     - In C++17 there is no standard `ispow2()` helper; implement power-of-two checks with `x != 0 && ((x & (x - 1)) == 0)`.
+     - Parentheses matter in bit expressions because `==` has higher precedence than bitwise `&`.
+     - Use single quotes for one `char` such as `'L'`; use double quotes for string literals such as `"load"` returned as `const char*`.
+     - `switch` syntax is `switch (value) { case X: ... }`; if each case returns, `break` is unnecessary.
+     - Do not `return` from `main()` inside a test loop unless the intent is to stop the whole program.
+     - Range-for loops such as `for (char op : ops)` are clean for fixed arrays and avoid manual index mistakes.
+     - Small helper functions make simulator code easier to unit test because each classification or state rule can be checked independently.
 
 3. `03_arrays_vectors_strings.cpp`
    - Practice: C arrays vs `std::vector`, `std::string`, indexing, bounds, range-for loops.
    - Done when: can implement simple scan/search/reverse operations without iterator mistakes.
+   - Review notes:
+     - `sizeof(array)` returns bytes, not element count; for a local C array use `sizeof(array) / sizeof(array[0])`.
+     - C-style arrays are acceptable for small fixed-size data, but `std::vector` is safer for dynamic data because it tracks size and manages storage.
+     - `std::vector::push_back()` appends one element; `std::string::push_back()` appends one `char`, not a whole string.
+     - Use `std::string s = "fetch"` or `s += "fetch"` for string literals.
+     - `std::string` indexing counts actual characters; it does not include an implicit final `'\0'`, and it includes `'\n'` only if the string contains one.
+     - `std::string(input.rbegin(), input.rend())` constructs a reversed copy using reverse iterators.
+     - `const char*` means pointer to const char; `char* const` means const pointer to mutable char.
+     - `const std::vector<char>&` means pass by reference to avoid copying, while `const` prevents the function from modifying the vector.
+     - If checking whether any element satisfies a condition, do not reset the flag to false on later elements; set it true when found and leave it true.
 
 4. `04_pointers_references_const.cpp`
    - Practice: raw pointers, references, `nullptr`, `const T&`, `T&`, pointer-to-const vs const-pointer.
    - Done when: can explain which functions mutate caller state and which only inspect it.
+   - Review notes:
+     - In C++, `struct QueueState { ... };` is usually cleaner than C-style `typedef struct ... QueueState_t`; the typedef style is common in C/SystemVerilog but not required in C++.
+     - A single-argument constructor should usually be marked `explicit` to prevent accidental implicit conversion such as `QueueState q = 4`.
+     - Constructor initializer lists initialize members directly: `QueueState(int cap) : capacity(cap), occupancy(0) {}`.
+     - Put validation, assertions, or derived setup in the constructor body; simple member values belong in the initializer list.
+     - Use `const T&` for read-only nontrivial objects to avoid copying.
+     - Use `T&` when the function must mutate an object that must exist.
+     - Use `T*` when the object may be absent and `nullptr` is a valid input.
+     - Check a pointer against `nullptr` before dereferencing it with `*p` or `p->field`.
+     - `const int*` is a pointer to const int: the pointer can be reassigned, but the value cannot be modified through it.
+     - `int* const` is a const pointer to int: the pointer cannot be reassigned, but the pointed-to value can be modified.
+     - `NULL` is usually a macro for `0` or `0L`; `nullptr` has pointer-specific type `std::nullptr_t` and avoids overload ambiguity.
 
 5. `05_structs_classes_constructors.cpp`
    - Practice: `struct` vs `class`, constructors, initializer lists, member functions, `const` member functions.
    - Done when: can build a small `Instruction` or `CacheLine` type and print/update it cleanly.
+   - Review notes:
+     - `struct` defaults to public; `class` defaults to private.
+     - Use `struct` for simple public data objects such as an instruction record when direct field access is acceptable.
+     - Use `class` with private fields when the object has invariants, such as `valid/dirty/tag` in a cache line.
+     - A `const` member function, such as `bool isValid() const`, promises not to modify object state.
+     - `const` member functions can be called on const objects; non-const mutating functions cannot.
+     - Constructor overloading means multiple constructors can exist with different parameter lists, such as an invalid cache-line constructor and a valid tagged cache-line constructor.
+     - `static` member functions belong to the class, not one object; use them for helpers that do not read or write object fields.
+     - Prefer initializer lists for member initialization; use constructor bodies for validation, assertions, or derived setup.
+     - `this->` is usually unnecessary unless resolving a name conflict; prefer clear parameter names such as `tagValue` and `lineSize`.
+     - If a line is invalidated, clear dependent state such as `dirty` when that matches the model invariant.
 
 6. `06_memory_lifetime_raii.cpp`
    - Practice: stack vs heap lifetime, `std::vector` ownership, `std::unique_ptr`, destructor behavior.
    - Done when: no manual owning `new/delete` is needed and ownership is clear.
+   - Review notes:
+     - Creating a class/struct object is not automatically heap allocation: `TraceEvent e(...)` has automatic stack/scope lifetime.
+     - Raw `new` creates heap lifetime and must match with `delete`; raw `new[]` must match with `delete[]`.
+     - Prefer `std::vector<T>` for dynamic arrays instead of `new[]`/`delete[]`.
+     - Prefer `std::make_unique<T>(...)` when heap ownership is needed; it returns a `std::unique_ptr<T>` that deletes automatically.
+     - `std::unique_ptr` means exclusive ownership, not merely a const pointer; it cannot be copied, but ownership can move or be returned from a function.
+     - Returning `std::unique_ptr<T>` from a function transfers ownership to the caller, so the heap object is not destroyed at the callee's scope exit.
+     - `std::shared_ptr` is for genuine shared ownership; avoid it for per-instruction pipeline movement unless multiple owners truly control lifetime.
+     - `std::weak_ptr` observes a `shared_ptr`-owned object without extending lifetime; it is mainly useful for avoiding shared-pointer reference cycles.
+     - Raw pointer parameters such as `const TraceEvent*` can be non-owning observers; they should not call `delete`.
+     - `unique_ptr.get()` returns a temporary raw pointer view while ownership remains with the `unique_ptr`.
+     - Default destructors are usually enough when members are RAII types such as `std::vector`, `std::string`, or `std::unique_ptr`.
+     - A custom destructor is needed mainly for raw owned resources or for debugging lifetime, as in this exercise's destructor print.
+     - `std::vector` can reallocate and move/copy elements on growth, causing destructors for old storage and invalidating pointers/references/iterators.
+     - Use `reserve()` when you know the number of vector elements and want to avoid reallocations during insertion.
+     - For a DRAM-like memory model, prefer a class owning `std::vector<uint8_t>`; use raw pointers only for non-owning links between modules.
+     - For instruction objects in a performance model, prefer value objects or ROB/table-owned instruction IDs; avoid `shared_ptr` unless the ownership model truly requires it.
 
 7. `07_stl_container_basics.cpp`
    - Practice: `vector`, `deque`, `queue`, `stack`, `unordered_map`, `map`, `set`, `priority_queue`.

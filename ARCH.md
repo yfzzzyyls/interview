@@ -1096,1557 +1096,2323 @@ Interview-safe contrast sentence:
 > prediction metadata, FTQ lifetime, fetch/decode backpressure, branch recovery,
 > and commit-time predictor update.
 
-### Frontend Deep-Dive Questions to Resolve
+### Modern Frontend Review Roadmap
 
-Use this checklist for the next detailed frontend walkthroughs. For each topic,
-first state the standard modern design, then compare the implemented RSD path
-against it. If RSD is not typical, explicitly call it a simplified design or
-negative example and explain what a commercial high-performance frontend would
-normally add.
+Use this part as the frontend interview review path. The order is intentional:
+start from the end-to-end modern frontend, then drill into each prediction and
+metadata structure, and finally map those ideas back to the concrete RSD RTL.
 
-1. Lane PC generation:
-   - What exactly is a lane PC?
-   - Why does RSD create one PC per fetch lane instead of only one fetch-block
-     PC?
-   - How do lane PCs flow into BTB/PHT lookup, FTQ metadata, PreDecode, Decode,
-     Execute branch comparison, and `ftqLast` marking?
-   - RSD anchor: `DecoupledBPU` creates `bpS1LanePC`; `NextPCStage` recreates
-     fetch lane PCs from `ftq.headEntry.startPC`.
+Review order:
 
-   Working answer:
-   - A lane PC is the PC associated with one candidate instruction slot inside
-     a wider fetch packet. If the frontend fetches four fixed 32-bit RISC-V
-     instructions starting at `0x1000`, the simple lane PCs are `0x1000`,
-     `0x1004`, `0x1008`, and `0x100c`.
-   - The lane idea is just the frontend version of a superscalar "slot" or
-     "way": a wide fetch packet contains multiple candidate instructions, and
-     each candidate instruction needs its own identity for prediction, decode,
-     exception reporting, branch resolution, and commit.
-   - CFI means control-flow instruction: conditional branch, unconditional
-     jump, indirect jump, call, or return. A frontend often carries `cfi_idx`
-     to identify the first predicted-taken CFI inside the fetch packet.
-   - RSD's decoupled frontend is the simple fixed-width case. It can generate
-     `lanePC[i] = startPC + i * 4`, use each lane PC for BTB/PHT lookup, select
-     the earliest predicted-taken lane, and carry `ftqID`/`ftqLast` downstream.
-   - A modern frontend with RISC-V compressed instructions cannot assume
-     `startPC + 4*i`. It must first identify instruction boundaries, then
-     generate PCs only for real instruction starts.
+1. Fetch blocks, lanes, compressed-instruction boundaries, masks, and the
+   instruction buffer.
+2. BTB structure and target prediction, including uBTB plus main BTB.
+3. Direction prediction and update timing: how BTB metadata, gshare/TAGE-style
+   direction predictors, speculative history, and repair paths work together.
+4. Return Address Stack: return prediction, speculative push/pop, FTQ snapshots,
+   and repair.
+5. Indirect target prediction: Seznec ITTAGE algorithm and XiangShan RTL mapping.
+6. FTQ metadata and recovery lifetime.
+7. Remaining frontend extensions: TAGE-SC-L and uop cache.
 
-   RISC-V compressed-instruction boundary detection:
-   - With the C extension, `IALIGN = 16`, so instructions may start at any
-     2-byte-aligned address.
-   - For a candidate instruction-start halfword:
-     - `halfword[1:0] != 2'b11` means a 16-bit compressed instruction.
-     - `halfword[1:0] == 2'b11` means the start of a 32-bit instruction.
-   - Hardware can check all 16-bit halfwords in a returned fetch block in
-     parallel, but not every halfword is a valid instruction start. If a
-     candidate halfword starts a 32-bit instruction, the next halfword is the
-     second half of that instruction and must be masked out as a possible
-     start, even if its low two bits look like a compressed instruction.
-   - The common implementation idea is parallel length checks plus a small
-     prefix/start-mask network. Logically the frontend walks instruction
-     lengths, but physically it should not be a slow serial loop on the critical
-     path.
+For each topic, answer in this order:
 
-   Concrete compressed-boundary example:
-   - Assume the I-cache returns 16 bytes, represented as eight halfwords:
+1. State the standard modern high-performance design.
+2. Explain the performance-modeling state, counters, and validation signals.
+3. Use BOOM/XiangShan as closer open-source references when useful.
+4. Use `rsd_fengze` as a concrete implementation anchor or simplified negative
+   example.
 
-     ```text
-     addr:      0x1000 0x1002 0x1004 0x1006 0x1008 0x100a 0x100c 0x100e
-     halfword:    H0     H1     H2     H3     H4     H5     H6     H7
-     ```
+### 1. Fetch Blocks, Lanes, and Instruction Boundaries
 
-   - Assume the low two bits imply:
+- What exactly is a lane PC?
+- Why does a wide frontend create per-lane PCs instead of only one fetch-block PC?
+- How do compressed instructions change instruction-boundary detection and lane metadata?
+- What does the fetch buffer / instruction buffer need to store?
+- RSD anchor: `DecoupledBPU` creates `bpS1LanePC`; `NextPCStage` recreates fetch lane PCs from `ftq.headEntry.startPC`.
 
-     ```text
-     H0[1:0] = 11  -> 32-bit if H0 is a start
-     H1[1:0] = 01  -> 16-bit if H1 is a start
-     H2[1:0] = 00  -> 16-bit if H2 is a start
-     H3[1:0] = 11  -> 32-bit if H3 is a start
-     H4[1:0] = 10  -> 16-bit if H4 is a start
-     H5[1:0] = 00  -> 16-bit if H5 is a start
-     H6[1:0] = 01  -> 16-bit if H6 is a start
-     H7[1:0] = 11  -> 32-bit if H7 is a start
-     ```
+#### Working Answer
+- A lane PC is the PC associated with one candidate instruction slot inside
+  a wider fetch packet. If the frontend fetches four fixed 32-bit RISC-V
+  instructions starting at `0x1000`, the simple lane PCs are `0x1000`,
+  `0x1004`, `0x1008`, and `0x100c`.
+- The lane idea is just the frontend version of a superscalar "slot" or
+  "way": a wide fetch packet contains multiple candidate instructions, and
+  each candidate instruction needs its own identity for prediction, decode,
+  exception reporting, branch resolution, and commit.
+- CFI means control-flow instruction: conditional branch, unconditional
+  jump, indirect jump, call, or return. A frontend often carries `cfi_idx`
+  to identify the first predicted-taken CFI inside the fetch packet.
+- RSD's decoupled frontend is the simple fixed-width case. It can generate
+  `lanePC[i] = startPC + i * 4`, use each lane PC for BTB/PHT lookup, select
+  the earliest predicted-taken lane, and carry `ftqID`/`ftqLast` downstream.
+- A modern frontend with RISC-V compressed instructions cannot assume
+  `startPC + 4*i`. It must first identify instruction boundaries, then
+  generate PCs only for real instruction starts.
 
-   - First, the frontend can compute these in parallel:
+#### RISC-V Compressed-Instruction Boundary Detection
+- With the C extension, `IALIGN = 16`, so instructions may start at any
+  2-byte-aligned address.
+- For a candidate instruction-start halfword:
+  - `halfword[1:0] != 2'b11` means a 16-bit compressed instruction.
+  - `halfword[1:0] == 2'b11` means the start of a 32-bit instruction.
+- Hardware can check all 16-bit halfwords in a returned fetch block in
+  parallel, but not every halfword is a valid instruction start. If a
+  candidate halfword starts a 32-bit instruction, the next halfword is the
+  second half of that instruction and must be masked out as a possible
+  start, even if its low two bits look like a compressed instruction.
+- The common implementation idea is parallel length checks plus a small
+  prefix/start-mask network. Logically the frontend walks instruction
+  lengths, but physically it should not be a slow serial loop on the critical
+  path.
 
-     ```text
-     is16 = 0 1 1 0 1 1 1 0
-     is32 = 1 0 0 1 0 0 0 1
-            H0 H1 H2 H3 H4 H5 H6 H7
-     ```
+#### Concrete Compressed-Boundary Example
+- Assume the I-cache returns 16 bytes, represented as eight halfwords:
 
-   - Then it computes which halfwords are actual instruction starts:
+  ```text
+  addr:      0x1000 0x1002 0x1004 0x1006 0x1008 0x100a 0x100c 0x100e
+  halfword:    H0     H1     H2     H3     H4     H5     H6     H7
+  ```
 
-     ```text
-     start[0] = 1
-     start[1] = start[0] && is16[0]
-     start[i] = (start[i-1] && is16[i-1]) ||
-                (start[i-2] && is32[i-2])
-     ```
+- Assume the low two bits imply:
 
-   - Step by step:
+  ```text
+  H0[1:0] = 11  -> 32-bit if H0 is a start
+  H1[1:0] = 01  -> 16-bit if H1 is a start
+  H2[1:0] = 00  -> 16-bit if H2 is a start
+  H3[1:0] = 11  -> 32-bit if H3 is a start
+  H4[1:0] = 10  -> 16-bit if H4 is a start
+  H5[1:0] = 00  -> 16-bit if H5 is a start
+  H6[1:0] = 01  -> 16-bit if H6 is a start
+  H7[1:0] = 11  -> 32-bit if H7 is a start
+  ```
 
-     ```text
-     start[0] = 1
-     start[1] = 1 && is16[0] = 1 && 0 = 0
+- First, the frontend can compute these in parallel:
 
-     start[2] = (start[1] && is16[1]) || (start[0] && is32[0])
-              = (0 && 1) || (1 && 1) = 1
+  ```text
+  is16 = 0 1 1 0 1 1 1 0
+  is32 = 1 0 0 1 0 0 0 1
+         H0 H1 H2 H3 H4 H5 H6 H7
+  ```
 
-     start[3] = (start[2] && is16[2]) || (start[1] && is32[1])
-              = (1 && 1) || (0 && 0) = 1
+- Then it computes which halfwords are actual instruction starts:
 
-     start[4] = (start[3] && is16[3]) || (start[2] && is32[2])
-              = (1 && 0) || (1 && 0) = 0
+  ```text
+  start[0] = 1
+  start[1] = start[0] && is16[0]
+  start[i] = (start[i-1] && is16[i-1]) ||
+             (start[i-2] && is32[i-2])
+  ```
 
-     start[5] = (start[4] && is16[4]) || (start[3] && is32[3])
-              = (0 && 1) || (1 && 1) = 1
+- Step by step:
 
-     start[6] = (start[5] && is16[5]) || (start[4] && is32[4])
-              = (1 && 1) || (0 && 0) = 1
+  ```text
+  start[0] = 1
+  start[1] = 1 && is16[0] = 1 && 0 = 0
 
-     start[7] = (start[6] && is16[6]) || (start[5] && is32[5])
-              = (1 && 1) || (1 && 0) = 1
-     ```
+  start[2] = (start[1] && is16[1]) || (start[0] && is32[0])
+           = (0 && 1) || (1 && 1) = 1
 
-   - Final result:
+  start[3] = (start[2] && is16[2]) || (start[1] && is32[1])
+           = (1 && 1) || (0 && 0) = 1
 
-     ```text
-     halfword: H0 H1 H2 H3 H4 H5 H6 H7
-     is16:     0  1  1  0  1  1  1  0
-     is32:     1  0  0  1  0  0  0  1
-     start:    1  0  1  1  0  1  1  1
-     ```
+  start[4] = (start[3] && is16[3]) || (start[2] && is32[2])
+           = (1 && 0) || (1 && 0) = 0
 
-   - The decoded instruction starts are:
+  start[5] = (start[4] && is16[4]) || (start[3] && is32[3])
+           = (0 && 1) || (1 && 1) = 1
 
-     ```text
-     inst0: H0 + H1   // 32-bit at 0x1000
-     inst1: H2        // 16-bit at 0x1004
-     inst2: H3 + H4   // 32-bit at 0x1006
-     inst3: H5        // 16-bit at 0x100a
-     inst4: H6        // 16-bit at 0x100c
-     inst5: H7 + next halfword from next fetch // split 32-bit at 0x100e
-     ```
+  start[6] = (start[5] && is16[5]) || (start[4] && is32[4])
+           = (1 && 1) || (0 && 0) = 1
 
-   - This recurrence has a dependency chain, so it is logically sequential.
-     But in hardware it is not a multi-cycle software loop. For a fixed small
-     fetch block, the gates are built as one combinational start-mask network.
-     Wider frontends may use more parallel-prefix/lookahead logic to reduce
-     critical-path depth. The interview point is that compressed-instruction
-     boundary detection has real timing cost even though it is "only"
-     predecode.
+  start[7] = (start[6] && is16[6]) || (start[5] && is32[5])
+           = (1 && 1) || (1 && 0) = 1
+  ```
 
-   Boundary-crossing behavior:
-   - A 32-bit instruction can legally split across two cachelines when the C
-     extension is enabled, for example first half at `0x103e` and second half
-     at `0x1040`. This is not an instruction-address-misaligned exception as
-     long as the instruction start is 2-byte aligned.
-   - If the split crosses a page, the second page can still fault during
-     instruction fetch/translation, but the fault is a page/access fault, not
-     a misalignment fault by itself.
-   - The frontend needs carry state such as `prev_half_valid`, `prev_half`, and
-     `prev_half_pc` to combine a trailing first half with the next fetch
-     response.
-   - If software branches to the second half of a 32-bit instruction, that
-     target is 2-byte aligned under `IALIGN=16`, so it is not necessarily an
-     address-misaligned trap. But it is not the original instruction stream.
-     The bytes at the target will be interpreted as a new instruction stream.
-     In normal compiler-generated code, branch targets point to real
-     instruction boundaries. Jumping into the middle of an instruction is
-     usually a compiler/program/control-flow-corruption bug unless deliberately
-     used by hand-written code.
+- Final result:
 
-   Where masks are created:
-   - Some masks are known before the I-cache data returns, such as the
-     start-offset mask from the requested fetch PC and the cacheline/page
-     boundary mask.
-   - Instruction-start masks, compressed/full-length masks, branch masks, and
-     CFI metadata usually require returned instruction bits, so they are
-     produced in predecode after the I-cache response, before or while enqueuing
-     into the fetch/instruction buffer.
-   - Direction/target predictor metadata may arrive in parallel from the branch
-     predictor and is combined with predecode metadata in the fetch packet/FTQ.
+  ```text
+  halfword: H0 H1 H2 H3 H4 H5 H6 H7
+  is16:     0  1  1  0  1  1  1  0
+  is32:     1  0  0  1  0  0  0  1
+  start:    1  0  1  1  0  1  1  1
+  ```
 
-   Mask definitions:
-   - `fetch_start_mask`: invalidates bytes/halfwords/lanes before the requested
-     fetch PC when the I-cache returns an aligned cacheline but the branch
-     target is in the middle of that line.
-   - `inst_start_mask`: marks which 16-bit positions are actual instruction
-     starts after compressed-instruction boundary detection.
-   - `valid_inst_mask`: marks which instruction lanes are valid to enqueue,
-     after applying the fetch start, cacheline/page boundary, and taken-branch
-     limits.
-   - `branch_mask`: marks which valid instruction lanes are conditional
-     branches. Direction predictors and predictor updates need to know all
-     branch lanes before the first taken branch, because not-taken branches
-     still update history and predictor state.
-   - `cfi_idx`: identifies the first control-flow instruction selected as the
-     packet-ending CFI, often the first predicted-taken branch/jump/return.
+- The decoded instruction starts are:
 
-   Branch-mask concrete example:
-   - Suppose predecode finds four instruction lanes:
+  ```text
+  inst0: H0 + H1   // 32-bit at 0x1000
+  inst1: H2        // 16-bit at 0x1004
+  inst2: H3 + H4   // 32-bit at 0x1006
+  inst3: H5        // 16-bit at 0x100a
+  inst4: H6        // 16-bit at 0x100c
+  inst5: H7 + next halfword from next fetch // split 32-bit at 0x100e
+  ```
 
-     ```text
-     lane 0: 0x1000  add
-     lane 1: 0x1004  beq x1, x2, L1     predicted not taken
-     lane 2: 0x1008  add
-     lane 3: 0x100c  bne x3, x4, L2     predicted taken
-     ```
+- This recurrence has a dependency chain, so it is logically sequential.
+  But in hardware it is not a multi-cycle software loop. For a fixed small
+  fetch block, the gates are built as one combinational start-mask network.
+  Wider frontends may use more parallel-prefix/lookahead logic to reduce
+  critical-path depth. The interview point is that compressed-instruction
+  boundary detection has real timing cost even though it is "only"
+  predecode.
 
-   - Then useful metadata could be:
+#### Boundary-Crossing Behavior
+- A 32-bit instruction can legally split across two cachelines when the C
+  extension is enabled, for example first half at `0x103e` and second half
+  at `0x1040`. This is not an instruction-address-misaligned exception as
+  long as the instruction start is 2-byte aligned.
+- If the split crosses a page, the second page can still fault during
+  instruction fetch/translation, but the fault is a page/access fault, not
+  a misalignment fault by itself.
+- The frontend needs carry state such as `prev_half_valid`, `prev_half`, and
+  `prev_half_pc` to combine a trailing first half with the next fetch
+  response.
+- If software branches to the second half of a 32-bit instruction, that
+  target is 2-byte aligned under `IALIGN=16`, so it is not necessarily an
+  address-misaligned trap. But it is not the original instruction stream.
+  The bytes at the target will be interpreted as a new instruction stream.
+  In normal compiler-generated code, branch targets point to real
+  instruction boundaries. Jumping into the middle of an instruction is
+  usually a compiler/program/control-flow-corruption bug unless deliberately
+  used by hand-written code.
 
-     ```text
-     valid_mask  = 1 1 1 1
-     branch_mask = 0 1 0 1
-     cfi_idx     = 3
-     cfi_type    = branch
-     ```
+#### Where Masks Are Created
+- Some masks are known before the I-cache data returns, such as the
+  start-offset mask from the requested fetch PC and the cacheline/page
+  boundary mask.
+- Instruction-start masks, compressed/full-length masks, branch masks, and
+  CFI metadata usually require returned instruction bits, so they are
+  produced in predecode after the I-cache response, before or while enqueuing
+  into the fetch/instruction buffer.
+- Direction/target predictor metadata may arrive in parallel from the branch
+  predictor and is combined with predecode metadata in the fetch packet/FTQ.
 
-   - `cfi_idx = 3` says lane 3 is the selected control-flow instruction that
-     redirects fetch. `branch_mask` still records lane 1 because it is a real
-     conditional branch predicted not taken. Predictor update and global
-     history may need both outcomes: lane 1 not taken, lane 3 taken.
-   - With an unconditional jump:
+#### Mask Definitions
+- `fetch_start_mask`: invalidates bytes/halfwords/lanes before the requested
+  fetch PC when the I-cache returns an aligned cacheline but the branch
+  target is in the middle of that line.
+- `inst_start_mask`: marks which 16-bit positions are actual instruction
+  starts after compressed-instruction boundary detection.
+- `valid_inst_mask`: marks which instruction lanes are valid to enqueue,
+  after applying the fetch start, cacheline/page boundary, and taken-branch
+  limits.
+- `branch_mask`: marks which valid instruction lanes are conditional
+  branches. Direction predictors and predictor updates need to know all
+  branch lanes before the first taken branch, because not-taken branches
+  still update history and predictor state.
+- `cfi_idx`: identifies the first control-flow instruction selected as the
+  packet-ending CFI, often the first predicted-taken branch/jump/return.
 
-     ```text
-     lane 0: add
-     lane 1: beq predicted not taken
-     lane 2: add
-     lane 3: jal target
+#### Branch-Mask Concrete Example
+- Suppose predecode finds four instruction lanes:
 
-     branch_mask = 0 1 0 0   // conditional branches only
-     cfi_idx     = 3         // selected CFI is JAL
-     cfi_type    = JAL
-     ```
+  ```text
+  lane 0: 0x1000  add
+  lane 1: 0x1004  beq x1, x2, L1     predicted not taken
+  lane 2: 0x1008  add
+  lane 3: 0x100c  bne x3, x4, L2     predicted taken
+  ```
 
-   Why keep `is_rvc` after expansion:
-   - Many designs expand compressed instructions into a canonical 32-bit
-     internal instruction before decode to simplify downstream decode.
-   - Even after expansion, the machine must remember whether the original
-     instruction was 16-bit or 32-bit for next-PC calculation (`pc+2` vs
-     `pc+4`), branch/JAL return-address calculation, exception/debug PC
-     accounting, trace output, and commit/retire bookkeeping.
-   - PC differences can sometimes imply instruction length only after looking
-     at neighboring instructions, but each instruction still needs its own
-     length bit for local control, recovery, and precise metadata.
+- Then useful metadata could be:
 
-   Instruction buffer entry format:
-   - "Fetch buffer", "instruction buffer", and "IBuffer" are often used for the
-     queue between fetch/predecode and decode.
-   - Packet-based means one queue entry contains a group of lanes from one
-     fetch packet: `start_pc`, per-lane PCs, instruction bits or expanded
-     instructions, valid mask, `is_rvc`, branch/CFI metadata, prediction/FTQ
-     index, and exception bits.
-   - Instruction-based means each queue slot contains one instruction:
-     `valid`, `pc`, instruction bits or expanded instruction, original
-     length/`is_rvc`, FTQ/prediction pointer, predicted-taken metadata, and
-     exception/debug bits.
-   - The difference is not whether RTL uses `typedef struct packed`; both can
-     be packed structs. The difference is semantic granularity: multiple
-     instructions per entry versus one instruction per entry.
-   - RSD's current buffer is packet/lane based and simple: it stores
-     `PreDecodeStageRegPath lane[FETCH_WIDTH]`, carrying fields such as
-     `valid`, `pc`, `ftqID`, `ftqLast`, `brPred`, and `insn`. BOOM's
-     `FetchBundle` is a richer packet-based example with compressed-instruction
-     support, masks, per-lane PCs, expanded instructions, branch masks, CFI
-     metadata, FTQ index, history, and exception bits.
+  ```text
+  valid_mask  = 1 1 1 1
+  branch_mask = 0 1 0 1
+  cfi_idx     = 3
+  cfi_type    = branch
+  ```
 
-   Compressed expansion and instruction-buffer format:
-   - There is no single mandatory point where compressed instructions must be
-     expanded. The design can either expand RVC before the instruction buffer or
-     store raw instruction bits and expand later in Decode.
-   - Common modern approach:
+- `cfi_idx = 3` says lane 3 is the selected control-flow instruction that
+  redirects fetch. `branch_mask` still records lane 1 because it is a real
+  conditional branch predicted not taken. Predictor update and global
+  history may need both outcomes: lane 1 not taken, lane 3 taken.
+- With an unconditional jump:
 
-     ```text
-     I-cache returns bytes
-       -> predecode detects instruction boundaries
-       -> optionally expand RVC to canonical 32-bit internal instruction
-       -> instruction buffer stores expanded instruction plus original length
-       -> decode sees mostly uniform 32-bit instruction format
-     ```
+  ```text
+  lane 0: add
+  lane 1: beq predicted not taken
+  lane 2: add
+  lane 3: jal target
 
-   - Example instruction-buffer slot if expansion happens before the buffer:
+  branch_mask = 0 1 0 0   // conditional branches only
+  cfi_idx     = 3         // selected CFI is JAL
+  cfi_type    = JAL
+  ```
 
-     ```text
-     valid
-     pc
-     inst_32b_expanded
-     raw_inst_bits          // optional, useful for debug/trace
-     is_rvc or inst_len     // still needed after expansion
-     ftq_idx
-     predicted_taken / CFI metadata
-     exception bits
-     ```
+#### Why Keep `is_rvc` After Expansion
+- Many designs expand compressed instructions into a canonical 32-bit
+  internal instruction before decode to simplify downstream decode.
+- Even after expansion, the machine must remember whether the original
+  instruction was 16-bit or 32-bit for next-PC calculation (`pc+2` vs
+  `pc+4`), branch/JAL return-address calculation, exception/debug PC
+  accounting, trace output, and commit/retire bookkeeping.
+- PC differences can sometimes imply instruction length only after looking
+  at neighboring instructions, but each instruction still needs its own
+  length bit for local control, recovery, and precise metadata.
 
-   - Why keep `is_rvc` or instruction length after expansion:
+#### Instruction Buffer Entry Format
+- "Fetch buffer", "instruction buffer", and "IBuffer" are often used for the
+  queue between fetch/predecode and decode.
+- Packet-based means one queue entry contains a group of lanes from one
+  fetch packet: `start_pc`, per-lane PCs, instruction bits or expanded
+  instructions, valid mask, `is_rvc`, branch/CFI metadata, prediction/FTQ
+  index, and exception bits.
+- Instruction-based means each queue slot contains one instruction:
+  `valid`, `pc`, instruction bits or expanded instruction, original
+  length/`is_rvc`, FTQ/prediction pointer, predicted-taken metadata, and
+  exception/debug bits.
+- The difference is not whether RTL uses `typedef struct packed`; both can
+  be packed structs. The difference is semantic granularity: multiple
+  instructions per entry versus one instruction per entry.
+- RSD's current buffer is packet/lane based and simple: it stores
+  `PreDecodeStageRegPath lane[FETCH_WIDTH]`, carrying fields such as
+  `valid`, `pc`, `ftqID`, `ftqLast`, `brPred`, and `insn`. BOOM's
+  `FetchBundle` is a richer packet-based example with compressed-instruction
+  support, masks, per-lane PCs, expanded instructions, branch masks, CFI
+  metadata, FTQ index, history, and exception bits.
 
-     ```text
-     next PC calculation: pc + 2 or pc + 4
-     JAL/JALR return address calculation
-     exception/debug/trace original instruction accounting
-     commit bookkeeping and precise metadata
-     ```
+#### Compressed Expansion and Instruction-Buffer Format
+- There is no single mandatory point where compressed instructions must be
+  expanded. The design can either expand RVC before the instruction buffer or
+  store raw instruction bits and expand later in Decode.
+- Common modern approach:
 
-   - Alternative approach:
+  ```text
+  I-cache returns bytes
+    -> predecode detects instruction boundaries
+    -> optionally expand RVC to canonical 32-bit internal instruction
+    -> instruction buffer stores expanded instruction plus original length
+    -> decode sees mostly uniform 32-bit instruction format
+  ```
 
-     ```text
-     instruction buffer stores raw 16/32-bit instruction plus length
-     Decode expands compressed instructions later
-     ```
+- Example instruction-buffer slot if expansion happens before the buffer:
 
-   - Tradeoff:
-     - Expanding before the buffer simplifies Decode and gives downstream a
-       more uniform instruction format.
-     - Storing raw format keeps the fetch buffer closer to I-cache bytes and
-       may reduce some frontend work, but Decode must handle RVC expansion and
-       length-sensitive control.
-   - Interview wording:
+  ```text
+  valid
+  pc
+  inst_32b_expanded
+  raw_inst_bits          // optional, useful for debug/trace
+  is_rvc or inst_len     // still needed after expansion
+  ftq_idx
+  predicted_taken / CFI metadata
+  exception bits
+  ```
 
-     > I would treat RVC expansion point as a design choice. The frontend must
-     > at least predecode enough to find instruction boundaries and valid PCs.
-     > After that, it can either expand compressed instructions before the
-     > instruction buffer, like BOOM-style expanded instruction fields, or store
-     > raw bits and let Decode expand. Even if expanded early, the entry still
-     > needs `is_rvc` or length metadata because recovery, return-address
-     > calculation, trace/debug, and precise exception bookkeeping depend on the
-     > original instruction length.
+- Why keep `is_rvc` or instruction length after expansion:
 
-   Cacheline size versus fetch width:
-   - Cacheline size is the storage/refill granularity. Fetch width is the
-     frontend consumption bandwidth per cycle. They are often intentionally
-     different.
-   - Example:
+  ```text
+  next PC calculation: pc + 2 or pc + 4
+  JAL/JALR return address calculation
+  exception/debug/trace original instruction accounting
+  commit bookkeeping and precise metadata
+  ```
 
-     ```text
-     I-cache line size = 64 bytes
-     fetch width       = 16 bytes per cycle
-     ```
+- Alternative approach:
 
-   - A 64-byte cacheline is reasonable for miss refill and spatial locality.
-     But processing 64 bytes every cycle as the fetch packet would mean:
+  ```text
+  instruction buffer stores raw 16/32-bit instruction plus length
+  Decode expands compressed instructions later
+  ```
 
-     ```text
-     64B = 512 bits
-         = 32 halfwords
-         = up to 32 compressed instructions
-         = up to 16 normal 32-bit instructions
-     ```
+- Tradeoff:
+  - Expanding before the buffer simplifies Decode and gives downstream a
+    more uniform instruction format.
+  - Storing raw format keeps the fetch buffer closer to I-cache bytes and
+    may reduce some frontend work, but Decode must handle RVC expansion and
+    length-sensitive control.
+- Interview wording:
 
-   - Hardware cost of a 64-byte fetch width:
-     - More I-cache SRAM bitlines/sense amps active each cycle.
-     - Wider 512-bit data path, muxing, alignment, ECC/parity, and routing.
-     - Larger compressed-instruction boundary detection over 32 halfwords.
-     - Larger branch/CFI scan, first-taken priority encoder, and target mux.
-     - More instruction-buffer write bandwidth and per-lane metadata.
-     - More dynamic power and possibly longer frontend critical path.
-   - It is also often wasted work. If branch density is about one branch per
-     four normal instructions, then a 64-byte fetch group contains about
-     sixteen 32-bit instructions and potentially several branches. Bytes after
-     the first taken branch are not useful for the current path.
-   - A 16-byte fetch width is a common practical compromise: four normal
-     32-bit instructions or up to eight compressed instructions per fetch
-     block, while the cache still refills larger 64-byte lines for locality.
+  > I would treat RVC expansion point as a design choice. The frontend must
+  > at least predecode enough to find instruction boundaries and valid PCs.
+  > After that, it can either expand compressed instructions before the
+  > instruction buffer, like BOOM-style expanded instruction fields, or store
+  > raw bits and let Decode expand. Even if expanded early, the entry still
+  > needs `is_rvc` or length metadata because recovery, return-address
+  > calculation, trace/debug, and precise exception bookkeeping depend on the
+  > original instruction length.
 
-   Lane meaning with compressed instructions:
-   - With fixed 32-bit instructions, a 16-byte fetch block has four instruction
-     lanes:
+#### Cacheline Size Versus Fetch Width
+- Cacheline size is the storage/refill granularity. Fetch width is the
+  frontend consumption bandwidth per cycle. They are often intentionally
+  different.
+- Example:
 
-     ```text
-     fetch packet: 0x1000 0x1004 0x1008 0x100c
-                   lane0  lane1  lane2  lane3
-     ```
+  ```text
+  I-cache line size = 64 bytes
+  fetch width       = 16 bytes per cycle
+  ```
 
-   - The 64-byte cacheline contains several 16-byte fetch packets:
+- A 64-byte cacheline is reasonable for miss refill and spatial locality.
+  But processing 64 bytes every cycle as the fetch packet would mean:
 
-     ```text
-     64B cacheline: 0x1000 ----------------------------- 0x103f
+  ```text
+  64B = 512 bits
+      = 32 halfwords
+      = up to 32 compressed instructions
+      = up to 16 normal 32-bit instructions
+  ```
 
-     packet 0: 0x1000 0x1004 0x1008 0x100c
-               lane0  lane1  lane2  lane3
+- Hardware cost of a 64-byte fetch width:
+  - More I-cache SRAM bitlines/sense amps active each cycle.
+  - Wider 512-bit data path, muxing, alignment, ECC/parity, and routing.
+  - Larger compressed-instruction boundary detection over 32 halfwords.
+  - Larger branch/CFI scan, first-taken priority encoder, and target mux.
+  - More instruction-buffer write bandwidth and per-lane metadata.
+  - More dynamic power and possibly longer frontend critical path.
+- It is also often wasted work. If branch density is about one branch per
+  four normal instructions, then a 64-byte fetch group contains about
+  sixteen 32-bit instructions and potentially several branches. Bytes after
+  the first taken branch are not useful for the current path.
+- A 16-byte fetch width is a common practical compromise: four normal
+  32-bit instructions or up to eight compressed instructions per fetch
+  block, while the cache still refills larger 64-byte lines for locality.
 
-     packet 1: 0x1010 0x1014 0x1018 0x101c
-               lane0  lane1  lane2  lane3
+#### Lane Meaning With Compressed Instructions
+- With fixed 32-bit instructions, a 16-byte fetch block has four instruction
+  lanes:
 
-     packet 2: 0x1020 0x1024 0x1028 0x102c
-               lane0  lane1  lane2  lane3
+  ```text
+  fetch packet: 0x1000 0x1004 0x1008 0x100c
+                lane0  lane1  lane2  lane3
+  ```
 
-     packet 3: 0x1030 0x1034 0x1038 0x103c
-               lane0  lane1  lane2  lane3
-     ```
+- The 64-byte cacheline contains several 16-byte fetch packets:
 
-   - With compressed instructions and a 16-byte fetch width:
+  ```text
+  64B cacheline: 0x1000 ----------------------------- 0x103f
 
-     ```text
-     16B = 8 halfword positions
-     all 32-bit instructions -> 4 instructions
-     all 16-bit instructions -> 8 instructions
-     mixed instructions      -> dynamic count between 4 and 8
-     ```
+  packet 0: 0x1000 0x1004 0x1008 0x100c
+            lane0  lane1  lane2  lane3
 
-   - Hardware normally keeps a fixed maximum interface plus valid bits rather
-     than physically changing the number of wires every cycle. For example, it
-     may predecode eight halfword positions, compact real instruction starts
-     into up to eight instruction slots, and mark unused slots invalid.
-   - Be precise with language:
-     - Halfword lane: a 16-bit position used for RVC boundary detection.
-     - Instruction lane: a final instruction slot sent toward decode.
-   - RSD's fixed-32-bit frontend collapses these into the simple case:
-     `lane i = startPC + 4*i`.
+  packet 1: 0x1010 0x1014 0x1018 0x101c
+            lane0  lane1  lane2  lane3
+
+  packet 2: 0x1020 0x1024 0x1028 0x102c
+            lane0  lane1  lane2  lane3
+
+  packet 3: 0x1030 0x1034 0x1038 0x103c
+            lane0  lane1  lane2  lane3
+  ```
+
+- With compressed instructions and a 16-byte fetch width:
+
+  ```text
+  16B = 8 halfword positions
+  all 32-bit instructions -> 4 instructions
+  all 16-bit instructions -> 8 instructions
+  mixed instructions      -> dynamic count between 4 and 8
+  ```
+
+- Hardware normally keeps a fixed maximum interface plus valid bits rather
+  than physically changing the number of wires every cycle. For example, it
+  may predecode eight halfword positions, compact real instruction starts
+  into up to eight instruction slots, and mark unused slots invalid.
+- Be precise with language:
+  - Halfword lane: a 16-bit position used for RVC boundary detection.
+  - Instruction lane: a final instruction slot sent toward decode.
+- RSD's fixed-32-bit frontend collapses these into the simple case:
+  `lane i = startPC + 4*i`.
 
 2. RAS, indirect jump predictor, and BTB structure:
-   - RSD does not currently implement RAS or an indirect target predictor in
-     the inspected decoupled frontend, so treat these as advanced CPU review
-     topics.
-   - Need a detailed review of return-address-stack push/pop/repair behavior.
-   - Need a detailed review of indirect jump target prediction, indexing,
-     tags, target selection, and update timing.
-   - Need a detailed review of RSD BTB fields, indexing, partial tags, target
-     encoding, valid bits, `isCondBr`, lane-based lookup, and replacement
-     behavior.
-
-   Q1 — Does each lane access the BTB?
-   - Conceptually, every fetch lane needs branch-target information because any
-     lane could contain a control-flow instruction. A four-lane fixed-width
-     fetch packet might contain PCs `0x1000`, `0x1004`, `0x1008`, and `0x100c`,
-     and any of those could be a branch, jump, call, or return.
-   - A high-performance frontend usually does not read one single-ported BTB
-     sequentially once per lane. That would lose fetch bandwidth.
-   - Common implementation styles:
-
-     | Style | Idea | Benefit | Cost |
-     |---|---|---|---|
-     | Multi-read / banked per-lane BTB | Each candidate lane PC can be checked in parallel | Flexible; direct per-PC lookup | More ports/banks/replication; high area, power, and timing cost |
-     | Fetch-block indexed BTB row | One lookup by fetch-block PC returns per-lane CFI metadata | Good match for wide fetch; one row read can cover the packet | Row must store per-lane metadata; alignment/RVC handling is more complex |
-     | uBTB + main BTB | Fast small uBTB predicts early; larger BTB confirms or corrects later | Fast common path plus better coverage | More structures and correction/recovery complexity |
-     | Sequential single-port lane lookup | One lane checked per cycle | Simple and small | Not suitable for high-performance wide fetch |
-
-   Concrete fixed-width example:
-
-   ```text
-   fetch block PC = 0x1000
-   fetch width    = 16B = four 32-bit instruction lanes
-
-   lane0: 0x1000  add
-   lane1: 0x1004  beq x1, x2, 0x2000     predicted not taken
-   lane2: 0x1008  add
-   lane3: 0x100c  jal 0x3000             always taken
-   ```
-
-   Useful metadata:
-
-   ```text
-   branch_mask = 0 1 0 0   // lane1 is a conditional branch
-   cfi_idx     = 3         // lane3 is selected redirecting CFI
-   cfi_type    = JAL
-   target      = 0x3000
-   ```
-
-   A fetch-block BTB row could look like:
-
-   ```text
-   BTB row for fetch block 0x1000:
-
-   valid
-   tag
-   lane_meta[4]
-   target
-   target_lane
-   replacement_bits
-
-   lane_meta[0] = {valid=0}
-   lane_meta[1] = {valid=1, is_branch=1, is_jal=0, is_ret=0, is_indirect=0}
-   lane_meta[2] = {valid=0}
-   lane_meta[3] = {valid=1, is_branch=0, is_jal=1, is_ret=0, is_indirect=0}
-
-   target_lane = 3
-   target      = 0x3000
-   ```
-
-   How fields are used:
-   - `valid`: row contains useful prediction information.
-   - `tag`: confirms the fetch-block PC matches the row and reduces aliasing.
-   - `lane_meta`: identifies which lanes contain CFIs and what type they are.
-   - `is_branch`: lane needs direction prediction.
-   - `is_jal`: unconditional direct jump; taken is true.
-   - `is_ret`: use RAS target instead of ordinary direct BTB target.
-   - `is_indirect`: use indirect target predictor instead of ordinary direct
-     BTB target.
-   - `target_lane`: lane whose target is stored or selected for redirect.
-   - `target`: predicted next PC if the selected CFI redirects.
-   - `replacement_bits`: choose a victim way when the set is full.
-
-   Multiple-branch example:
-
-   ```text
-   lane0: add
-   lane1: beq predicted not taken
-   lane2: bne predicted not taken
-   lane3: jal taken
-
-   branch_mask = 0 1 1 0
-   cfi_idx     = 3
-   target      = jal target
-   ```
-
-   `branch_mask` preserves the earlier conditional branches for predictor and
-   global-history update even though the redirect target belongs to lane3.
-   Therefore the design does not lose earlier not-taken branch information.
-
-   BOOM-like reference:
-   - BOOM's main BTB has per-bank/lane vectors in each set/way. Conceptually,
-     `BTBMeta` stores `is_br` and `tag`, while `BTBEntry` stores a target
-     offset plus an extended-target bit.
-   - BOOM-style update separates target data from metadata:
-
-     ```text
-     target write mask   = selected taken CFI lane
-     metadata write mask = target write mask OR branch_mask
-     ```
-
-   - This means the target can be written for the taken CFI, while branch
-     metadata can also be written for earlier conditional branches that were
-     predicted or resolved not taken.
-
-   Compressed-instruction BTB row structure:
-   - With compressed instructions, do not describe the BTB as storing metadata
-     for every instruction in the cacheline. A better description is: the BTB
-     stores metadata for possible CFI positions inside a fetch block.
-   - With RVC and a 16-byte fetch width, possible instruction starts are
-     halfword-aligned:
-
-     ```text
-     fetch block PC = 0x1000
-     fetch width    = 16B
-
-     slot0 = 0x1000
-     slot1 = 0x1002
-     slot2 = 0x1004
-     slot3 = 0x1006
-     slot4 = 0x1008
-     slot5 = 0x100a
-     slot6 = 0x100c
-     slot7 = 0x100e
-     ```
-
-   - A fetch-block BTB row for an RVC-capable frontend could be:
-
-     ```text
-     BTBRow {
-         valid
-         tag
-
-         slot_meta[8]       // one per 16-bit position
-
-         target_slot        // which slot's target is stored/selected
-         target             // direct target or target offset
-
-         replacement_bits
-     }
-     ```
-
-   - Each `slot_meta[i]` could contain:
-
-     ```text
-     is_cfi       // this halfword slot starts a known control-flow instruction
-     is_branch    // conditional branch
-     is_jal       // direct jump/call
-     is_jalr      // indirect jump/call/return
-     is_call
-     is_ret
-     inst_len     // 16b or 32b, optional but useful
-     ```
-
-   - Concrete mixed RVC example:
-
-     ```text
-     0x1000: c.addi          // 16-bit
-     0x1002: c.beqz 0x1010   // 16-bit conditional branch, predicted not taken
-     0x1004: add             // 32-bit, occupies 0x1004 and 0x1006
-     0x1008: c.nop           // 16-bit
-     0x100a: jal 0x3000      // 32-bit, occupies 0x100a and 0x100c
-     0x100e: c.addi          // 16-bit
-     ```
-
-   - Possible halfword slots:
-
-     ```text
-     slot0 0x1000: valid instruction start, non-CFI
-     slot1 0x1002: valid instruction start, branch
-     slot2 0x1004: valid instruction start, non-CFI, 32-bit
-     slot3 0x1006: second half of 32-bit add, not instruction start
-     slot4 0x1008: valid instruction start, non-CFI
-     slot5 0x100a: valid instruction start, JAL, 32-bit
-     slot6 0x100c: second half of JAL, not instruction start
-     slot7 0x100e: valid instruction start, non-CFI
-     ```
-
-   - BTB metadata could be:
-
-     ```text
-     slot_meta[0] = {is_cfi=0}
-     slot_meta[1] = {is_cfi=1, is_branch=1, inst_len=16}
-     slot_meta[2] = {is_cfi=0, inst_len=32}
-     slot_meta[3] = {is_cfi=0, is_start=0}
-     slot_meta[4] = {is_cfi=0, inst_len=16}
-     slot_meta[5] = {is_cfi=1, is_jal=1, inst_len=32}
-     slot_meta[6] = {is_cfi=0, is_start=0}
-     slot_meta[7] = {is_cfi=0, inst_len=16}
-
-     branch_mask = 0 1 0 0 0 0 0 0
-     cfi_idx     = 5
-     target      = 0x3000
-     ```
-
-   - Here, slot1 is a conditional branch predicted not taken, while slot5 is a
-     JAL that redirects fetch. `branch_mask` keeps slot1 visible for predictor
-     and history update, while `cfi_idx`/`target` identify the selected
-     redirecting CFI.
-   - Many BTBs do not store all non-CFI instruction-start metadata. A more
-     storage-efficient CFI-only BTB row could be:
-
-     ```text
-     BTBRow {
-         valid
-         tag
-         cfi_valid_mask[8]      // known CFI positions
-         cfi_type[8]            // branch, JAL, JALR/indirect, return
-         cfi_is_call[8]
-         cfi_is_ret[8]
-         cfi_is_indirect[8]
-         branch_mask[8]         // conditional branch slots
-         selected_cfi_idx
-         target                 // direct target/offset for direct CFI slots
-         replacement_bits
-     }
-     ```
-
-     Target source is selected from the CFI type metadata:
-
-     ```text
-     direct branch/JAL:
-       use BTB target/offset
-
-     conditional branch:
-       use direction predictor to choose BTB target or fallthrough
-
-     return:
-       BTB marks is_ret; RAS supplies the target
-
-     indirect non-return JALR:
-       BTB marks is_indirect; indirect target predictor supplies target
-     ```
-
-   - Division of responsibility:
-     - BTB remembers known CFI positions, target/type, and reusable prediction
-       information for future encounters.
-     - Predecode determines actual instruction starts and lengths from the
-       current I-cache bytes.
-     - FTQ records this dynamic prediction instance for later execute/commit
-       validation and predictor update.
-
-   Working example assumptions for later discussion:
-
-   ```text
-   virtual address width = 39 bits
-   fetch width           = 16B
-   I-cache line size     = 64B
-   BTB sets              = 1024
-   RVC enabled
-   ```
-
-   BTB granularity: cacheline or fetch block?
-   - Both are possible, but a modern wide frontend commonly organizes BTB
-     prediction around the fetch block/fetch packet, not the full I-cache line.
-   - With the example settings:
-
-     ```text
-     64B cacheline = four 16B fetch blocks
-
-     0x1000-0x100f  fetch block 0
-     0x1010-0x101f  fetch block 1
-     0x1020-0x102f  fetch block 2
-     0x1030-0x103f  fetch block 3
-     ```
-
-   - A 64B-line BTB row with RVC would need metadata for up to 32 halfword
-     positions. A 16B fetch-block BTB row needs metadata for up to eight
-     halfword positions. The fetch-block row is smaller and more directly
-     matches the frontend's per-cycle prediction bandwidth.
-   - Tradeoff:
-     - 16B fetch-block BTB row: smaller/faster row, better timing, but more
-       rows to cover the same code footprint.
-     - 64B cacheline BTB row: fewer rows, but much larger row, more metadata
-       read per prediction, and extra sub-block selection complexity.
-   - BOOM is closer to fetch-block indexed. Its frontend uses `fetchIdx(pc)`
-     based on `fetchBytes`, so the BTB row corresponds to the frontend fetch
-     packet rather than a full I-cache line.
-
-   Concrete bit split with the working assumptions:
-   - With RVC, instructions are 2-byte aligned, so `PC[0]` is zero for valid
-     instruction starts.
-   - A 16B fetch block has eight halfword positions:
-
-     ```text
-     PC[3:1] = halfword slot inside the 16B fetch block
-     PC[3:0] = byte offset inside the 16B fetch block
-     ```
-
-   - A 64B I-cache line has four 16B fetch blocks:
-
-     ```text
-     PC[5:4] = which 16B fetch block inside the 64B line
-     PC[5:0] = byte offset inside the 64B line
-     ```
-
-   - If the BTB is indexed by 16B fetch block and has 1024 sets:
-
-     ```text
-     fetch_block_pc = vpc[38:4]
-     index          = vpc[13:4]    // 10 bits for 1024 sets
-     tag            = vpc[38:14]
-     slot           = vpc[3:1]     // halfword slot inside fetch block
-     ```
-
-   - If a design instead indexes by 64B line:
-
-     ```text
-     line_pc  = vpc[38:6]
-     index    = vpc[15:6]    // example 1024 sets
-     subblock = vpc[5:4]     // which 16B fetch block inside line
-     slot     = vpc[3:1]     // halfword slot inside 16B block
-     ```
-
-     The row must then store or select metadata by subblock.
-
-   Virtual indexing and ASID:
-   - Early frontend predictors usually use virtual PC bits because prediction
-     happens before or in parallel with ITLB translation.
-   - Full virtual tags reduce partial-tag aliasing, but do not by themselves
-     solve context aliasing. Two address spaces can use the same virtual PC for
-     different code.
-   - RISC-V has ASID in `satp`; TLB entries architecturally use address-space
-     context. BTB/RAS/predictor entries are microarchitectural, so including
-     ASID/context bits in predictor tags, flushing on context switch, or
-     partitioning predictor state are implementation choices.
-
-   Partial target / offset target:
-   - For direct branches and direct jumps, target is PC-relative, so a BTB can
-     often store a signed target offset instead of a full target address:
-
-     ```text
-     predicted_target = branch_pc + stored_offset
-     ```
-
-   - This saves BTB storage, SRAM area, and dynamic power, but it adds target
-     reconstruction logic in the frontend.
-   - Timing tradeoff:
-     - Full target: larger entry, more SRAM bits, target available directly
-       after SRAM read.
-     - Offset target: smaller entry, but needs an adder. High-performance
-       designs may pipeline the predictor, use a small offset adder, use a fast
-       uBTB, or keep an extended/full-target path for far targets.
-   - BOOM's main BTB uses this flavor: `BTBEntry` stores an `offset` and an
-     `extended` bit. If the target is near enough, the target is reconstructed
-     from PC plus offset; otherwise an extended target table supplies the full
-     target.
-
-   RISC-V direct-target ranges:
-   - Conditional branch:
-
-     ```text
-     B-type immediate is 12-bit signed, scaled by 2 bytes
-     effective range is about +/- 4 KiB
-     ```
-
-   - `JAL`:
-
-     ```text
-     J-type immediate is 20-bit signed, scaled by 2 bytes
-     effective range is about +/- 1 MiB
-     ```
-
-   - `JALR`:
-
-     ```text
-     I-type immediate is 12-bit signed and added to rs1
-     target is not limited by the immediate alone because rs1 can hold any address
-     ```
-
-   - Therefore compact offsets work well for many direct branches/jumps, while
-     far jumps and indirect jumps need extended/full-target handling.
-
-   Why uBTB can be faster than main BTB:
-   - A uBTB is often faster because it is smaller, has fewer entries, shorter
-     wires, fewer bits per entry, simpler target/type logic, and may be
-     implemented with flops or a small CAM-like structure instead of a larger
-     SRAM.
-   - A main BTB can be slower because it is larger, more associative, has
-     larger tags/targets, more ways to compare/select, and more timing pressure
-     from target reconstruction, lane/CFI selection, and integration with other
-     predictor sources.
-   - It is not always correct to say that the main BTB has more per-lane
-     metadata. Some designs use the same logical metadata fields in uBTB and
-     main BTB. The main BTB can still be slower because it has more total
-     capacity, longer wires, larger muxes, and higher associativity.
-   - Other designs deliberately make the main BTB richer than the uBTB:
-
-     ```text
-     uBTB:
-       partial tag, simple target/offset, simple type/counter
-
-     main BTB:
-       stronger tag, more ways, more CFI slots per fetch block,
-       extended target handling, richer update/replacement metadata
-     ```
-
-   - Therefore the safe wording is:
-
-     > The main BTB may be slower either because it is physically larger and
-     > more associative, or because it stores richer metadata. The key reasons
-     > are capacity, associativity, wire delay, muxing, tag comparison, and
-     > target-selection logic, not necessarily different metadata fields.
-
-   Main BTB can take more than one cycle:
-   - A one-cycle SRAM macro does not imply the full BTB prediction is one
-     cycle. The full path may include index generation, SRAM read, tag compare,
-     way select, lane/CFI select, target offset add, RAS/indirect selection,
-     and next-PC muxing.
-   - Example two/three-stage main BTB flow:
-
-     ```text
-     Cycle N:
-       receive fetch PC
-       compute index
-       start SRAM read
-
-     Cycle N+1:
-       SRAM row available
-       latch tags/data/metadata
-
-     Cycle N+2:
-       compare tags
-       select way
-       select CFI lane
-       reconstruct target from offset or read extended target
-
-     Cycle N+3:
-       final next-PC mux / redirect visible to fetch
-     ```
-
-   - Conditions that push the main BTB to two or three frontend stages include
-     large capacity, high associativity, wide fetch, RVC with many possible CFI
-     halfword positions, large tags, offset-target adders, extended target
-     tables, high frequency targets, and physical-design wire delay.
-
-   uBTB timing and BOOM example:
-   - A one-cycle-latency uBTB does not necessarily add a frontend bubble. The
-     key is that the result for fetch block `A` arrives in time to select the
-     next F0 PC for fetch block `B`.
-   - Concrete timing:
-
-     ```text
-     Cycle N:
-       F0 PC = A
-       A is sent to I-cache
-       A is sent to BPD/uBTB lookup
-
-     Cycle N+1:
-       A is in F1
-       uBTB/BPD F1 response for A says taken target = B
-       next-PC select mux chooses B as the new F0 PC
-       B is sent to I-cache and BPD/uBTB in the same cycle
-
-     Cycle N+2:
-       B is in F1
-       uBTB/BPD F1 response for B chooses the next fetch PC
-     ```
-
-   - Therefore a correct F1/uBTB prediction gives one fetch-block request per
-     cycle along the predicted path. The result is one cycle after lookup
-     starts, but it arrives exactly in time to choose the next F0 request.
-   - This is not a combinational loop. In cycle `N+1`, the predictor result for
-     `A` selects the F0 request for `B`; the predictor result for `B` is not
-     available until cycle `N+2`.
-   - BOOM does this style:
-     - F0 `s0_vpc` drives the I-cache request and `bpd.io.f0_req`.
-     - F1 receives `bpd.io.resp.f1`, computes `f1_redirects`, and selects
-       `f1_predicted_target`.
-     - When `s1_valid` is true, BOOM assigns `s0_vpc := f1_predicted_target`,
-       so the F1 prediction feeds the current cycle's F0 request.
-     - The uBTB itself reads in F0 and produces `io.resp.f1` in F1.
-   - BOOM also has later correction levels. F2 and F3 predictor/decode results
-     can clear younger fetch stages and set `s0_vpc` to a corrected target.
-     Backend redirect/flush and `sfence` paths have even higher recovery
-     priority. These correction paths create bubbles only when they override
-     earlier F1 prediction, not on the correct common uBTB path.
-   - Interview wording:
-
-     > In a BOOM-like frontend, the uBTB lookup starts in F0 and the result is
-     > consumed in F1. If it predicts a taken target, that F1 result drives the
-     > next-PC mux and becomes the same cycle's new F0 request. So a correct
-     > uBTB hit does not create a bubble; later main-BTB/decode/backend
-     > corrections create bubbles only when they disagree with the early
-     > prediction.
-
-   Multi-level BTB: uBTB + main BTB:
-   - The reason for a multi-level BTB is timing versus coverage.
-     - uBTB: small, fast, low-latency target/type prediction for the common
-       path.
-     - Main BTB: larger, better coverage, stronger tags/targets/metadata, but
-       usually later.
-   - A common pipeline is:
-
-     ```text
-     F0:
-       send fetch PC to I-cache
-       send fetch PC to uBTB
-       also send fetch PC to main BTB / slower predictor bank
-
-     F1:
-       uBTB result selects next F0 PC
-       correct uBTB hit keeps fetch running with no bubble
-
-     F2/F3:
-       main BTB / slower predictor / predecode result arrives
-       if it disagrees, clear younger wrong-path fetch and redirect
-       if it agrees, no visible recovery cost
-     ```
-
-   - Many designs access uBTB and main BTB in parallel from the same fetch PC.
-     The uBTB answer is consumed first; the main BTB answer is consumed later
-     as a correction or confirmation. A power-optimized design could access
-     the main BTB only after a uBTB miss, but then the miss correction is later.
-   - Main BTB entries often have stronger tags than uBTB entries. For example:
-
-     ```text
-     uBTB:
-       few entries, partial tag, simple target/offset, simple type,
-       maybe a small conditional-branch counter
-
-     main BTB:
-       more entries, set associative, stronger tag, per-slot CFI metadata,
-       extended target handling, replacement metadata
-     ```
-
-     This is a common pattern, not a universal rule. The real design point is
-     chosen from timing, area, power, and target accuracy.
-
-   Concrete correction cases:
-
-   | Case | Example | Fetch behavior | Repair / update |
-   |---|---|---|---|
-   | uBTB hit, main BTB agrees | uBTB and main BTB both say lane3 `jal -> 0x3000` | F1 uBTB sends fetch to `0x3000`; main BTB later confirms | No redirect; optionally refresh confidence/replacement state |
-   | uBTB miss, main BTB hit | uBTB misses block `0x1000`; main BTB later finds lane2 `jal -> 0x4000` | Frontend initially follows fallthrough; F2/F3 redirects to `0x4000` | Fill uBTB from main BTB so next encounter is fast |
-   | uBTB hit, target wrong | uBTB says `0x3000`; main BTB says same CFI target should be `0x5000` | F1 fetches wrong target; F2/F3 redirects to `0x5000` | Overwrite/repair uBTB target; update main BTB if main was confirmed by decode/execute |
-   | uBTB hit, main BTB says different earlier CFI lane | uBTB predicts lane3 `jal`; main BTB says lane1 conditional branch is predicted taken | F1 starts lane3 target; later stage redirects to lane1 target because earliest taken CFI wins | Repair uBTB lane/type/target metadata to match the better prediction |
-   | uBTB hit, main BTB misses | uBTB has a hot recent entry that main BTB does not have | Frontend uses uBTB prediction; later decode/execute validates or rejects it | If valid, main BTB may allocate for coverage; if false, clear uBTB entry |
-   | uBTB false hit | uBTB predicts CFI, but predecode sees a normal `add` | Frontend may fetch wrong path for a few cycles | Clear the uBTB lane/entry; main BTB may also clear matching stale metadata |
-   | Both miss, decode finds direct `JAL` | Neither BTB knows the CFI | Frontend fetches fallthrough until predecode/decode redirects | Allocate main BTB and often uBTB; no direction counter needed for unconditional jump |
-   | Both miss, execute finds taken conditional branch | Conditional branch target only matters if branch resolves taken | Frontend predicts fallthrough; Execute redirects if taken | Train direction predictor; allocate/update BTB target/type if taken or policy chooses to record not-taken branches |
-
-   Different CFI lane example:
-
-   ```text
-   fetch block 0x1000:
-     lane0: add
-     lane1: beq x1, x2, 0x2000     // later predictor says taken
-     lane2: add
-     lane3: jal 0x3000
-
-   uBTB result in F1:
-     selected_cfi = lane3
-     target       = 0x3000
-
-   main BTB / stronger predictor result in F2:
-     selected_cfi = lane1
-     target       = 0x2000
-   ```
-
-   The main BTB result must redirect to `0x2000`, because lane1 is earlier in
-   program order. The lane3 `jal` is not reached on that dynamic path if lane1
-   is predicted taken. The uBTB should be repaired so that next time it does
-   not skip the earlier taken CFI.
-
-   Direction predictor interaction:
-   - BTB target/type prediction and branch direction prediction are related but
-     not identical.
-   - For `JAL`, direction is always taken, so the BTB target/type is enough.
-   - For conditional branches, a BTB hit tells the frontend "there is a
-     branch here and here is its target if taken." A direction predictor says
-     whether to use that target or continue fallthrough.
-   - Some uBTBs include a tiny 2-bit counter for early conditional direction,
-     while a slower TAGE/gshare-like predictor may override it later.
-   - Concrete example:
-
-     ```text
-     0x1004: beq x1, x2, 0x2000
-
-     F1 uBTB:
-       BTB hit, target = 0x2000
-       small counter predicts taken
-       next F0 PC = 0x2000
-
-     F2/F3 stronger predictor:
-       predicts not taken
-       corrected next PC = 0x1008
-     ```
-
-     This is a direction correction, not a target correction. The BTB target
-     can be correct while the direction prediction is wrong.
-
-   Inclusion policy:
-   - BTB hierarchies do not have to be strict cache hierarchies.
-   - Inclusive style: uBTB is treated like a small hot subset of the main BTB.
-     Main BTB hits can refill uBTB, and main BTB is the more authoritative
-     source. This is simple to reason about but duplicates storage.
-   - Non-inclusive style: uBTB and main BTB may be updated independently, and
-     disagreement is repaired by later validation. This gives more policy
-     freedom but needs consistency/repair logic.
-   - Strict exclusive style is less common for BTBs than for data caches,
-     because the uBTB's purpose is latency, not capacity-only replacement.
-   - Safe interview answer:
-
-     > I would not assume strict inclusion unless the design says so. I would
-     > model uBTB as a fast hot target cache and main BTB as a larger,
-     > later-arriving authority. On main-BTB hit and uBTB miss/stale hit, refill
-     > or repair the uBTB. On false uBTB hit, clear or overwrite it after
-     > predecode/execute/commit validation.
-
-   Bloom-filter connection:
-   - A Bloom filter is a compact "may contain" structure built from a bit
-     vector and multiple hash functions.
-   - Lookup:
-
-     ```text
-     h0 = hash0(fetch_pc)
-     h1 = hash1(fetch_pc)
-     h2 = hash2(fetch_pc)
-
-     maybe_present = bloom[h0] & bloom[h1] & bloom[h2]
-     ```
-
-   - If any bit is zero, the entry is definitely not present. If all bits are
-     one, the entry may be present; false positives are possible.
-   - In a frontend, a Bloom-like filter can be used as a cheap branch/BTB
-     presence filter:
-
-     ```text
-     if bloom says definitely no BTB entry:
-         skip or gate expensive main-BTB access
-     else:
-         access main BTB
-     ```
-
-   - Benefit: saves main-BTB power or avoids unnecessary slower lookup work.
-   - Risk: false positives waste work. False negatives are normally not allowed
-     for a predictor filter unless the design can tolerate missing a useful
-     prediction, so updates/deletions must be handled carefully.
-
-   Fully associative uBTB / CAM-style lookup:
-   - A small fully associative uBTB is commonly implemented like a small
-     CAM-like structure:
-
-     ```text
-     request_tag = fetch_pc_tag
-
-     hit[0]  = valid[0]  && entry[0].tag  == request_tag
-     hit[1]  = valid[1]  && entry[1].tag  == request_tag
-     ...
-     hit[15] = valid[15] && entry[15].tag == request_tag
-
-     hit_vec = {hit[15], ..., hit[0]}
-     selected_entry = one_hot_mux(hit_vec, entry)
-     ```
-
-   - This works well for small structures because all tags can be compared in
-     parallel with short wires. It does not scale well to large BTBs because
-     many parallel comparators and a large target mux cost too much area, power,
-     and timing.
-   - Common high-performance pattern:
-
-     ```text
-     uBTB:     small, sometimes fully associative or lightly associative
-     main BTB: larger, usually set-associative SRAM
-     ```
-
-   Finding an empty entry / allocation hardware:
-   - Small structures often find an empty entry by checking all valid bits in
-     parallel and using a priority encoder, not by sequential software-style
-     scanning.
-   - Example 8-entry MSHR or small uBTB:
-
-     ```text
-     valid = 1 1 0 1 0 1 1 0
-     free  = 0 0 1 0 1 0 0 1
-
-     alloc_idx = priority_encode(free) = 2
-     ```
-
-   - Hardware blocks:
-
-     ```text
-     valid-bit vector
-     invert to get free vector
-     priority encoder / leading-zero detector
-     one-hot decoder for write enable
-     ```
-
-   - For lookup in associative structures, hardware also uses parallel
-     comparators:
-
-     ```text
-     hit[i] = valid[i] && entry[i].tag == request_tag
-     ```
-
-   - Example MSHR behavior:
-
-     ```text
-     hit[i] = valid[i] && mshr[i].block_addr == request.block_addr
-
-     if any hit:
-         merge with existing MSHR
-     else if any free:
-         allocate priority_encode(free)
-     else:
-         stall, retry, or drop depending on request type
-     ```
-
-   - For larger structures, designers avoid full scans and use set-associative
-     indexing, free lists, bitmaps, round-robin pointers, pseudo-LRU trees, or
-     other replacement metadata.
-
-   Q2 — Return Address Stack: pointer, FTQ snapshot, and repair:
-   - RAS predicts return targets by exploiting the normal function-call LIFO
-     pattern. A return is an indirect jump, so waiting for register read and
-     execute would be too late for a high-performance frontend.
-   - Concrete call/return sequence:
-
-     ```text
-     0x1000: jal  ra, foo       // call; return address is 0x1004
-     ...
-     0x3000: ret                // jalr x0, 0(ra)
-     ```
-
-     On the call, frontend pushes `0x1004`. On the return, frontend predicts
-     the target from the top of the RAS.
-
-   RAS pointer convention:
-   - A simple mental model is:
-
-     ```text
-     ras[N]     // array of predicted return addresses
-     ras_idx    // index of current top valid return address
-
-     current predicted return target = ras[ras_idx]
-     ```
-
-   - Push on call:
-
-     ```text
-     write_idx = ras_idx + 1
-     ras[write_idx] = call_pc + instruction_length
-     ras_idx = write_idx
-     ```
-
-   - Pop on return:
-
-     ```text
-     predicted_target = ras[ras_idx]
-     ras_idx = ras_idx - 1
-     ```
-
-   - Some designs keep a count, valid bits, or underflow/overflow state.
-     Others use a circular pointer and tolerate overflow/underflow as
-     prediction errors. RAS is predictor state, not architectural state.
-
-   Data/control flow for a known call:
-
-   ```text
-   fetch PC
-     -> BTB/uBTB lookup says slot i is_call
-     -> frontend computes return_pc = call_pc + 2 or +4
-     -> frontend speculatively pushes return_pc into RAS
-     -> frontend updates speculative ras_idx = ras_idx + 1
-     -> FTQ records the packet and the RAS checkpoint
-   ```
-
-   Data/control flow for a known return:
-
-   ```text
-   fetch PC
-     -> BTB/uBTB lookup says slot i is_ret
-     -> RAS supplies target = ras[ras_idx]
-     -> frontend redirects next PC to that target
-     -> frontend speculatively updates ras_idx = ras_idx - 1
-     -> FTQ records the packet and the RAS checkpoint
-   ```
-
-   How call/return is determined:
-   - First encounter:
-
-     ```text
-     I-cache bytes return
-     predecode / branch decode reads actual instruction bits
-     identify call, return, direct jump, indirect jump, or normal branch
-     repair or allocate BTB/uBTB metadata
-     ```
-
-   - Future encounters:
-
-     ```text
-     BTB/uBTB metadata already says this slot is_ret or is_call
-     frontend can use RAS early
-     predecode/decode later confirms or repairs the metadata
-     ```
-
-   - Therefore the earliest RAS usage normally depends on BTB/uBTB CFI
-     metadata. Fresh decode is needed for validation and first-time learning,
-     but it is too late to be the only source for every return prediction.
-
-   RISC-V call/return hints:
-   - `JAL` has `rd`, but no `rs1` or `rs2`.
-
-     ```text
-     jal x1, foo      // normal call; push PC+4
-     jal x5, foo      // alternate-link call; push PC+4
-     jal x0, target   // plain jump; no RAS push
-     ```
-
-   - `JALR` has `rd` and `rs1`, but no `rs2`.
-
-     ```text
-     jalr x0, 0(x1)   // return; pop RAS
-     jalr x0, 0(x5)   // alternate-link return; pop RAS
-     ```
-
-   - Full RISC-V RAS hints use whether `rd` and/or `rs1` are link registers
-     (`x1` or `x5`) to choose no action, push, pop, or pop-then-push.
-   - BOOM's branch-decode path is simpler than the full hint table: it marks
-     calls mainly when `rd == x1`, and returns when `JALR`, `rd == x0`, and
-     `rs1` is `x1` or `x5`. That covers common ABI call/return cases but not
-     every alternate-link/coroutine hint case.
-
-   What FTQ stores for RAS repair:
-   - One FTQ entry corresponds to a dynamic fetch packet/fetch target, not one
-     branch instruction.
-   - The FTQ entry stores checkpoint-like predictor state for that packet:
-
-     ```text
-     fetch_pc
-     mask
-     br_mask
-     cfi_idx
-     cfi_type
-     cfi_is_call
-     cfi_is_ret
-     cfi_taken
-     predictor history/meta
-     ras_idx
-     ras_top
-     ```
-
-   - `ras_idx` is the pointer snapshot.
-   - `ras_top` is the return address value at that pointer.
-   - The snapshot is not "the last committed RAS state." It is the speculative
-     RAS state at this fetch-packet boundary, valid only if all older FTQ
-     entries remain on the correct path.
-
-   Why save both `ras_idx` and `ras_top`?
-   - Restoring only the pointer can be wrong if wrong-path calls overwrite the
-     old top entry.
-   - Concrete wraparound example with a four-entry RAS:
-
-     ```text
-     correct state before wrong path:
-       ras_idx = 1
-       ras[1]  = 0x9004
-
-     FTQ checkpoint saves:
-       ras_idx = 1
-       ras_top = 0x9004
-
-     wrong path:
-       call A -> ras[2] = 0x1008, ras_idx = 2
-       call B -> ras[3] = 0x2008, ras_idx = 3
-       call C -> ras[0] = 0x3008, ras_idx = 0
-       call D -> ras[1] = 0x4008, ras_idx = 1   // overwrote old top
-
-     recovery:
-       restore ras_idx = 1
-       restore ras[1]  = 0x9004
-     ```
-
-   - Without `ras_top`, restoring `ras_idx = 1` would still leave the wrong
-     return target `0x4008` at the restored top.
-
-   Speculative snapshot chain:
-   - FTQ/RAS snapshots are conditional checkpoints:
-
-     ```text
-     committed RAS
-       -> FTQ E0 snapshot/effect
-       -> FTQ E1 snapshot/effect
-       -> FTQ E2 snapshot/effect
-       -> current speculative RAS
-     ```
-
-   - If an older redirect invalidates `E1`, then `E1`, `E2`, and younger
-     snapshots are discarded. A snapshot on a flushed path is not used.
-   - If recovery redirects at `E1`, the frontend restores to the correct RAS
-     state at `E1` and discards younger wrong-path entries.
-   - This is why the snapshot does not have to be committed. It only has to be
-     valid relative to the still-valid older speculative path.
-
-   Partial FTQ-entry recovery:
-   - FTQ entries are packet-level, but recovery can be lane-granular inside the
-     packet. Instructions before the resolving CFI are still valid; younger
-     lanes after a taken/mispredicted CFI are killed.
-   - Concrete 16B fetch packet:
-
-     ```text
-     FTQ entry E7, fetch PC = 0x1000
-
-     lane0: 0x1000 add
-     lane1: 0x1004 add
-     lane2: 0x1008 beq x1, x2, 0x2000   // resolves taken
-     lane3: 0x100c add                  // wrong path if branch taken
-     ```
-
-     If lane2 was predicted not taken but resolves taken:
-
-     ```text
-     keep:
-       lane0
-       lane1
-       lane2 branch
-
-     kill:
-       lane3
-       all younger FTQ entries
-     ```
-
-   - Predictor/RAS recovery is:
-
-     ```text
-     restored state =
-       checkpoint before this FTQ entry
-       + effects of valid lanes up to the resolving CFI
-     ```
-
-   BOOM reference:
-   - BOOM's `BoomRAS` is a register-vector target array with read/write index;
-     the speculative pointer is carried in `GlobalHistory.ras_idx`, not as a
-     standalone counter inside the RAS module.
-   - BOOM's FTQ stores `ras_idx` and `ras_top` with each fetch-target entry.
-   - On redirect, BOOM can restore the RAS top from FTQ metadata and redirect
-     the frontend with a corrected `GlobalHistory` containing the repaired
-     `ras_idx`.
-   - RSD anchor: the inspected RSD decoupled frontend does not implement RAS,
-     so discuss RAS as a standard high-performance frontend feature rather
-     than as current RSD RTL behavior.
-
-3. BTB working with gshare/TAGE:
-   - Direction predictor predicts taken/not-taken; BTB predicts the taken
-     target and identifies branch lanes.
-   - What happens if multiple branch instructions are in one fetch line?
-   - What happens on BTB miss: do we simply predict fall-through?
-   - How does earliest-taken-lane selection work?
-   - How would this change with TAGE instead of gshare?
-   - When should the frontend learn that a predicted non-branch was actually a
-     branch: PreDecode, Execute, Commit, or some hybrid?
-   - RSD anchor: current predictor update is commit-driven; BTB updates only
-     for resolved taken branches.
-
-   Speculative versus non-speculative updates:
-   - High-performance cores usually speculate the state needed for the next
-     prediction immediately, but are more selective about durable table
-     training.
-   - Clean rule:
-
-     ```text
-     speculative update:
-       update state needed by younger predictions now
-
-     durable training:
-       update learned predictor tables when outcome/target is known,
-       either at execute/resolve for faster learning or at commit for cleaner
-       non-speculative training
-     ```
-
-   - Examples:
-
-     | Structure | Speculative update? | Typical timing | Reason |
-     |---|---:|---|---|
-     | GHR / global history | Yes | prediction/fetch | Younger branches need predicted history immediately |
-     | Path/folded history | Yes | prediction/fetch | TAGE/gshare-style indexes need recent speculative path |
-     | Local branch history | Often | prediction/fetch or decode | Younger local-history predictions benefit from recent predicted outcomes |
-     | RAS pointer/top | Yes | predicted call/return | Return targets need stack state before execute |
-     | FTQ prediction record | Yes | fetch packet creation | Records what this prediction instance did |
-     | uBTB refill/repair | Often | main-BTB/predecode correction | Improves next encounter quickly |
-     | Direct `JAL` BTB repair | Often | predecode/decode | Target and taken behavior are known from instruction bits |
-     | False BTB-hit clear | Often | predecode/decode | Instruction bits prove stale metadata |
-     | Direction counters / TAGE tables | Sometimes | execute/resolve or commit | Actual outcome is needed |
-     | Indirect target table | Sometimes | execute/resolve or commit | Actual register target is needed |
-
-   - GHR example:
-
-     ```text
-     GHR = 1010
-
-     fetch branch B:
-       predictor says taken
-       speculative GHR = 10101
-
-     younger branch C:
-       indexes predictor using 10101
-
-     if B later resolves not taken:
-       restore checkpoint before B = 1010
-       apply actual B outcome = 0
-       corrected GHR = 10100
-       redirect fetch
-     ```
-
-   BTB allocation/update timing working rule:
-   - For a conservative performance model:
-
-     ```text
-     update/allocate most BTB and direction-predictor entries at commit
-     ```
-
-     This avoids wrong-path pollution and is easy to reason about.
-   - For a high-performance frontend:
-
-     | Instruction/event | Earliest useful BTB action | Why |
-     |---|---|---|
-     | Direct `JAL` / direct call | predecode/decode allocate or repair | Target and taken behavior are known immediately |
-     | Conditional branch | execute/resolve, or commit in conservative design | Direction is known only after condition resolves |
-     | Indirect `JALR` | decode can learn type; execute/commit updates target predictor | Target depends on register value |
-     | Return | decode can learn `is_ret`; RAS supplies target | BTB stores type/source, not the dynamic return target |
-     | False BTB hit | predecode/decode clear or repair | Instruction bits prove it is not a CFI |
-
-   - Safe interview wording:
-
-     > For a conservative model, I can train BTB entries at commit. Real
-     > high-performance frontends often add fast repair paths: direct `JAL` and
-     > false BTB-hit cleanup at predecode/decode, conditional taken-branch
-     > repair after execute, and indirect target training after execute or
-     > commit.
-
-   BTB case and update-timing table:
-   - Separate three moments:
-     - Detection: when the core discovers what happened.
-     - Redirect/recovery: when fetch is corrected.
-     - Predictor update/training: when predictor tables are actually changed.
-   - Conservative designs may redirect early but update predictor tables at
-     commit. More aggressive designs may add fast repair paths before commit
-     for obvious BTB mistakes, plus recovery machinery to avoid wrong-path
-     pollution.
-
-   | Case | Example | Detected at | Redirect at | BTB update timing | Direction-counter update timing | Invalidate / clear BTB? |
-   |---|---|---|---|---|---|---|
-   | BTB miss on direct `JAL` | `jal 0x3000`, BTB missed | Predecode/decode sees `JAL` and immediate target | Predecode/decode can redirect immediately | Fast repair at predecode/decode, or safer update at commit | None; `JAL` is unconditional | No |
-   | BTB miss on conditional branch, actual not taken | `beq`, BTB missed, actual not taken | Decode sees branch/target; Execute resolves not taken | No redirect if fallthrough is already fetched | Usually commit updates branch metadata; target allocation may be skipped or lower priority if not taken | Outcome known at Execute; train at commit or speculative update with recovery | No |
-   | BTB miss on conditional branch, actual taken | `beq`, BTB missed, actual taken | Decode sees branch/target; Execute resolves taken | Execute redirects to target | Execute can send repair/allocation; conservative update at commit | Outcome known at Execute; train at commit or speculative update with recovery | No |
-   | BTB hit, target wrong for direct `JAL` | BTB says `0x2000`, actual JAL target is `0x3000` | Predecode/decode computes target mismatch | Predecode/decode can redirect | Fast BTB repair can happen from predecode/decode; otherwise commit update | None | Usually repair target, not invalidate whole entry |
-   | BTB hit, target wrong for conditional branch, actual taken | BTB target wrong, branch taken | Decode computes direct target; Execute confirms taken | Execute redirects to correct target | Execute can repair target after resolution; commit can do final training | Outcome known at Execute; train at commit or speculative update with recovery | Usually repair |
-   | BTB hit, target wrong for conditional branch, actual not taken | BTB target wrong, branch not taken | Decode computes direct target; Execute resolves not taken | Redirect only if frontend predicted taken | Target update optional; usually commit if updating at all | Outcome known at Execute; train not-taken at commit/speculative update | No |
-   | BTB hit, target correct, predicted taken but actual not taken | `beq` predicted taken to correct target, actual not taken | Execute resolves condition | Execute redirects to fallthrough | No target update needed | Outcome known at Execute; train at commit or speculative update with recovery | No |
-   | BTB hit, target correct, predicted not taken but actual taken | `beq` predicted not taken, actual taken | Execute resolves condition | Execute redirects to BTB target | No target update needed if target is correct | Outcome known at Execute; train at commit or speculative update with recovery | No |
-   | False BTB hit: predicted CFI but actual non-CFI | BTB says branch/JAL; instruction is `add` | Predecode/decode sees actual instruction is not CFI | Predecode/decode redirects to correct fallthrough if wrong path was fetched | Clear/invalidate BTB lane as fast repair, or delay cleanup until commit for safety | None | Yes, clear CFI metadata or invalidate matching lane/entry |
-   | Wrong CFI type | BTB says return, actual is branch/JAL/JALR | Predecode/decode sees type mismatch | Predecode/decode may redirect if predicted source was wrong; JALR target may still wait until Execute | Type metadata repair can happen early; final non-speculative update at commit | Only if actual instruction is conditional branch | Maybe clear old type or overwrite with correct type |
-   | Indirect/JALR target wrong | `jalr` predicted `0x8000`, actual register target `0x9000` | Execute computes actual target | Execute redirects | Update indirect predictor / BTB type after Execute; final training may be commit-based | Usually none | Usually repair target predictor, not invalidate BTB type |
-   | Return target wrong | RAS predicts `0x2000`, actual return target is `0x3000` | Execute computes actual JALR target | Execute redirects | BTB type may still be correct as return; repair RAS/checkpoint state, maybe update return metadata at commit | None | Usually no BTB invalidation unless type was wrong |
-
-   Clean mental model:
-   - BTB target/type update answers: does this PC/fetch slot contain a CFI, what
-     type is it, and what target should be used?
-   - Direction-counter update answers: for a conditional branch, should we
-     predict taken or not taken?
-   - Examples:
-     - `JAL`: update BTB target/type, no direction counter.
-     - Conditional branch direction wrong but target correct: update direction
-       counter, usually no BTB target update.
-     - Conditional branch target wrong and branch taken: update both BTB target
-       and direction counter.
-     - False BTB hit on non-CFI: clear/invalidate BTB metadata, no direction
-       counter update.
-
-   BOOM-like reference:
-   - BOOM frontend F3 performs lightweight branch decode from returned
-     instruction bits. It can identify CFI type, compute direct targets, build
-     `br_mask`/`cfi_idx`, and detect some BTB target mismatches such as direct
-     JAL target mismatch.
-   - BOOM's FTQ stores dynamic prediction metadata such as PC, branch mask,
-     CFI index/type, history, and predictor metadata.
-   - BOOM's BTB update logic uses the useful separation:
-
-     ```text
-     target write mask   = selected taken CFI lane
-     metadata write mask = target write mask OR branch_mask
-     ```
-
-     This lets the target be written for the redirecting CFI while branch
-     metadata can also be written for earlier conditional branches that were
-     resolved not taken.
-
-4. FTQ structure, purpose, and lifetime:
-   - What exactly does the FTQ store: `startPC`, `fetchEndPC`, `predTarget`,
-     `predTaken`, branch offset, BTB hit, conditional bit, GHR snapshot, PHT
-     index/value, resolved result, and per-lane predictions?
-   - Why does each FTQ entry need a GHR snapshot instead of relying only on one
-     global GHR?
-   - What are `FTQ_ID` and `ftqLast`?
-   - How are `FTQ_ID`, `headPtr`, `tailPtr`, and `commitPtr` related but not
-     identical?
-   - When is an FTQ entry allocated: every predicted fetch block or only every
-     predicted branch?
-   - When is it released: branch execute, branch writeback, commit, recovery,
-     or interrupt flush?
-
-5. BTB update timing:
-   - Is the BTB updated when PreDecode discovers a branch?
-   - Is it updated at Execute when the real branch target is known?
-   - Is it updated only at Commit to avoid wrong-path pollution?
-   - What are the tradeoffs between early update and commit-only update?
-   - RSD anchor: current decoupled BPU updates BTB from committed, resolved,
-     taken branch metadata.
-
-6. BTB partial target and partial tag:
-   - RSD stores a partial BTB tag and partial target bits.
-   - This is not because all branches have small architectural offsets; it is a
-     storage/latency/energy tradeoff.
-   - Need to understand what happens for long jumps, indirect jumps, calls,
-     returns, and far targets when upper target bits differ from the current PC.
-   - Need to distinguish partial target aliasing from BTB tag aliasing.
-
-7. Fetch packet / instruction buffer format:
-   - What exactly enters the fetch buffer?
-   - Is it raw cacheline bytes, decoded instructions, predecode metadata, or
-     lane packets?
-   - What fields are carried per lane: valid bit, PC, instruction bits,
-     `ftqID`, `ftqLast`, branch prediction metadata, and stage-control fields?
-   - RSD anchor: the implemented buffer stores `PreDecodeStageRegPath
-     lane[FETCH_WIDTH]`, not a raw byte stream.
-
-8. TAGE-SC-L:
-   - Need a detailed explanation of TAGE-SC-L because it is a common
-     high-performance direction predictor family.
-   - Cover TAGE provider/alternate provider, geometric histories, tagged
-     tables, allocation, usefulness bits, statistical corrector, loop predictor,
-     speculative history, update metadata, and frontend timing impact.
-   - Compare against RSD's simpler BTB plus gshare PHT implementation.
-
-9. Micro-op cache:
-   - What is a micro-op cache or decoded instruction cache?
-   - How is it different from I-cache, trace cache, loop buffer, and normal
-     decode queue?
-   - What does it store, how is it indexed, how does it interact with branch
-     prediction, and how is it invalidated by self-modifying code or `FENCE.I`?
-   - RSD anchor: not implemented in the inspected decoupled frontend.
+- RSD does not currently implement RAS or an indirect target predictor in
+  the inspected decoupled frontend, so treat these as advanced CPU review
+  topics.
+- Need a detailed review of return-address-stack push/pop/repair behavior.
+- Need a detailed review of indirect jump target prediction, indexing,
+  tags, target selection, and update timing.
+- Need a detailed review of RSD BTB fields, indexing, partial tags, target
+  encoding, valid bits, `isCondBr`, lane-based lookup, and replacement
+  behavior.
+
+#### Review Checkpoint: Fetch Packet / Instruction Buffer Format
+
+- What exactly enters the fetch buffer?
+- Is it raw cacheline bytes, decoded instructions, predecode metadata, or
+  lane packets?
+- What fields are carried per lane: valid bit, PC, instruction bits,
+  `ftqID`, `ftqLast`, branch prediction metadata, and stage-control fields?
+- RSD anchor: the implemented buffer stores `PreDecodeStageRegPath
+  lane[FETCH_WIDTH]`, not a raw byte stream.
+
+### 2. Branch Target Buffer and Target Prediction
+
+- Does each lane access the BTB, or does the BTB store one fetch-block entry?
+- What metadata is stored per fetch block and per possible CFI lane?
+- How do partial tags, ASID, target compression, replacement bits, uBTB, and main BTB interact?
+- RSD anchor: RSD has a simple BTB; modern designs often use uBTB plus a larger main BTB.
+
+- Conceptually, every fetch lane needs branch-target information because any
+  lane could contain a control-flow instruction. A four-lane fixed-width
+  fetch packet might contain PCs `0x1000`, `0x1004`, `0x1008`, and `0x100c`,
+  and any of those could be a branch, jump, call, or return.
+- A high-performance frontend usually does not read one single-ported BTB
+  sequentially once per lane. That would lose fetch bandwidth.
+- Common implementation styles:
+
+  | Style | Idea | Benefit | Cost |
+  |---|---|---|---|
+  | Multi-read / banked per-lane BTB | Each candidate lane PC can be checked in parallel | Flexible; direct per-PC lookup | More ports/banks/replication; high area, power, and timing cost |
+  | Fetch-block indexed BTB row | One lookup by fetch-block PC returns per-lane CFI metadata | Good match for wide fetch; one row read can cover the packet | Row must store per-lane metadata; alignment/RVC handling is more complex |
+  | uBTB + main BTB | Fast small uBTB predicts early; larger BTB confirms or corrects later | Fast common path plus better coverage | More structures and correction/recovery complexity |
+  | Sequential single-port lane lookup | One lane checked per cycle | Simple and small | Not suitable for high-performance wide fetch |
+
+#### Concrete Fixed-Width Example
+
+```text
+fetch block PC = 0x1000
+fetch width    = 16B = four 32-bit instruction lanes
+
+lane0: 0x1000  add
+lane1: 0x1004  beq x1, x2, 0x2000     predicted not taken
+lane2: 0x1008  add
+lane3: 0x100c  jal 0x3000             always taken
+```
+
+#### Useful Metadata
+
+```text
+branch_mask = 0 1 0 0   // lane1 is a conditional branch
+cfi_idx     = 3         // lane3 is selected redirecting CFI
+cfi_type    = JAL
+target      = 0x3000
+```
+
+A fetch-block BTB row could look like:
+
+```text
+BTB row for fetch block 0x1000:
+
+valid
+tag
+lane_meta[4]
+target
+target_lane
+replacement_bits
+
+lane_meta[0] = {valid=0}
+lane_meta[1] = {valid=1, is_branch=1, is_jal=0, is_ret=0, is_indirect=0}
+lane_meta[2] = {valid=0}
+lane_meta[3] = {valid=1, is_branch=0, is_jal=1, is_ret=0, is_indirect=0}
+
+target_lane = 3
+target      = 0x3000
+```
+
+#### How Fields Are Used
+- `valid`: row contains useful prediction information.
+- `tag`: confirms the fetch-block PC matches the row and reduces aliasing.
+- `lane_meta`: identifies which lanes contain CFIs and what type they are.
+- `is_branch`: lane needs direction prediction.
+- `is_jal`: unconditional direct jump; taken is true.
+- `is_ret`: use RAS target instead of ordinary direct BTB target.
+- `is_indirect`: use indirect target predictor instead of ordinary direct
+  BTB target.
+- `target_lane`: lane whose target is stored or selected for redirect.
+- `target`: predicted next PC if the selected CFI redirects.
+- `replacement_bits`: choose a victim way when the set is full.
+
+#### Multiple-Branch Example
+
+```text
+lane0: add
+lane1: beq predicted not taken
+lane2: bne predicted not taken
+lane3: jal taken
+
+branch_mask = 0 1 1 0
+cfi_idx     = 3
+target      = jal target
+```
+
+`branch_mask` preserves the earlier conditional branches for predictor and
+global-history update even though the redirect target belongs to lane3.
+Therefore the design does not lose earlier not-taken branch information.
+
+#### BOOM-Like Reference
+- BOOM's main BTB has per-bank/lane vectors in each set/way. Conceptually,
+  `BTBMeta` stores `is_br` and `tag`, while `BTBEntry` stores a target
+  offset plus an extended-target bit.
+- BOOM-style update separates target data from metadata:
+
+  ```text
+  target write mask   = selected taken CFI lane
+  metadata write mask = target write mask OR branch_mask
+  ```
+
+- This means the target can be written for the taken CFI, while branch
+  metadata can also be written for earlier conditional branches that were
+  predicted or resolved not taken.
+
+#### Compressed-Instruction BTB Row Structure
+- With compressed instructions, do not describe the BTB as storing metadata
+  for every instruction in the cacheline. A better description is: the BTB
+  stores metadata for possible CFI positions inside a fetch block.
+- With RVC and a 16-byte fetch width, possible instruction starts are
+  halfword-aligned:
+
+  ```text
+  fetch block PC = 0x1000
+  fetch width    = 16B
+
+  slot0 = 0x1000
+  slot1 = 0x1002
+  slot2 = 0x1004
+  slot3 = 0x1006
+  slot4 = 0x1008
+  slot5 = 0x100a
+  slot6 = 0x100c
+  slot7 = 0x100e
+  ```
+
+- A fetch-block BTB row for an RVC-capable frontend could be:
+
+  ```text
+  BTBRow {
+      valid
+      tag
+
+      slot_meta[8]       // one per 16-bit position
+
+      target_slot        // which slot's target is stored/selected
+      target             // direct target or target offset
+
+      replacement_bits
+  }
+  ```
+
+- Each `slot_meta[i]` could contain:
+
+  ```text
+  is_cfi       // this halfword slot starts a known control-flow instruction
+  is_branch    // conditional branch
+  is_jal       // direct jump/call
+  is_jalr      // indirect jump/call/return
+  is_call
+  is_ret
+  inst_len     // 16b or 32b, optional but useful
+  ```
+
+- Concrete mixed RVC example:
+
+  ```text
+  0x1000: c.addi          // 16-bit
+  0x1002: c.beqz 0x1010   // 16-bit conditional branch, predicted not taken
+  0x1004: add             // 32-bit, occupies 0x1004 and 0x1006
+  0x1008: c.nop           // 16-bit
+  0x100a: jal 0x3000      // 32-bit, occupies 0x100a and 0x100c
+  0x100e: c.addi          // 16-bit
+  ```
+
+- Possible halfword slots:
+
+  ```text
+  slot0 0x1000: valid instruction start, non-CFI
+  slot1 0x1002: valid instruction start, branch
+  slot2 0x1004: valid instruction start, non-CFI, 32-bit
+  slot3 0x1006: second half of 32-bit add, not instruction start
+  slot4 0x1008: valid instruction start, non-CFI
+  slot5 0x100a: valid instruction start, JAL, 32-bit
+  slot6 0x100c: second half of JAL, not instruction start
+  slot7 0x100e: valid instruction start, non-CFI
+  ```
+
+- BTB metadata could be:
+
+  ```text
+  slot_meta[0] = {is_cfi=0}
+  slot_meta[1] = {is_cfi=1, is_branch=1, inst_len=16}
+  slot_meta[2] = {is_cfi=0, inst_len=32}
+  slot_meta[3] = {is_cfi=0, is_start=0}
+  slot_meta[4] = {is_cfi=0, inst_len=16}
+  slot_meta[5] = {is_cfi=1, is_jal=1, inst_len=32}
+  slot_meta[6] = {is_cfi=0, is_start=0}
+  slot_meta[7] = {is_cfi=0, inst_len=16}
+
+  branch_mask = 0 1 0 0 0 0 0 0
+  cfi_idx     = 5
+  target      = 0x3000
+  ```
+
+- Here, slot1 is a conditional branch predicted not taken, while slot5 is a
+  JAL that redirects fetch. `branch_mask` keeps slot1 visible for predictor
+  and history update, while `cfi_idx`/`target` identify the selected
+  redirecting CFI.
+- Many BTBs do not store all non-CFI instruction-start metadata. A more
+  storage-efficient CFI-only BTB row could be:
+
+  ```text
+  BTBRow {
+      valid
+      tag
+      cfi_valid_mask[8]      // known CFI positions
+      cfi_type[8]            // branch, JAL, JALR/indirect, return
+      cfi_is_call[8]
+      cfi_is_ret[8]
+      cfi_is_indirect[8]
+      branch_mask[8]         // conditional branch slots
+      selected_cfi_idx
+      target                 // direct target/offset for direct CFI slots
+      replacement_bits
+  }
+  ```
+
+  Target source is selected from the CFI type metadata:
+
+  ```text
+  direct branch/JAL:
+    use BTB target/offset
+
+  conditional branch:
+    use direction predictor to choose BTB target or fallthrough
+
+  return:
+    BTB marks is_ret; RAS supplies the target
+
+  indirect non-return JALR:
+    BTB marks is_indirect; indirect target predictor supplies target
+  ```
+
+- Division of responsibility:
+  - BTB remembers known CFI positions, target/type, and reusable prediction
+    information for future encounters.
+  - Predecode determines actual instruction starts and lengths from the
+    current I-cache bytes.
+  - FTQ records this dynamic prediction instance for later execute/commit
+    validation and predictor update.
+
+#### Working Example Assumptions
+
+```text
+virtual address width = 39 bits
+fetch width           = 16B
+I-cache line size     = 64B
+BTB sets              = 1024
+RVC enabled
+```
+
+#### BTB Granularity: Cacheline or Fetch Block?
+- Both are possible, but a modern wide frontend commonly organizes BTB
+  prediction around the fetch block/fetch packet, not the full I-cache line.
+- With the example settings:
+
+  ```text
+  64B cacheline = four 16B fetch blocks
+
+  0x1000-0x100f  fetch block 0
+  0x1010-0x101f  fetch block 1
+  0x1020-0x102f  fetch block 2
+  0x1030-0x103f  fetch block 3
+  ```
+
+- A 64B-line BTB row with RVC would need metadata for up to 32 halfword
+  positions. A 16B fetch-block BTB row needs metadata for up to eight
+  halfword positions. The fetch-block row is smaller and more directly
+  matches the frontend's per-cycle prediction bandwidth.
+- Tradeoff:
+  - 16B fetch-block BTB row: smaller/faster row, better timing, but more
+    rows to cover the same code footprint.
+  - 64B cacheline BTB row: fewer rows, but much larger row, more metadata
+    read per prediction, and extra sub-block selection complexity.
+- BOOM is closer to fetch-block indexed. Its frontend uses `fetchIdx(pc)`
+  based on `fetchBytes`, so the BTB row corresponds to the frontend fetch
+  packet rather than a full I-cache line.
+
+#### Concrete Bit Split With the Working Assumptions
+- With RVC, instructions are 2-byte aligned, so `PC[0]` is zero for valid
+  instruction starts.
+- A 16B fetch block has eight halfword positions:
+
+  ```text
+  PC[3:1] = halfword slot inside the 16B fetch block
+  PC[3:0] = byte offset inside the 16B fetch block
+  ```
+
+- A 64B I-cache line has four 16B fetch blocks:
+
+  ```text
+  PC[5:4] = which 16B fetch block inside the 64B line
+  PC[5:0] = byte offset inside the 64B line
+  ```
+
+- If the BTB is indexed by 16B fetch block and has 1024 sets:
+
+  ```text
+  fetch_block_pc = vpc[38:4]
+  index          = vpc[13:4]    // 10 bits for 1024 sets
+  tag            = vpc[38:14]
+  slot           = vpc[3:1]     // halfword slot inside fetch block
+  ```
+
+- If a design instead indexes by 64B line:
+
+  ```text
+  line_pc  = vpc[38:6]
+  index    = vpc[15:6]    // example 1024 sets
+  subblock = vpc[5:4]     // which 16B fetch block inside line
+  slot     = vpc[3:1]     // halfword slot inside 16B block
+  ```
+
+  The row must then store or select metadata by subblock.
+
+#### Virtual Indexing and ASID
+- Early frontend predictors usually use virtual PC bits because prediction
+  happens before or in parallel with ITLB translation.
+- Full virtual tags reduce partial-tag aliasing, but do not by themselves
+  solve context aliasing. Two address spaces can use the same virtual PC for
+  different code.
+- RISC-V has ASID in `satp`; TLB entries architecturally use address-space
+  context. BTB/RAS/predictor entries are microarchitectural, so including
+  ASID/context bits in predictor tags, flushing on context switch, or
+  partitioning predictor state are implementation choices.
+
+#### Partial Target / Offset Target
+- For direct branches and direct jumps, target is PC-relative, so a BTB can
+  often store a signed target offset instead of a full target address:
+
+  ```text
+  predicted_target = branch_pc + stored_offset
+  ```
+
+- This saves BTB storage, SRAM area, and dynamic power, but it adds target
+  reconstruction logic in the frontend.
+- Timing tradeoff:
+  - Full target: larger entry, more SRAM bits, target available directly
+    after SRAM read.
+  - Offset target: smaller entry, but needs an adder. High-performance
+    designs may pipeline the predictor, use a small offset adder, use a fast
+    uBTB, or keep an extended/full-target path for far targets.
+- BOOM's main BTB uses this flavor: `BTBEntry` stores an `offset` and an
+  `extended` bit. If the target is near enough, the target is reconstructed
+  from PC plus offset; otherwise an extended target table supplies the full
+  target.
+
+#### RISC-V Direct-Target Ranges
+- Conditional branch:
+
+  ```text
+  B-type immediate is 12-bit signed, scaled by 2 bytes
+  effective range is about +/- 4 KiB
+  ```
+
+- `JAL`:
+
+  ```text
+  J-type immediate is 20-bit signed, scaled by 2 bytes
+  effective range is about +/- 1 MiB
+  ```
+
+- `JALR`:
+
+  ```text
+  I-type immediate is 12-bit signed and added to rs1
+  target is not limited by the immediate alone because rs1 can hold any address
+  ```
+
+- Therefore compact offsets work well for many direct branches/jumps, while
+  far jumps and indirect jumps need extended/full-target handling.
+
+#### Why uBTB Can Be Faster Than Main BTB
+- A uBTB is often faster because it is smaller, has fewer entries, shorter
+  wires, fewer bits per entry, simpler target/type logic, and may be
+  implemented with flops or a small CAM-like structure instead of a larger
+  SRAM.
+- A main BTB can be slower because it is larger, more associative, has
+  larger tags/targets, more ways to compare/select, and more timing pressure
+  from target reconstruction, lane/CFI selection, and integration with other
+  predictor sources.
+- It is not always correct to say that the main BTB has more per-lane
+  metadata. Some designs use the same logical metadata fields in uBTB and
+  main BTB. The main BTB can still be slower because it has more total
+  capacity, longer wires, larger muxes, and higher associativity.
+- Other designs deliberately make the main BTB richer than the uBTB:
+
+  ```text
+  uBTB:
+    partial tag, simple target/offset, simple type/counter
+
+  main BTB:
+    stronger tag, more ways, more CFI slots per fetch block,
+    extended target handling, richer update/replacement metadata
+  ```
+
+- Therefore the safe wording is:
+
+  > The main BTB may be slower either because it is physically larger and
+  > more associative, or because it stores richer metadata. The key reasons
+  > are capacity, associativity, wire delay, muxing, tag comparison, and
+  > target-selection logic, not necessarily different metadata fields.
+
+#### Main BTB Can Take More Than One Cycle
+- A one-cycle SRAM macro does not imply the full BTB prediction is one
+  cycle. The full path may include index generation, SRAM read, tag compare,
+  way select, lane/CFI select, target offset add, RAS/indirect selection,
+  and next-PC muxing.
+- Example two/three-stage main BTB flow:
+
+  ```text
+  Cycle N:
+    receive fetch PC
+    compute index
+    start SRAM read
+
+  Cycle N+1:
+    SRAM row available
+    latch tags/data/metadata
+
+  Cycle N+2:
+    compare tags
+    select way
+    select CFI lane
+    reconstruct target from offset or read extended target
+
+  Cycle N+3:
+    final next-PC mux / redirect visible to fetch
+  ```
+
+- Conditions that push the main BTB to two or three frontend stages include
+  large capacity, high associativity, wide fetch, RVC with many possible CFI
+  halfword positions, large tags, offset-target adders, extended target
+  tables, high frequency targets, and physical-design wire delay.
+
+uBTB timing and BOOM example:
+- A one-cycle-latency uBTB does not necessarily add a frontend bubble. The
+  key is that the result for fetch block `A` arrives in time to select the
+  next F0 PC for fetch block `B`.
+- Concrete timing:
+
+  ```text
+  Cycle N:
+    F0 PC = A
+    A is sent to I-cache
+    A is sent to BPD/uBTB lookup
+
+  Cycle N+1:
+    A is in F1
+    uBTB/BPD F1 response for A says taken target = B
+    next-PC select mux chooses B as the new F0 PC
+    B is sent to I-cache and BPD/uBTB in the same cycle
+
+  Cycle N+2:
+    B is in F1
+    uBTB/BPD F1 response for B chooses the next fetch PC
+  ```
+
+- Therefore a correct F1/uBTB prediction gives one fetch-block request per
+  cycle along the predicted path. The result is one cycle after lookup
+  starts, but it arrives exactly in time to choose the next F0 request.
+- This is not a combinational loop. In cycle `N+1`, the predictor result for
+  `A` selects the F0 request for `B`; the predictor result for `B` is not
+  available until cycle `N+2`.
+- BOOM does this style:
+  - F0 `s0_vpc` drives the I-cache request and `bpd.io.f0_req`.
+  - F1 receives `bpd.io.resp.f1`, computes `f1_redirects`, and selects
+    `f1_predicted_target`.
+  - When `s1_valid` is true, BOOM assigns `s0_vpc := f1_predicted_target`,
+    so the F1 prediction feeds the current cycle's F0 request.
+  - The uBTB itself reads in F0 and produces `io.resp.f1` in F1.
+- BOOM also has later correction levels. F2 and F3 predictor/decode results
+  can clear younger fetch stages and set `s0_vpc` to a corrected target.
+  Backend redirect/flush and `sfence` paths have even higher recovery
+  priority. These correction paths create bubbles only when they override
+  earlier F1 prediction, not on the correct common uBTB path.
+- Interview wording:
+
+  > In a BOOM-like frontend, the uBTB lookup starts in F0 and the result is
+  > consumed in F1. If it predicts a taken target, that F1 result drives the
+  > next-PC mux and becomes the same cycle's new F0 request. So a correct
+  > uBTB hit does not create a bubble; later main-BTB/decode/backend
+  > corrections create bubbles only when they disagree with the early
+  > prediction.
+
+#### Multi-Level BTB: uBTB + Main BTB
+- The reason for a multi-level BTB is timing versus coverage.
+  - uBTB: small, fast, low-latency target/type prediction for the common
+    path.
+  - Main BTB: larger, better coverage, stronger tags/targets/metadata, but
+    usually later.
+- A common pipeline is:
+
+  ```text
+  F0:
+    send fetch PC to I-cache
+    send fetch PC to uBTB
+    also send fetch PC to main BTB / slower predictor bank
+
+  F1:
+    uBTB result selects next F0 PC
+    correct uBTB hit keeps fetch running with no bubble
+
+  F2/F3:
+    main BTB / slower predictor / predecode result arrives
+    if it disagrees, clear younger wrong-path fetch and redirect
+    if it agrees, no visible recovery cost
+  ```
+
+- Many designs access uBTB and main BTB in parallel from the same fetch PC.
+  The uBTB answer is consumed first; the main BTB answer is consumed later
+  as a correction or confirmation. A power-optimized design could access
+  the main BTB only after a uBTB miss, but then the miss correction is later.
+- Main BTB entries often have stronger tags than uBTB entries. For example:
+
+  ```text
+  uBTB:
+    few entries, partial tag, simple target/offset, simple type,
+    maybe a small conditional-branch counter
+
+  main BTB:
+    more entries, set associative, stronger tag, per-slot CFI metadata,
+    extended target handling, replacement metadata
+  ```
+
+  This is a common pattern, not a universal rule. The real design point is
+  chosen from timing, area, power, and target accuracy.
+
+#### Concrete Correction Cases
+
+| Case | Example | Fetch behavior | Repair / update |
+|---|---|---|---|
+| uBTB hit, main BTB agrees | uBTB and main BTB both say lane3 `jal -> 0x3000` | F1 uBTB sends fetch to `0x3000`; main BTB later confirms | No redirect; optionally refresh confidence/replacement state |
+| uBTB miss, main BTB hit | uBTB misses block `0x1000`; main BTB later finds lane2 `jal -> 0x4000` | Frontend initially follows fallthrough; F2/F3 redirects to `0x4000` | Fill uBTB from main BTB so next encounter is fast |
+| uBTB hit, target wrong | uBTB says `0x3000`; main BTB says same CFI target should be `0x5000` | F1 fetches wrong target; F2/F3 redirects to `0x5000` | Overwrite/repair uBTB target; update main BTB if main was confirmed by decode/execute |
+| uBTB hit, main BTB says different earlier CFI lane | uBTB predicts lane3 `jal`; main BTB says lane1 conditional branch is predicted taken | F1 starts lane3 target; later stage redirects to lane1 target because earliest taken CFI wins | Repair uBTB lane/type/target metadata to match the better prediction |
+| uBTB hit, main BTB misses | uBTB has a hot recent entry that main BTB does not have | Frontend uses uBTB prediction; later decode/execute validates or rejects it | If valid, main BTB may allocate for coverage; if false, clear uBTB entry |
+| uBTB false hit | uBTB predicts CFI, but predecode sees a normal `add` | Frontend may fetch wrong path for a few cycles | Clear the uBTB lane/entry; main BTB may also clear matching stale metadata |
+| Both miss, decode finds direct `JAL` | Neither BTB knows the CFI | Frontend fetches fallthrough until predecode/decode redirects | Allocate main BTB and often uBTB; no direction counter needed for unconditional jump |
+| Both miss, execute finds taken conditional branch | Conditional branch target only matters if branch resolves taken | Frontend predicts fallthrough; Execute redirects if taken | Train direction predictor; allocate/update BTB target/type if taken or policy chooses to record not-taken branches |
+
+#### Different CFI Lane Example
+
+```text
+fetch block 0x1000:
+  lane0: add
+  lane1: beq x1, x2, 0x2000     // later predictor says taken
+  lane2: add
+  lane3: jal 0x3000
+
+uBTB result in F1:
+  selected_cfi = lane3
+  target       = 0x3000
+
+main BTB / stronger predictor result in F2:
+  selected_cfi = lane1
+  target       = 0x2000
+```
+
+The main BTB result must redirect to `0x2000`, because lane1 is earlier in
+program order. The lane3 `jal` is not reached on that dynamic path if lane1
+is predicted taken. The uBTB should be repaired so that next time it does
+not skip the earlier taken CFI.
+
+#### Direction Predictor Interaction
+- BTB target/type prediction and branch direction prediction are related but
+  not identical.
+- For `JAL`, direction is always taken, so the BTB target/type is enough.
+- For conditional branches, a BTB hit tells the frontend "there is a
+  branch here and here is its target if taken." A direction predictor says
+  whether to use that target or continue fallthrough.
+- Some uBTBs include a tiny 2-bit counter for early conditional direction,
+  while a slower TAGE/gshare-like predictor may override it later.
+- Concrete example:
+
+  ```text
+  0x1004: beq x1, x2, 0x2000
+
+  F1 uBTB:
+    BTB hit, target = 0x2000
+    small counter predicts taken
+    next F0 PC = 0x2000
+
+  F2/F3 stronger predictor:
+    predicts not taken
+    corrected next PC = 0x1008
+  ```
+
+  This is a direction correction, not a target correction. The BTB target
+  can be correct while the direction prediction is wrong.
+
+#### Inclusion Policy
+- BTB hierarchies do not have to be strict cache hierarchies.
+- Inclusive style: uBTB is treated like a small hot subset of the main BTB.
+  Main BTB hits can refill uBTB, and main BTB is the more authoritative
+  source. This is simple to reason about but duplicates storage.
+- Non-inclusive style: uBTB and main BTB may be updated independently, and
+  disagreement is repaired by later validation. This gives more policy
+  freedom but needs consistency/repair logic.
+- Strict exclusive style is less common for BTBs than for data caches,
+  because the uBTB's purpose is latency, not capacity-only replacement.
+- Safe interview answer:
+
+  > I would not assume strict inclusion unless the design says so. I would
+  > model uBTB as a fast hot target cache and main BTB as a larger,
+  > later-arriving authority. On main-BTB hit and uBTB miss/stale hit, refill
+  > or repair the uBTB. On false uBTB hit, clear or overwrite it after
+  > predecode/execute/commit validation.
+
+#### Bloom-Filter Connection
+- A Bloom filter is a compact "may contain" structure built from a bit
+  vector and multiple hash functions.
+- Lookup:
+
+  ```text
+  h0 = hash0(fetch_pc)
+  h1 = hash1(fetch_pc)
+  h2 = hash2(fetch_pc)
+
+  maybe_present = bloom[h0] & bloom[h1] & bloom[h2]
+  ```
+
+- If any bit is zero, the entry is definitely not present. If all bits are
+  one, the entry may be present; false positives are possible.
+- In a frontend, a Bloom-like filter can be used as a cheap branch/BTB
+  presence filter:
+
+  ```text
+  if bloom says definitely no BTB entry:
+      skip or gate expensive main-BTB access
+  else:
+      access main BTB
+  ```
+
+- Benefit: saves main-BTB power or avoids unnecessary slower lookup work.
+- Risk: false positives waste work. False negatives are normally not allowed
+  for a predictor filter unless the design can tolerate missing a useful
+  prediction, so updates/deletions must be handled carefully.
+
+#### Fully Associative uBTB / CAM-Style Lookup
+- A small fully associative uBTB is commonly implemented like a small
+  CAM-like structure:
+
+  ```text
+  request_tag = fetch_pc_tag
+
+  hit[0]  = valid[0]  && entry[0].tag  == request_tag
+  hit[1]  = valid[1]  && entry[1].tag  == request_tag
+  ...
+  hit[15] = valid[15] && entry[15].tag == request_tag
+
+  hit_vec = {hit[15], ..., hit[0]}
+  selected_entry = one_hot_mux(hit_vec, entry)
+  ```
+
+- This works well for small structures because all tags can be compared in
+  parallel with short wires. It does not scale well to large BTBs because
+  many parallel comparators and a large target mux cost too much area, power,
+  and timing.
+- Common high-performance pattern:
+
+  ```text
+  uBTB:     small, sometimes fully associative or lightly associative
+  main BTB: larger, usually set-associative SRAM
+  ```
+
+#### Finding an Empty Entry / Allocation Hardware
+- Small structures often find an empty entry by checking all valid bits in
+  parallel and using a priority encoder, not by sequential software-style
+  scanning.
+- Example 8-entry MSHR or small uBTB:
+
+  ```text
+  valid = 1 1 0 1 0 1 1 0
+  free  = 0 0 1 0 1 0 0 1
+
+  alloc_idx = priority_encode(free) = 2
+  ```
+
+- Hardware blocks:
+
+  ```text
+  valid-bit vector
+  invert to get free vector
+  priority encoder / leading-zero detector
+  one-hot decoder for write enable
+  ```
+
+- For lookup in associative structures, hardware also uses parallel
+  comparators:
+
+  ```text
+  hit[i] = valid[i] && entry[i].tag == request_tag
+  ```
+
+- Example MSHR behavior:
+
+  ```text
+  hit[i] = valid[i] && mshr[i].block_addr == request.block_addr
+
+  if any hit:
+      merge with existing MSHR
+  else if any free:
+      allocate priority_encode(free)
+  else:
+      stall, retry, or drop depending on request type
+  ```
+
+- For larger structures, designers avoid full scans and use set-associative
+  indexing, free lists, bitmaps, round-robin pointers, pseudo-LRU trees, or
+  other replacement metadata.
+
+#### Remaining BTB Review Questions
+
+BTB update timing:
+- Is the BTB updated when PreDecode discovers a branch?
+- Is it updated at Execute when the real branch target is known?
+- Is it updated only at Commit to avoid wrong-path pollution?
+- What are the tradeoffs between early update and commit-only update?
+- RSD anchor: current decoupled BPU updates BTB from committed, resolved,
+  taken branch metadata.
+
+BTB partial target and partial tag:
+- RSD stores a partial BTB tag and partial target bits.
+- This is not because all branches have small architectural offsets; it is a
+  storage/latency/energy tradeoff.
+- Need to understand what happens for long jumps, indirect jumps, calls,
+  returns, and far targets when upper target bits differ from the current PC.
+- Need to distinguish partial target aliasing from BTB tag aliasing.
+
+### 3. Direction Prediction, Speculative History, and Update Lifecycle
+
+- Direction predictors decide taken/not-taken; BTB/FTB/RAS/indirect predictors provide targets and CFI type.
+- The important interview distinction is target/type metadata versus direction-counter training.
+- This section is the bridge into the next topic: TAGE direction prediction.
+
+Review questions:
+
+- What happens if multiple branch instructions are in one fetch line?
+- What happens on BTB miss: do we simply predict fall-through?
+- How does earliest-taken-lane selection work?
+- How would this change with TAGE instead of gshare?
+- When should the frontend learn that a predicted non-branch was actually a
+  branch: PreDecode, Execute, Commit, or some hybrid?
+- RSD anchor: current predictor update is commit-driven; BTB updates only
+  for resolved taken branches.
+
+#### Speculative Versus Non-Speculative Updates
+- High-performance cores usually speculate the state needed for the next
+  prediction immediately, but are more selective about durable table
+  training.
+- Clean rule:
+
+  ```text
+  speculative update:
+    update state needed by younger predictions now
+
+  durable training:
+    update learned predictor tables when outcome/target is known,
+    either at execute/resolve for faster learning or at commit for cleaner
+    non-speculative training
+  ```
+
+- Examples:
+
+  | Structure | Speculative update? | Typical timing | Reason |
+  |---|---:|---|---|
+  | GHR / global history | Yes | prediction/fetch | Younger branches need predicted history immediately |
+  | Path/folded history | Yes | prediction/fetch | TAGE/gshare-style indexes need recent speculative path |
+  | Local branch history | Often | prediction/fetch or decode | Younger local-history predictions benefit from recent predicted outcomes |
+  | RAS pointer/top | Yes | predicted call/return | Return targets need stack state before execute |
+  | FTQ prediction record | Yes | fetch packet creation | Records what this prediction instance did |
+  | uBTB refill/repair | Often | main-BTB/predecode correction | Improves next encounter quickly |
+  | Direct `JAL` BTB repair | Often | predecode/decode | Target and taken behavior are known from instruction bits |
+  | False BTB-hit clear | Often | predecode/decode | Instruction bits prove stale metadata |
+  | Direction counters / TAGE tables | Sometimes | execute/resolve or commit | Actual outcome is needed |
+  | Indirect target table | Sometimes | execute/resolve or commit | Actual register target is needed |
+
+- GHR example:
+
+  ```text
+  GHR = 1010
+
+  fetch branch B:
+    predictor says taken
+    speculative GHR = 10101
+
+  younger branch C:
+    indexes predictor using 10101
+
+  if B later resolves not taken:
+    restore checkpoint before B = 1010
+    apply actual B outcome = 0
+    corrected GHR = 10100
+    redirect fetch
+  ```
+
+#### BTB Allocation/Update Timing Working Rule
+- For a conservative performance model:
+
+  ```text
+  update/allocate most BTB and direction-predictor entries at commit
+  ```
+
+  This avoids wrong-path pollution and is easy to reason about.
+- For a high-performance frontend:
+
+  | Instruction/event | Earliest useful BTB action | Why |
+  |---|---|---|
+  | Direct `JAL` / direct call | predecode/decode allocate or repair | Target and taken behavior are known immediately |
+  | Conditional branch | execute/resolve, or commit in conservative design | Direction is known only after condition resolves |
+  | Indirect `JALR` | decode can learn type; execute/commit updates target predictor | Target depends on register value |
+  | Return | decode can learn `is_ret`; RAS supplies target | BTB stores type/source, not the dynamic return target |
+  | False BTB hit | predecode/decode clear or repair | Instruction bits prove it is not a CFI |
+
+- Safe interview wording:
+
+  > For a conservative model, I can train BTB entries at commit. Real
+  > high-performance frontends often add fast repair paths: direct `JAL` and
+  > false BTB-hit cleanup at predecode/decode, conditional taken-branch
+  > repair after execute, and indirect target training after execute or
+  > commit.
+
+#### BTB Case and Update-Timing Table
+- Separate three moments:
+  - Detection: when the core discovers what happened.
+  - Redirect/recovery: when fetch is corrected.
+  - Predictor update/training: when predictor tables are actually changed.
+- Conservative designs may redirect early but update predictor tables at
+  commit. More aggressive designs may add fast repair paths before commit
+  for obvious BTB mistakes, plus recovery machinery to avoid wrong-path
+  pollution.
+
+| Case | Example | Detected at | Redirect at | BTB update timing | Direction-counter update timing | Invalidate / clear BTB? |
+|---|---|---|---|---|---|---|
+| BTB miss on direct `JAL` | `jal 0x3000`, BTB missed | Predecode/decode sees `JAL` and immediate target | Predecode/decode can redirect immediately | Fast repair at predecode/decode, or safer update at commit | None; `JAL` is unconditional | No |
+| BTB miss on conditional branch, actual not taken | `beq`, BTB missed, actual not taken | Decode sees branch/target; Execute resolves not taken | No redirect if fallthrough is already fetched | Usually commit updates branch metadata; target allocation may be skipped or lower priority if not taken | Outcome known at Execute; train at commit or speculative update with recovery | No |
+| BTB miss on conditional branch, actual taken | `beq`, BTB missed, actual taken | Decode sees branch/target; Execute resolves taken | Execute redirects to target | Execute can send repair/allocation; conservative update at commit | Outcome known at Execute; train at commit or speculative update with recovery | No |
+| BTB hit, target wrong for direct `JAL` | BTB says `0x2000`, actual JAL target is `0x3000` | Predecode/decode computes target mismatch | Predecode/decode can redirect | Fast BTB repair can happen from predecode/decode; otherwise commit update | None | Usually repair target, not invalidate whole entry |
+| BTB hit, target wrong for conditional branch, actual taken | BTB target wrong, branch taken | Decode computes direct target; Execute confirms taken | Execute redirects to correct target | Execute can repair target after resolution; commit can do final training | Outcome known at Execute; train at commit or speculative update with recovery | Usually repair |
+| BTB hit, target wrong for conditional branch, actual not taken | BTB target wrong, branch not taken | Decode computes direct target; Execute resolves not taken | Redirect only if frontend predicted taken | Target update optional; usually commit if updating at all | Outcome known at Execute; train not-taken at commit/speculative update | No |
+| BTB hit, target correct, predicted taken but actual not taken | `beq` predicted taken to correct target, actual not taken | Execute resolves condition | Execute redirects to fallthrough | No target update needed | Outcome known at Execute; train at commit or speculative update with recovery | No |
+| BTB hit, target correct, predicted not taken but actual taken | `beq` predicted not taken, actual taken | Execute resolves condition | Execute redirects to BTB target | No target update needed if target is correct | Outcome known at Execute; train at commit or speculative update with recovery | No |
+| False BTB hit: predicted CFI but actual non-CFI | BTB says branch/JAL; instruction is `add` | Predecode/decode sees actual instruction is not CFI | Predecode/decode redirects to correct fallthrough if wrong path was fetched | Clear/invalidate BTB lane as fast repair, or delay cleanup until commit for safety | None | Yes, clear CFI metadata or invalidate matching lane/entry |
+| Wrong CFI type | BTB says return, actual is branch/JAL/JALR | Predecode/decode sees type mismatch | Predecode/decode may redirect if predicted source was wrong; JALR target may still wait until Execute | Type metadata repair can happen early; final non-speculative update at commit | Only if actual instruction is conditional branch | Maybe clear old type or overwrite with correct type |
+| Indirect/JALR target wrong | `jalr` predicted `0x8000`, actual register target `0x9000` | Execute computes actual target | Execute redirects | Update indirect predictor / BTB type after Execute; final training may be commit-based | Usually none | Usually repair target predictor, not invalidate BTB type |
+| Return target wrong | RAS predicts `0x2000`, actual return target is `0x3000` | Execute computes actual JALR target | Execute redirects | BTB type may still be correct as return; repair RAS/checkpoint state, maybe update return metadata at commit | None | Usually no BTB invalidation unless type was wrong |
+
+#### Clean Mental Model
+- BTB target/type update answers: does this PC/fetch slot contain a CFI, what
+  type is it, and what target should be used?
+- Direction-counter update answers: for a conditional branch, should we
+  predict taken or not taken?
+- Examples:
+  - `JAL`: update BTB target/type, no direction counter.
+  - Conditional branch direction wrong but target correct: update direction
+    counter, usually no BTB target update.
+  - Conditional branch target wrong and branch taken: update both BTB target
+    and direction counter.
+  - False BTB hit on non-CFI: clear/invalidate BTB metadata, no direction
+    counter update.
+
+#### BOOM-Like Reference
+- BOOM frontend F3 performs lightweight branch decode from returned
+  instruction bits. It can identify CFI type, compute direct targets, build
+  `br_mask`/`cfi_idx`, and detect some BTB target mismatches such as direct
+  JAL target mismatch.
+- BOOM's FTQ stores dynamic prediction metadata such as PC, branch mask,
+  CFI index/type, history, and predictor metadata.
+- BOOM's BTB update logic uses the useful separation:
+
+  ```text
+  target write mask   = selected taken CFI lane
+  metadata write mask = target write mask OR branch_mask
+  ```
+
+  This lets the target be written for the redirecting CFI while branch
+  metadata can also be written for earlier conditional branches that were
+  resolved not taken.
+
+### 4. Return Address Stack and Speculative Repair
+
+- RAS predicts return targets by exploiting call/return stack behavior.
+- The hard part is not the stack push/pop itself; it is speculative update and repair on squash.
+
+- A return is an indirect jump, so waiting for register read and execute would
+  be too late for a high-performance frontend.
+- Concrete call/return sequence:
+
+  ```text
+  0x1000: jal  ra, foo       // call; return address is 0x1004
+  ...
+  0x3000: ret                // jalr x0, 0(ra)
+  ```
+
+  On the call, frontend pushes `0x1004`. On the return, frontend predicts
+  the target from the top of the RAS.
+
+#### RAS Pointer Convention
+- A simple mental model is:
+
+  ```text
+  ras[N]     // array of predicted return addresses
+  ras_idx    // index of current top valid return address
+
+  current predicted return target = ras[ras_idx]
+  ```
+
+- Push on call:
+
+  ```text
+  write_idx = ras_idx + 1
+  ras[write_idx] = call_pc + instruction_length
+  ras_idx = write_idx
+  ```
+
+- Pop on return:
+
+  ```text
+  predicted_target = ras[ras_idx]
+  ras_idx = ras_idx - 1
+  ```
+
+- Some designs keep a count, valid bits, or underflow/overflow state.
+  Others use a circular pointer and tolerate overflow/underflow as
+  prediction errors. RAS is predictor state, not architectural state.
+
+#### Data/Control Flow for a Known Call
+
+```text
+fetch PC
+  -> BTB/uBTB lookup says slot i is_call
+  -> frontend computes return_pc = call_pc + 2 or +4
+  -> frontend speculatively pushes return_pc into RAS
+  -> frontend updates speculative ras_idx = ras_idx + 1
+  -> FTQ records the packet and the RAS checkpoint
+```
+
+#### Data/Control Flow for a Known Return
+
+```text
+fetch PC
+  -> BTB/uBTB lookup says slot i is_ret
+  -> RAS supplies target = ras[ras_idx]
+  -> frontend redirects next PC to that target
+  -> frontend speculatively updates ras_idx = ras_idx - 1
+  -> FTQ records the packet and the RAS checkpoint
+```
+
+#### How Call/Return Is Determined
+- First encounter:
+
+  ```text
+  I-cache bytes return
+  predecode / branch decode reads actual instruction bits
+  identify call, return, direct jump, indirect jump, or normal branch
+  repair or allocate BTB/uBTB metadata
+  ```
+
+- Future encounters:
+
+  ```text
+  BTB/uBTB metadata already says this slot is_ret or is_call
+  frontend can use RAS early
+  predecode/decode later confirms or repairs the metadata
+  ```
+
+- Therefore the earliest RAS usage normally depends on BTB/uBTB CFI
+  metadata. Fresh decode is needed for validation and first-time learning,
+  but it is too late to be the only source for every return prediction.
+
+#### RISC-V Call/Return Hints
+- `JAL` has `rd`, but no `rs1` or `rs2`.
+
+  ```text
+  jal x1, foo      // normal call; push PC+4
+  jal x5, foo      // alternate-link call; push PC+4
+  jal x0, target   // plain jump; no RAS push
+  ```
+
+- `JALR` has `rd` and `rs1`, but no `rs2`.
+
+  ```text
+  jalr x0, 0(x1)   // return; pop RAS
+  jalr x0, 0(x5)   // alternate-link return; pop RAS
+  ```
+
+- Full RISC-V RAS hints use whether `rd` and/or `rs1` are link registers
+  (`x1` or `x5`) to choose no action, push, pop, or pop-then-push.
+- BOOM's branch-decode path is simpler than the full hint table: it marks
+  calls mainly when `rd == x1`, and returns when `JALR`, `rd == x0`, and
+  `rs1` is `x1` or `x5`. That covers common ABI call/return cases but not
+  every alternate-link/coroutine hint case.
+
+#### What FTQ Stores for RAS Repair
+- One FTQ entry corresponds to a dynamic fetch packet/fetch target, not one
+  branch instruction.
+- The FTQ entry stores checkpoint-like predictor state for that packet:
+
+  ```text
+  fetch_pc
+  mask
+  br_mask
+  cfi_idx
+  cfi_type
+  cfi_is_call
+  cfi_is_ret
+  cfi_taken
+  predictor history/meta
+  ras_idx
+  ras_top
+  ```
+
+- `ras_idx` is the pointer snapshot.
+- `ras_top` is the return address value at that pointer.
+- The snapshot is not "the last committed RAS state." It is the speculative
+  RAS state at this fetch-packet boundary, valid only if all older FTQ
+  entries remain on the correct path.
+
+Why save both `ras_idx` and `ras_top`?
+- Restoring only the pointer can be wrong if wrong-path calls overwrite the
+  old top entry.
+- Concrete wraparound example with a four-entry RAS:
+
+  ```text
+  correct state before wrong path:
+    ras_idx = 1
+    ras[1]  = 0x9004
+
+  FTQ checkpoint saves:
+    ras_idx = 1
+    ras_top = 0x9004
+
+  wrong path:
+    call A -> ras[2] = 0x1008, ras_idx = 2
+    call B -> ras[3] = 0x2008, ras_idx = 3
+    call C -> ras[0] = 0x3008, ras_idx = 0
+    call D -> ras[1] = 0x4008, ras_idx = 1   // overwrote old top
+
+  recovery:
+    restore ras_idx = 1
+    restore ras[1]  = 0x9004
+  ```
+
+- Without `ras_top`, restoring `ras_idx = 1` would still leave the wrong
+  return target `0x4008` at the restored top.
+
+#### Speculative Snapshot Chain
+- FTQ/RAS snapshots are conditional checkpoints:
+
+  ```text
+  committed RAS
+    -> FTQ E0 snapshot/effect
+    -> FTQ E1 snapshot/effect
+    -> FTQ E2 snapshot/effect
+    -> current speculative RAS
+  ```
+
+- If an older redirect invalidates `E1`, then `E1`, `E2`, and younger
+  snapshots are discarded. A snapshot on a flushed path is not used.
+- If recovery redirects at `E1`, the frontend restores to the correct RAS
+  state at `E1` and discards younger wrong-path entries.
+- This is why the snapshot does not have to be committed. It only has to be
+  valid relative to the still-valid older speculative path.
+
+#### Partial FTQ-Entry Recovery
+- FTQ entries are packet-level, but recovery can be lane-granular inside the
+  packet. Instructions before the resolving CFI are still valid; younger
+  lanes after a taken/mispredicted CFI are killed.
+- Concrete 16B fetch packet:
+
+  ```text
+  FTQ entry E7, fetch PC = 0x1000
+
+  lane0: 0x1000 add
+  lane1: 0x1004 add
+  lane2: 0x1008 beq x1, x2, 0x2000   // resolves taken
+  lane3: 0x100c add                  // wrong path if branch taken
+  ```
+
+  If lane2 was predicted not taken but resolves taken:
+
+  ```text
+  keep:
+    lane0
+    lane1
+    lane2 branch
+
+  kill:
+    lane3
+    all younger FTQ entries
+  ```
+
+- Predictor/RAS recovery is:
+
+  ```text
+  restored state =
+    checkpoint before this FTQ entry
+    + effects of valid lanes up to the resolving CFI
+  ```
+
+BOOM reference:
+- BOOM's `BoomRAS` is a register-vector target array with read/write index;
+  the speculative pointer is carried in `GlobalHistory.ras_idx`, not as a
+  standalone counter inside the RAS module.
+- BOOM's FTQ stores `ras_idx` and `ras_top` with each fetch-target entry.
+- On redirect, BOOM can restore the RAS top from FTQ metadata and redirect
+  the frontend with a corrected `GlobalHistory` containing the repaired
+  `ras_idx`.
+- RSD anchor: the inspected RSD decoupled frontend does not implement RAS,
+  so discuss RAS as a standard high-performance frontend feature rather
+  than as current RSD RTL behavior.
+
+### 5. Indirect Target Prediction: Seznec ITTAGE and XiangShan RTL
+
+- Non-return indirect branches can map one PC to many targets, so a last-target BTB is not enough.
+- ITTAGE uses `PC + path/history context -> target`, analogous to TAGE using `PC + history -> direction`.
+
+- A non-return indirect branch, such as a virtual call, function-pointer
+  jump, or switch dispatch, can have multiple targets from the same PC.
+- A normal BTB often degenerates into:
+
+  ```text
+  PC -> last target
+  ```
+
+  That misses when the same indirect PC alternates among targets.
+- An indirect target predictor uses:
+
+  ```text
+  PC + path/history context -> target
+  ```
+
+  so the same indirect PC can learn different targets under different
+  calling/path contexts.
+
+#### Seznec CBP3 ITTAGE Structure
+- Seznec's original `A 64-Kbytes ITTAGE indirect branch predictor` is a C/C++
+  competition simulator implementation, not RTL.
+- It is TAGE-like in table organization, but the prediction is a target
+  address rather than taken/not-taken direction.
+- Each global table entry is:
+
+  ```cpp
+  class gentry {
+    int8_t   ctr;     // 2-bit confidence counter for target
+    uint16_t tag;     // partial tag
+    uint32_t target;  // compressed target
+    int8_t   u;       // 1-bit useful/replacement protection
+  };
+  ```
+
+- Important fields:
+
+  ```text
+  ctr = confidence in this target, not direction
+  tag = partial PC/history tag
+  target = predicted indirect target, compressed
+  u = useful bit; 0 means replaceable, 1 means protected
+  ```
+
+- Seznec uses logical tables `T0..T15`:
+
+  ```text
+  T0      tagless base target table
+  T1-T15  tagged ITTAGE tables
+  ```
+
+- Table parameters:
+
+  ```text
+  m[i]     = history length used by table i
+  logg[i]  = index bits for table i
+  TB[i]    = partial tag bits for table i
+  ```
+
+- Example:
+
+  ```text
+  T3:
+    m[3]    = 16   // use newest 16 encoded path-history bits
+    logg[3] = 12   // 12-bit index = 4096 possible indexes
+    TB[3]   = 13   // 13-bit partial tag
+  ```
+
+- `ghist[4096]` is one shared global circular history buffer. Each entry is
+  one path-history bit. Tables do not own separate histories; they read or
+  fold different-length windows from the same global history:
+
+  ```text
+  T1 uses newest 0 bits
+  T2 uses newest 10 bits
+  T3 uses newest 16 bits
+  ...
+  T15 uses newest 3881 bits
+  ```
+
+#### How Seznec Path-History Bits Are Formed
+- For calls and indirect branches, Seznec injects bits derived from the PC
+  and target:
+
+  ```cpp
+  PATH = target ^ (target >> 3) ^ pc;
+  ```
+
+- In the code:
+
+  ```text
+  indirect branch -> insert 10 low bits of PATH
+  call            -> insert 5 low bits of PATH
+  ```
+
+- The bits are inserted LSB-first into the circular global history. The
+  physical implementation moves a pointer, not a 4096-bit shift register:
+
+  ```cpp
+  P = PATH & 1;
+  PATH >>= 1;
+  Y--;
+  ghist[Y & 4095] = P;
+  ```
+
+- Concrete indirect example:
+
+  ```text
+  PC     = 0x1008
+  target = 0x4000
+
+  target >> 3 = 0x0800
+  PATH = 0x4000 ^ 0x0800 ^ 0x1008 = 0x5808
+
+  low 10 bits of PATH, inserted LSB-first:
+    [0, 0, 0, 1, 0, 0, 0, 0, 0, 0]
+  ```
+
+- Concrete call example:
+
+  ```text
+  PC     = 0x1000
+  target = 0x401234
+
+  target >> 3 = 0x080246
+  PATH = 0x401234 ^ 0x080246 ^ 0x1000 = 0x480072
+
+  low 5 bits inserted LSB-first:
+    [0, 1, 0, 0, 1]
+  ```
+
+- A call can update both RAS and path history. RAS predicts future returns;
+  path history records caller/path context for later indirect target
+  prediction. These are different uses of the same call event.
+
+#### Folded Histories
+- For each table, Seznec maintains three folded versions of the newest
+  `m[i]` bits:
+
+  ```text
+  Fetch_ch_i[i]       // folded history for index
+  Fetch_ch_t[0][i]    // folded history for tag
+  Fetch_ch_t[1][i]    // second folded history for tag
+  ```
+
+- The second tag folded history is not the alternate predictor. It is only a
+  second differently-sized hash input to reduce tag aliasing.
+- For `T3`, the same newest 16 path-history bits are folded three ways:
+
+  ```text
+  index folded history: 16 bits -> 12 bits
+  tag folded history 0: 16 bits -> 13 bits
+  tag folded history 1: 16 bits -> 12 bits
+  ```
+
+- Conceptually, folding XORs wrapped history chunks. Folding 16 bits into
+  12 bits can be viewed as:
+
+  ```text
+  f0  = h0  XOR h12
+  f1  = h1  XOR h13
+  f2  = h2  XOR h14
+  f3  = h3  XOR h15
+  f4  = h4
+  ...
+  f11 = h11
+  ```
+
+#### Seznec Index and Tag Generation
+- For every table, Seznec computes a table-specific index and tag:
+
+  ```cpp
+  GI[i] =
+      pc
+    ^ (pc >> (abs(logg[i] - i) + 1))
+    ^ folded_index_history[i];
+
+  GI[i] &= (1 << logg[i]) - 1;
+
+  GTAG[i] =
+      pc
+    ^ folded_tag_history0[i]
+    ^ (folded_tag_history1[i] << 1);
+
+  GTAG[i] &= (1 << TB[i]) - 1;
+  ```
+
+- Dynamic inputs are essentially `PC` and path history. The table constants
+  `m[i]`, `logg[i]`, `TB[i]`, and shift amounts choose how that information
+  is hashed.
+- Same PC plus same history regenerates the same `GI`/`GTAG` and hits the
+  same entry. Same PC plus different history likely maps elsewhere, allowing
+  multiple targets for one indirect PC.
+
+#### Concrete Zero-History Example
+
+```text
+PC = 0x1008
+folded histories are all zero
+
+T1:
+  logg[1] = 12
+  TB[1]   = 9
+  shift   = abs(12 - 1) + 1 = 12
+
+  raw GI1 = (0x1008 ^ (0x1008 >> 12)) & 0xfff
+          = (0x1008 ^ 0x1) & 0xfff
+          = 0x009
+
+  GTAG1  = 0x1008 & 0x1ff
+         = 0x008
+
+T3:
+  logg[3] = 12
+  TB[3]   = 13
+  shift   = abs(12 - 3) + 1 = 10
+
+  GI3    = (0x1008 ^ (0x1008 >> 10)) & 0xfff
+         = 0x00c
+
+  GTAG3  = 0x1008 & 0x1fff
+         = 0x1008
+```
+
+#### Logical Versus Physical Tables
+- `GI` is an array; table `Ti` uses `GI[i]` and `GTAG[i]`:
+
+  ```cpp
+  entry = gtable[i][GI[i]];
+  hit   = entry.tag == GTAG[i];
+  ```
+
+- Seznec saves storage by sharing some physical arrays among multiple
+  logical tables:
+
+  ```text
+  T1 and T2 share one physical 4096-entry table
+  T3 through T10 share one physical 4096-entry table
+  T11 through T15 share one physical 2048-entry table
+  ```
+
+- A logical table is a history length/view. A physical table is the actual
+  allocated array. Sharing saves storage but increases aliasing.
+
+#### Provider and Alternate Selection
+- Prediction searches from longest to shortest:
+
+  ```text
+  HitBank = longest-history table whose tag matches
+  AltBank = next shorter-history table whose tag matches
+  ```
+
+- `T0` is tagless, so it acts like a base PC-indexed target table. On cold
+  start it may predict `0x0` in the simulator, but real hardware would
+  normally gate target prediction with valid BTB/FTB metadata.
+- Normally use the provider target. If the provider is newly allocated or
+  weak (`ctr == 0`), Seznec may use the alternate target depending on a
+  global signed counter:
+
+  ```text
+  USE_ALT_ON_NA >= 0:
+    weak provider uses alternate
+
+  USE_ALT_ON_NA < 0:
+    weak provider is trusted
+  ```
+
+- `USE_ALT_ON_NA` is global, not per-entry. It is updated when a weak
+  provider and alternate disagree and one is correct:
+
+  ```text
+  alternate correct, provider wrong -> USE_ALT_ON_NA++
+  provider correct, alternate wrong -> USE_ALT_ON_NA--
+  ```
+
+#### Target Reconstruction in Seznec
+- Seznec compresses the target as:
+
+  ```text
+  entry.target = {7-bit region pointer, 18-bit offset}
+  rtable[region_pointer] = upper target bits
+  ```
+
+- Prediction reconstructs:
+
+  ```text
+  full_target =
+    (rtable[pointer].region << 18) | offset
+  ```
+
+- Example:
+
+  ```text
+  full target = 0x812340
+  offset      = 0x812340 & 0x3ffff = 0x12340
+  region      = 0x812340 >> 18     = 0x20
+
+  if rtable[5].region = 0x20:
+    entry.target = (5 << 18) | 0x12340
+    prediction   = (0x20 << 18) | 0x12340 = 0x812340
+  ```
+
+- On target storage, the region table is searched associatively for matching
+  upper bits. If no entry is found, a free region entry is allocated. If the
+  region table is full, Seznec uses a crude replacement policy; old predictor
+  entries pointing to the replaced region pointer can reconstruct wrong
+  targets and will be corrected by later training.
+
+#### Seznec Update Behavior
+- If provider target is correct:
+
+  ```text
+  provider.ctr++
+  ```
+
+- If provider target is wrong:
+
+  ```text
+  if provider.ctr > 0:
+    provider.ctr--
+    keep old target
+
+  if provider.ctr == 0:
+    replace provider target with actual target
+  ```
+
+- Useful bit:
+
+  ```text
+  if provider target == actual target
+  and provider target != alternate target:
+    provider.u = 1
+  ```
+
+  This means the provider added value over the shorter-history alternate.
+- Allocation occurs when the provider target was wrong:
+
+  ```text
+  start at HitBank + 1
+  scan longer-history tables
+  allocate only entries with u == 0
+  allocate up to three entries
+  initialize ctr = 0, u = 0, target = actual target
+  ```
+
+- If candidate entries are protected with `u == 1`, allocation skips them.
+  Repeated allocation failures increase `TICK`; when `TICK` saturates,
+  Seznec clears all useful bits so entries become replaceable again.
+
+#### Repeated-Pattern Seznec Example
+- Same indirect PC:
+
+  ```text
+  PC = 0x1008
+  ```
+
+- Actual targets repeat:
+
+  ```text
+  A = 0x4010
+  B = 0x5234
+  C = 0x6abc
+  D = 0x7def
+
+  dynamic sequence:
+    A, B, C, D, A, B, C, D, ...
+  ```
+
+- Cold state:
+
+  ```text
+  all table targets = 0
+  all ctr = 0
+  all u = 0
+  USE_ALT_ON_NA = 0
+  path history = 0
+  ```
+
+- Warmup behavior:
+
+  ```text
+  #1 actual A:
+    T0 predicts 0 -> miss
+    allocate T1/T3/T5 with target A
+    T0 target becomes A
+
+  #2 actual B:
+    T1 hits because T1 uses little/no history
+    T1 predicts A -> miss
+    allocate T2/T4/T6 with target B
+    T1 target becomes B
+
+  #3 actual C:
+    T1 predicts B or alternate predicts A -> miss
+    allocate longer-history entries for C
+    T1 target becomes C
+
+  #4 actual D:
+    miss again while useful context entries are being created
+  ```
+
+- Once the pattern repeats, same history contexts regenerate the same
+  `GI`/`GTAG` values:
+
+  ```text
+  context before A -> ITTAGE entry predicts A
+  context before B -> ITTAGE entry predicts B
+  context before C -> ITTAGE entry predicts C
+  context before D -> ITTAGE entry predicts D
+  ```
+
+- After repetition and confidence updates:
+
+  ```text
+  A context: provider predicts 0x4010, ctr reaches 3
+  B context: provider predicts 0x5234, ctr reaches 3
+  C context: provider predicts 0x6abc, ctr reaches 3
+  D context: provider predicts 0x7def, ctr reaches 3
+  ```
+
+- This is the central value of ITTAGE:
+
+  ```text
+  BTB:
+    PC 0x1008 -> last target
+
+  ITTAGE:
+    PC 0x1008 + path context A -> 0x4010
+    PC 0x1008 + path context B -> 0x5234
+    PC 0x1008 + path context C -> 0x6abc
+    PC 0x1008 + path context D -> 0x7def
+  ```
+
+#### Inflight Update Mechanism (IUM)
+- Seznec also includes an `IUM` path. It is a small forwarding/bypass
+  mechanism for indirect target updates.
+- Problem:
+
+  ```text
+  iteration 1 of indirect PC 0x1008 resolves target
+  iteration 2 fetches PC 0x1008 before iteration 1 retires and updates tables
+  ```
+
+- IUM records the newer target for the provider entry, identified by:
+
+  ```text
+  IumTag = HitBank + (GI[HitBank] << 4)
+  ```
+
+- If a later prediction uses the same in-flight provider/index, IUM returns
+  the newer target before the main table has been architecturally updated.
+
+#### XiangShan ITTAGE RTL Structure
+- XiangShan's ITTAGE is Chisel RTL and is more hardware-realistic than the
+  Seznec simulator in a few ways.
+- Key difference:
+
+  ```text
+  Seznec:
+    ITTAGE has tagless T0 base target table
+
+  XiangShan:
+    ITTAGE has no internal tagless target table
+    base target comes from BTB/FTB
+    ITTAGE overrides only when it hits
+  ```
+
+- Final frontend target priority is:
+
+  ```text
+  return:
+    use RAS target
+
+  non-return indirect and ITTAGE hit:
+    use ITTAGE target
+
+  otherwise taken CFI:
+    use BTB/FTB target
+
+  otherwise:
+    use fallthrough
+  ```
+
+- XiangShan default ITTAGE tables:
+
+  ```text
+  T0: 256 entries, history length 4
+  T1: 256 entries, history length 8
+  T2: 512 entries, history length 13
+  T3: 512 entries, history length 16
+  T4: 512 entries, history length 32
+  ```
+
+  This `T0` is a tagged ITTAGE table, not Seznec's tagless base table.
+
+- Entry structure:
+
+  ```scala
+  class IttageEntry {
+    valid
+    tag
+    confidenceCnt
+    targetOffset
+    usefulCnt
+  }
+  ```
+
+#### XiangShan Path History
+- XiangShan uses a PHR (predicted history register) and folded PHR values
+  for ITTAGE.
+- Path hash:
+
+  ```scala
+  pathHash(pc, target) =
+    Cat(pc(9,1), 0.U(4.W)) ^ target(16,2)
+  ```
+
+- `0.U(4.W)` is a 4-bit zero constant in Chisel. So this is equivalent to:
+
+  ```text
+  ((pc bits [9:1]) << 4) XOR target bits [16:2]
+  ```
+
+#### XiangShan Index and Tag Generation
+- With RVC enabled, `instOffsetBits = 1` globally because valid instruction
+  starts are halfword-aligned. It is not dynamically `1` for compressed
+  instructions and `2` for 32-bit instructions.
+- Each table computes:
+
+  ```scala
+  unhashedIdx = startPc >> instOffsetBits
+
+  bankIdx    = low bank bits of unhashedIdx
+  setIdxBase = next set-index bits of unhashedIdx
+  tagBase    = upper bits of unhashedIdx
+
+  setIdx = setIdxBase ^ indexFoldedHistory
+  tag    = tagBase ^ tagFoldedHistory ^ (altTagFoldedHistory << 1)
+  ```
+
+- For each table, all three folded values come from the same PHR source and
+  same table history length:
+
+  ```text
+  index folded history:
+    newest history bits -> set index width
+
+  tag folded history:
+    newest history bits -> tag width
+
+  alt tag folded history:
+    newest history bits -> tag width - 1
+  ```
+
+- Concrete cold example:
+
+  ```text
+  startPc = 0x1008
+  RVC enabled -> instOffsetBits = 1
+  NumBanks = 2
+  unhashedIdx = 0x1008 >> 1 = 0x804
+  folded histories = 0
+  ```
+
+  For XiangShan ITTAGE table `T0`:
+
+  ```text
+  Size = 256
+  setsPerBank = 256 / 2 = 128
+  setIdxWidth = 7
+
+  bankIdx    = bit0 of 0x804 = 0
+  setIdxBase = bits [7:1] of 0x804 = 0x02
+  tagBase    = 0x804 >> 8 = 0x08
+
+  setIdx = 0x02
+  tag    = 0x08
+  ```
+
+  For XiangShan ITTAGE table `T2`:
+
+  ```text
+  Size = 512
+  setsPerBank = 512 / 2 = 256
+  setIdxWidth = 8
+
+  bankIdx    = 0
+  setIdxBase = bits [8:1] of 0x804 = 0x02
+  tagBase    = 0x804 >> 9 = 0x04
+
+  setIdx = 0x02
+  tag    = 0x04
+  ```
+
+#### XiangShan Provider and Alternate
+- All ITTAGE tables read in parallel.
+- A table hit requires:
+
+  ```text
+  entry.valid && entry.tag == generated_tag
+  ```
+
+- XiangShan selects:
+
+  ```text
+  provider    = longest-history hit
+  altProvider = next-longest-history hit
+  ```
+
+- If no ITTAGE table hits:
+
+  ```text
+  ITTAGE hit = false
+  final target falls back to BTB/FTB target
+  ```
+
+- XiangShan does not use Seznec's global `USE_ALT_ON_NA` in the same way.
+  If the provider counter is saturating negative/null and an alternate
+  exists, it can use the alternate target. Otherwise it uses the provider.
+
+#### XiangShan Target Reconstruction
+- XiangShan stores:
+
+  ```text
+  targetOffset.offset       // low 20 target bits
+  targetOffset.pointer      // 4-bit pointer into 16-entry region table
+  targetOffset.usePcRegion  // use current PC upper region instead
+  ```
+
+- Example:
+
+  ```text
+  target = 0x812340
+  offset = target[19:0] = 0x12340
+  region = target >> 20 = 0x8
+
+  if RegionWays[3] = 0x8:
+    entry stores offset=0x12340, pointer=3, usePcRegion=false
+    prediction = (0x8 << 20) | 0x12340 = 0x812340
+  ```
+
+- If `usePcRegion` is true, XiangShan reconstructs the upper bits from the
+  current fetch PC region instead of consuming a region-table entry. This
+  reduces region-table pressure for near targets.
+
+#### XiangShan Update and Allocation
+- Training uses the prediction-time metadata and folded PHR snapshot, not
+  the current frontend history after many younger predictions.
+- Metadata saved with the prediction includes:
+
+  ```text
+  provider id
+  alternate provider id
+  provider counter
+  provider target
+  alternate target
+  selected allocation candidate
+  folded PHR context
+  ```
+
+- Provider update:
+
+  ```text
+  provider correct:
+    confidence counter increments
+
+  provider wrong and counter > 0:
+    confidence counter decrements
+    old target stays
+
+  provider wrong and counter == 0:
+    target can be replaced with actual target
+  ```
+
+- Alternate update is narrower than provider update. If alternate was used
+  because provider was null/weak and the final prediction mispredicted, the
+  alternate can be penalized as wrong. In Seznec, by contrast, the alternate
+  mainly affects the global `USE_ALT_ON_NA` policy rather than being directly
+  updated as alternate.
+- Allocation:
+
+  ```text
+  prediction time:
+    choose one missed table entry with usefulCnt == 0 and longer history
+    save selected allocation table in metadata
+
+  update time:
+    if mispredicted and allocation metadata is valid:
+      allocate selected table with actual target
+  ```
+
+- Allocated XiangShan entry:
+
+  ```text
+  valid = 1
+  tag = recomputed tag for that table
+  target = actual target, compressed into offset/region form
+  confidence = weak positive
+  usefulCnt = 0
+  ```
+
+- XiangShan allocates at most one ITTAGE entry per update. Seznec may
+  allocate up to three.
+- With current parameters, `UsefulCntWidth = 1`, so `usefulCnt` behaves like
+  a useful bit:
+
+  ```text
+  0 = replaceable
+  1 = protected
+  ```
+
+#### Interview Summary
+- Seznec explains the original algorithmic idea: multiple tagged target
+  tables indexed by `PC + folded path history`, with provider/alternate,
+  useful bits, and target-region compression.
+- XiangShan shows a practical RTL organization: BTB/FTB identifies the
+  indirect, ITTAGE is a target override, prediction metadata is saved for
+  training, allocation is selected at prediction time, and update uses the
+  same prediction-time folded PHR context.
+
+### 6. FTQ Metadata and Recovery Lifetime
+
+These questions connect the predictor modules above to the concrete metadata queue that makes recovery and training possible.
+
+- What exactly does the FTQ store: `startPC`, `fetchEndPC`, `predTarget`,
+  `predTaken`, branch offset, BTB hit, conditional bit, GHR snapshot, PHT
+  index/value, resolved result, and per-lane predictions?
+- Why does each FTQ entry need a GHR snapshot instead of relying only on one
+  global GHR?
+- What are `FTQ_ID` and `ftqLast`?
+- How are `FTQ_ID`, `headPtr`, `tailPtr`, and `commitPtr` related but not
+  identical?
+- When is an FTQ entry allocated: every predicted fetch block or only every
+  predicted branch?
+- When is it released: branch execute, branch writeback, commit, recovery,
+  or interrupt flush?
+
+### 7. Remaining Frontend Extensions
+
+#### TAGE-SC-L Direction Predictor
+
+- Need a detailed explanation of TAGE-SC-L because it is a common
+  high-performance direction predictor family.
+- Cover TAGE provider/alternate provider, geometric histories, tagged
+  tables, allocation, usefulness bits, statistical corrector, loop predictor,
+  speculative history, update metadata, and frontend timing impact.
+- Compare against RSD's simpler BTB plus gshare PHT implementation.
+
+#### Micro-op Cache / Decoded Instruction Cache
+
+- What is a micro-op cache or decoded instruction cache?
+- How is it different from I-cache, trace cache, loop buffer, and normal
+  decode queue?
+- What does it store, how is it indexed, how does it interact with branch
+  prediction, and how is it invalidated by self-modifying code or `FENCE.I`?
+- RSD anchor: not implemented in the inspected decoupled frontend.
 
 ### Real Pipeline Stage Mapping
 
