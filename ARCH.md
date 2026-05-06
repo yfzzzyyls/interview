@@ -2420,6 +2420,937 @@ Review questions:
   metadata can also be written for earlier conditional branches that were
   resolved not taken.
 
+#### Standard TAGE Direction Predictor
+- TAGE predicts conditional branch direction:
+
+  ```text
+  input:
+    branch PC
+    history context
+
+  output:
+    taken / not taken
+  ```
+
+- It does not replace the BTB/FTB:
+
+  ```text
+  BTB / FTB:
+    this lane has a branch, and if taken the target is X
+
+  TAGE:
+    for this conditional branch, predict taken or not taken
+  ```
+
+- Standard TAGE has one base predictor plus several tagged tables:
+
+  ```text
+  T0 = base bimodal predictor, PC-indexed, no tag
+  T1 = tagged table using short history
+  T2 = tagged table using medium history
+  T3 = tagged table using long history
+  T4 = tagged table using longer history
+  ```
+
+- Example history lengths:
+
+  ```text
+  T0: no history
+  T1: 4-bit history
+  T2: 8-bit history
+  T3: 16-bit history
+  T4: 32-bit history
+  ```
+
+- Tagged table entry:
+
+  ```text
+  valid
+  partial_tag
+  prediction_counter
+  useful_bit
+  ```
+
+- The prediction counter encodes both direction and confidence:
+
+  ```text
+  strongly not taken
+  weakly not taken
+  weakly taken
+  strongly taken
+  ```
+
+#### TAGE Versus ITTAGE
+- TAGE and ITTAGE use the same broad framework:
+
+  ```text
+  geometric history lengths
+  folded history
+  partial tags
+  provider / alternate
+  useful bits
+  allocation into longer-history tables
+  speculative history snapshots
+  ```
+
+- The predicted value differs:
+
+  ```text
+  TAGE entry:
+    partial tag
+    direction saturating counter
+    useful bit
+
+  ITTAGE entry:
+    partial tag
+    target address
+    confidence counter
+    useful bit
+  ```
+
+- In TAGE, the counter is the prediction:
+
+  ```text
+  counter negative -> predict not taken
+  counter positive -> predict taken
+  counter magnitude -> confidence
+  ```
+
+- In ITTAGE, the target field is the prediction, and the counter only measures
+  confidence in that target:
+
+  ```text
+  if actual target != stored target:
+    decrement confidence
+
+  if confidence is already weak:
+    replace stored target with actual target
+  ```
+
+- Interview-safe wording:
+
+  > ITTAGE reuses the TAGE table/allocation/provider framework, but replaces
+  > the taken/not-taken prediction value with a target field. TAGE's counter
+  > directly predicts direction; ITTAGE's counter is confidence in the stored
+  > target.
+
+#### Why Multiple History Lengths
+- Longer history is not always better. It is more specific, but it trains more
+  slowly and can waste entries.
+- Example loop branch:
+
+  ```text
+  for (i = 0; i < 100; i++)
+
+  branch pattern:
+    T T T T ... T N
+  ```
+
+  A bimodal or short-history table often handles this well.
+- Example path-dependent branch:
+
+  ```text
+  if previous path was A-B-C-D:
+    branch is taken
+
+  if previous path was X-Y-Z-W:
+    branch is not taken
+  ```
+
+  This may need longer history.
+- TAGE lets each branch use the shortest history that explains it:
+
+  ```text
+  easy biased branch      -> T0 / T1
+  short correlation       -> T1 / T2
+  long path correlation   -> T3 / T4
+  ```
+
+- "Longer table" means longer history length, not necessarily more entries.
+  A longer-history table can have fewer physical entries:
+
+  ```text
+  T1: history length = 4 bits,    1024 entries
+  T2: history length = 16 bits,   1024 entries
+  T3: history length = 64 bits,    512 entries
+  T4: history length = 128 bits,   512 entries
+  ```
+
+- Long history is folded into the available index width:
+
+  ```text
+  folded_history = fold_64_bits_to_9_bits(GHR[63:0])
+  index = PC_bits XOR folded_history
+  ```
+
+#### Index, Tag, and Folded History
+- For each tagged table:
+
+  ```text
+  index = hash(PC, folded history for this table)
+  tag   = hash(PC, folded history for this table)
+  ```
+
+- Index chooses where to read:
+
+  ```text
+  entry = table[index]
+  ```
+
+- Tag checks whether the entry really belongs to this PC/history context:
+
+  ```text
+  hit = entry.valid && entry.tag == generated_tag
+  ```
+
+- Index lets the same PC under different histories use different entries:
+
+  ```text
+  PC 0x1008 + history A -> index 3
+  PC 0x1008 + history B -> index 12
+  ```
+
+- Tag prevents different PC/history contexts that collide on the same index
+  from being treated as the same entry:
+
+  ```text
+  PC 0x1008 + history A -> index 3, tag 10101
+  PC 0x2040 + history B -> index 3, tag 00110
+  ```
+
+- Concrete tiny fold example:
+
+  ```text
+  T2:
+    history length = 8 bits
+    table entries  = 16
+    index bits     = 4
+    tag bits       = 5
+
+  PC  = 0x1008
+  GHR = 1101_0110
+
+  folded_index_history = 1101 XOR 0110 = 1011
+
+  PC >> 2 = 0x402
+  PC low 4 bits = 0010
+
+  index = 0010 XOR 1011 = 1001
+  table read = T2[9]
+  ```
+
+#### Provider and Alternate
+- Prediction searches all tagged tables and chooses:
+
+  ```text
+  provider  = longest-history table with a tag hit
+  alternate = next shorter-history hit, or T0
+  ```
+
+- Example:
+
+  ```text
+  T3 hit, counter = weak not taken
+  T2 miss
+  T1 hit, counter = strong taken
+  T0 predicts taken
+
+  provider  = T3
+  alternate = T1
+  ```
+
+- Longest matching history is the most specific context, but a newly allocated
+  long-history entry may be weak. The alternate gives a stable fallback.
+- If provider is strong:
+
+  ```text
+  use provider
+  ```
+
+- If provider is weak/new:
+
+  ```text
+  use provider or alternate depending on USE_ALT_ON_NA policy
+  ```
+
+#### USE_ALT_ON_NA
+- `USE_ALT_ON_NA` is a global policy counter:
+
+  ```text
+  Should weak/new providers use the alternate prediction?
+  ```
+
+- It is updated when:
+
+  ```text
+  provider is weak/new
+  provider prediction != alternate prediction
+  ```
+
+- If alternate is correct and provider is wrong:
+
+  ```text
+  USE_ALT_ON_NA++
+  ```
+
+  This means weak providers should be trusted less.
+- If provider is correct and alternate is wrong:
+
+  ```text
+  USE_ALT_ON_NA--
+  ```
+
+  This means weak providers should be trusted more.
+
+#### Useful Bit Update
+- The useful bit is per entry. It measures whether this provider entry has
+  recently outperformed its alternate.
+- It is meaningful when provider and alternate disagree.
+- Case A, provider better:
+
+  ```text
+  provider predicts T
+  alternate predicts N
+  actual T
+
+  provider.u++ / set to 1
+  USE_ALT_ON_NA--
+  ```
+
+- Case B, alternate better:
+
+  ```text
+  provider predicts N
+  alternate predicts T
+  actual T
+
+  provider.u-- / clear to 0
+  USE_ALT_ON_NA++
+  ```
+
+- If provider and alternate agree, provider may be correct, but it did not
+  prove extra value over the alternate:
+
+  ```text
+  provider predicts T
+  alternate predicts T
+  actual T
+
+  provider counter increments
+  useful usually unchanged
+  ```
+
+- Relationship:
+
+  ```text
+  useful bit:
+    per-entry replacement protection
+
+  USE_ALT_ON_NA:
+    global weak-provider selection policy
+  ```
+
+#### Allocation
+- On a TAGE misprediction, usually two things happen:
+
+  ```text
+  1. Train the provider counter toward the actual outcome.
+  2. Try to allocate a new entry in a longer-history table.
+  ```
+
+- Example:
+
+  ```text
+  T0: base
+  T1: 4-bit history
+  T2: 8-bit history
+  T3: 16-bit history
+  T4: 32-bit history
+
+  provider = T1
+  final prediction = not taken
+  actual = taken
+  ```
+
+- Provider update:
+
+  ```text
+  T1 counter moves toward taken
+  ```
+
+- Allocation candidates:
+
+  ```text
+  T2, T3, T4
+  ```
+
+- Prefer entries with useful bit clear:
+
+  ```text
+  allocate only if u == 0
+  ```
+
+- New entry:
+
+  ```text
+  valid = 1
+  tag = generated tag for the chosen longer-history table
+  counter = weak actual outcome
+  useful = 0
+  ```
+
+- New entries start with `useful = 0` because allocation only means "this
+  context might matter." Useful means "this context has proven better than the
+  alternate."
+- One-entry allocation versus multi-entry allocation:
+
+  | Policy | Benefit | Cost |
+  |---|---|---|
+  | Allocate one longer entry | Lower write bandwidth, less pollution, simpler timing | Slower learning |
+  | Allocate multiple longer entries | Faster convergence for hard branches | More pollution, energy, write bandwidth, and replacement pressure |
+
+- If all candidates have `u != 0`, TAGE may skip allocation, age useful bits,
+  or periodically reset useful bits so old entries do not live forever.
+
+#### Full Cold-Start Example
+- One conditional branch:
+
+  ```text
+  PC = 0x1008
+  actual pattern = T, N, T, N, T, N, ...
+  ```
+
+- Tiny TAGE:
+
+  ```text
+  T0 = base bimodal table
+  T1 = tagged table using 1-bit history
+  T2 = tagged table using 2-bit history
+
+  counter:
+    0 = strong N
+    1 = weak N
+    2 = weak T
+    3 = strong T
+  ```
+
+- Initial state:
+
+  ```text
+  GHR = 0
+  T0[PC] = 1
+  T1/T2 empty
+  ```
+
+- Iteration 1:
+
+  ```text
+  GHR = 0
+  actual = T
+
+  T2 miss
+  T1 miss
+  T0 predicts N
+
+  mispredict
+
+  T0: 1 -> 2
+  allocate T1 for history 0:
+    counter = weak T
+    useful = 0
+
+  GHR = 1
+  ```
+
+- Iteration 2:
+
+  ```text
+  GHR = 1
+  actual = N
+
+  T2 miss
+  T1 history 1 miss
+  T0 predicts T
+
+  mispredict
+
+  T0: 2 -> 1
+  allocate T1 for history 1:
+    counter = weak N
+    useful = 0
+
+  GHR = 0
+  ```
+
+- Iteration 3:
+
+  ```text
+  GHR = 0
+  actual = T
+
+  T1 history 0 hit, predicts T
+  T0 predicts N
+
+  provider = T1
+  alternate = T0
+  final prediction = T
+  correct
+
+  T1 counter: 2 -> 3
+  provider correct and alternate wrong -> T1.u = 1
+
+  GHR = 1
+  ```
+
+- Iteration 4:
+
+  ```text
+  GHR = 1
+  actual = N
+
+  T1 history 1 hit, predicts N
+  T0 predicts N
+
+  provider = T1
+  alternate = T0
+  final prediction = N
+  correct
+
+  T1 counter: 1 -> 0
+  provider and alternate agree -> useful unchanged
+
+  GHR = 0
+  ```
+
+- What TAGE learned:
+
+  ```text
+  PC=0x1008 + history 0 -> taken
+  PC=0x1008 + history 1 -> not taken
+  ```
+
+- Bimodal sees:
+
+  ```text
+  PC=0x1008 -> T,N,T,N,T,N
+  ```
+
+  which is unstable.
+- TAGE sees:
+
+  ```text
+  PC=0x1008 + 0 -> T,T,T
+  PC=0x1008 + 1 -> N,N,N
+  ```
+
+  which is stable.
+
+#### Speculative History and Rollback
+- High-performance TAGE speculatively updates history at prediction time so
+  younger predictions can use recent predicted context.
+- Example:
+
+  ```text
+  GHR = 1010
+
+  predict branch A taken:
+    speculative GHR = 10101
+
+  predict branch B using 10101
+
+  predict branch B not taken:
+    speculative GHR = 101010
+  ```
+
+- If A later resolves not taken:
+
+  ```text
+  restore checkpoint before A = 1010
+  append actual A outcome = 0
+  corrected GHR = 10100
+  flush younger predictions
+  redirect fetch
+  ```
+
+- Predictor table training is separate from speculative history update:
+
+  ```text
+  speculative history update:
+    prediction/fetch time
+
+  predictor table training:
+    execute/resolve or commit, when actual outcome is known
+  ```
+
+- Practical designs usually keep both:
+
+  ```text
+  committed / architectural history:
+    known-correct state up to commit
+
+  per-FTQ or per-branch snapshots:
+    state before this prediction, used for precise recovery
+  ```
+
+- Why per-prediction snapshots are needed:
+
+  ```text
+  committed GHR = 1001
+
+  frontend predicts:
+    A -> speculative GHR 10011
+    B -> speculative GHR 100110
+    C -> speculative GHR 1001101
+
+  if B mispredicts:
+    restoring committed GHR would lose correct A
+    correct action is restore snapshot before B and apply B actual outcome
+  ```
+
+#### TAGE Versus Gshare
+- Gshare:
+
+  ```text
+  index = PC_bits XOR GHR
+  prediction = PHT[index]
+
+  one history length
+  one untagged table
+  simple counter update
+  ```
+
+- TAGE:
+
+  ```text
+  multiple geometric history lengths
+  tagged tables
+  provider / alternate
+  useful bits
+  allocation on mispredict
+  ```
+
+- Gshare must choose one fixed history length:
+
+  ```text
+  short history:
+    trains quickly, misses long-distance correlations
+
+  long history:
+    can learn long-distance correlations, but increases aliasing and sparse training
+  ```
+
+- TAGE avoids that single-length tradeoff:
+
+  ```text
+  easy branch -> T0/T1
+  medium branch -> T2
+  hard branch -> T4
+  ```
+
+- Gshare entries are untagged, so different contexts that map to the same
+  index share the same counter. TAGE uses partial tags to reject wrong-context
+  entries.
+- Interview summary:
+
+  ```text
+  Gshare:
+    simple, cheap, fast
+    one history length
+    untagged table
+
+  TAGE:
+    higher accuracy
+    many history lengths
+    tagged tables
+    more area, energy, update metadata, and recovery state
+  ```
+
+#### GHR, PHR, and Split PHR
+- Standard textbook TAGE is often described as:
+
+  ```text
+  PC + folded global branch direction history -> taken / not taken
+  ```
+
+- Real high-performance TAGE-family predictors may use richer history:
+
+  ```text
+  global direction history
+  path history
+  branch PC history
+  target history
+  local-history components or correctors
+  ```
+
+- Definitions:
+
+  ```text
+  GHR:
+    records taken/not-taken outcomes
+
+  PHR:
+    records a compressed footprint of the taken control-flow path
+  ```
+
+- In a GHR design:
+
+  ```text
+  taken     -> append 1
+  not taken -> append 0
+  ```
+
+- In a taken-path PHR design:
+
+  ```text
+  taken control-flow event:
+    inject branch/target footprint
+
+  not-taken branch:
+    usually does not inject a taken-path footprint
+  ```
+
+- A 2024 reverse-engineering paper reports that Apple Firestorm and Qualcomm
+  Oryon use a split PHR structure:
+
+  ```text
+  PHRT = target-derived path history
+  PHRB = branch-PC-derived path history
+
+  Firestorm:
+    PHRT = 100 bits
+    PHRB = 28 bits
+
+  Oryon:
+    PHRT = 100 bits
+    PHRB = 32 bits
+  ```
+
+- Reported update style:
+
+  ```text
+  PHRT_new = (PHRT_old << 1) XOR target_address_footprint
+  PHRB_new = (PHRB_old << 1) XOR branch_pc_footprint
+  ```
+
+- This differs from Seznec ITTAGE's append-style history update:
+
+  ```text
+  PATH = target ^ (target >> 3) ^ pc
+  insert low bits of PATH into history
+  ```
+
+- Interview-safe wording:
+
+  > TAGE is the table/allocation/provider framework. The history source does
+  > not have to be pure GHR. Industrial TAGE-family designs can use richer
+  > path history, and published reverse engineering suggests Firestorm/Oryon
+  > use split target-history and branch-history registers.
+
+#### Split-PHR Concrete Update Example
+- Use tiny 8-bit registers for visibility:
+
+  ```text
+  PHRT = 0000_0000
+  PHRB = 0000_0000
+  ```
+
+- Taken branch:
+
+  ```text
+  branch PC = 0x1018
+  target    = 0x2034
+
+  target_bits = target[4:1] = 1010
+  branch_bits = PC[4:1]     = 1100
+  ```
+
+- Update:
+
+  ```text
+  PHRT_new = (0000_0000 << 1) XOR 0000_1010
+           = 0000_1010
+
+  PHRB_new = (0000_0000 << 1) XOR 0000_1100
+           = 0000_1100
+  ```
+
+- Next taken branch:
+
+  ```text
+  branch PC = 0x1044
+  target    = 0x3012
+
+  target_bits = 1001
+  branch_bits = 0010
+
+  PHRT_new = (0000_1010 << 1) XOR 0000_1001
+           = 0001_0100 XOR 0000_1001
+           = 0001_1101
+
+  PHRB_new = (0000_1100 << 1) XOR 0000_0010
+           = 0001_1000 XOR 0000_0010
+           = 0001_1010
+  ```
+
+#### Split-PHR Index and Tag Use
+- The exact hash formulas are implementation-specific. The design goal is:
+
+  ```text
+  index:
+    choose SRAM set with acceptable aliasing and timing
+
+  tag:
+    verify context identity and reduce false hits
+  ```
+
+- Split PHR lets index and tag use different history mixtures:
+
+  ```text
+  index may emphasize stable low-latency placement
+  tag may use longer/richer history for discrimination
+  ```
+
+- The reverse-engineered Firestorm 1st PHT example uses a 10-bit set index:
+
+  ```text
+  1024 sets = 2^10
+  set_index = {index[9], ..., index[0]}
+  ```
+
+- Example recovered shape:
+
+  ```text
+  index[0] = PHRT[2]  XOR PHRT[43] XOR PHRT[93]
+  index[1] = PHRT[7]  XOR PHRT[48] XOR PHRT[99]
+  index[2] = PHRT[12] XOR PHRT[63] XOR PHRB[5]
+  ...
+  index[8] = PHRT[53] XOR PHRT[58] XOR PHRB[0]
+  index[9] = PC[6]
+  ```
+
+- `PC[6]` directly becomes one index bit in this reported formula. It is not
+  XORed with folded history.
+- If:
+
+  ```text
+  PC[6] = 0
+  ```
+
+  then `index[9] = 0` and the entry is in one half of the sets.
+- If:
+
+  ```text
+  PC[6] = 1
+  ```
+
+  then `index[9] = 1` and the entry is in the other half.
+
+#### Multiple Branches Per Fetch Block Without Multiported PHT SRAM
+- A high-performance frontend may need direction predictions for multiple
+  conditional branch candidates in one fetch block:
+
+  ```text
+  lane1: beq, predicted not taken
+  lane3: bne, predicted taken
+  ```
+
+- It must know both directions to choose the earliest taken CFI. Earlier
+  not-taken branches also need history and predictor metadata for update.
+- A naive design would read the PHT once per candidate branch:
+
+  ```text
+  branch A index -> SRAM read
+  branch B index -> SRAM read
+  ```
+
+  which needs multiported SRAM, banking, or extra cycles.
+- The reported partition/index trick lets multiple branch candidates from the
+  same block share one set read:
+
+  ```text
+  logical prediction granularity:
+    per branch
+
+  physical SRAM read granularity:
+    one set read can serve multiple branch candidates in a fetch block
+  ```
+
+- In the reported style, low lane-position bits such as `PC[5:2]` are not in
+  the index; they are included in the tag. A higher PC bit such as `PC[6]`
+  participates in the index.
+- For a 16-byte block:
+
+  ```text
+  branch A PC = 0x1004
+  branch B PC = 0x100c
+
+  A PC[5:2] differs from B PC[5:2]
+  A PC[6]    equals B PC[6]
+  ```
+
+- If both candidates use the same incoming taken-path PHR, their
+  history-derived index bits are the same. Since `PC[5:2]` is not in the
+  index, both candidates can read the same set:
+
+  ```text
+  set_index_A == set_index_B
+  ```
+
+- But their tags differ because the lane-position bits are in the tag:
+
+  ```text
+  tag_A != tag_B
+  ```
+
+- Hardware:
+
+  ```text
+  read one set once
+  compare tag_A against all ways
+  compare tag_B against all ways
+  ```
+
+- This is "same set, different ways," not "same entry." Within a set, any way
+  can hold any branch context that maps to that set.
+- Why same incoming PHR can be valid for multiple candidates in a taken-path
+  PHR design:
+
+  ```text
+  if earlier branch is predicted taken:
+    later branch in the block is not on the path, so its prediction is irrelevant
+
+  if earlier branch is predicted not taken:
+    no taken-path footprint is injected, so later branch uses the same PHR
+  ```
+
+- If the predictor used pure GHR with every taken/not-taken outcome appended,
+  then later branches in the same block would ideally depend on earlier
+  predicted outcomes. That needs either sequential intra-block prediction,
+  multiple hypothetical histories, or an approximation.
+
+#### Local History and Hybrid Predictors
+- Standard TAGE is usually introduced as global-history based, but practical
+  predictors may also include local-history components.
+- Local history means:
+
+  ```text
+  for this branch PC, what were its recent outcomes?
+  ```
+
+- It is usually stored in a separate PC-indexed local-history table, not as a
+  full history field inside every TAGE entry.
+- A high-end predictor can combine:
+
+  ```text
+  global/path-history TAGE
+  local-history predictor
+  loop predictor
+  statistical or perceptron-like corrector
+  ```
+
+- We are deferring TAGE-SC-L / statistical corrector details until after the
+  remaining frontend modules.
+
 ### 4. Return Address Stack and Speculative Repair
 
 - RAS predicts return targets by exploiting call/return stack behavior.
@@ -3396,14 +4327,14 @@ These questions connect the predictor modules above to the concrete metadata que
 
 ### 7. Remaining Frontend Extensions
 
-#### TAGE-SC-L Direction Predictor
+#### Deferred: TAGE-SC-L Direction Predictor
 
-- Need a detailed explanation of TAGE-SC-L because it is a common
-  high-performance direction predictor family.
-- Cover TAGE provider/alternate provider, geometric histories, tagged
-  tables, allocation, usefulness bits, statistical corrector, loop predictor,
-  speculative history, update metadata, and frontend timing impact.
-- Compare against RSD's simpler BTB plus gshare PHT implementation.
+- TAGE basics are covered in the direction-prediction section above.
+- Hold TAGE-SC-L until after the remaining frontend modules, backend, LSU, and
+  other architecture topics.
+- Later coverage should focus on what SC-L adds on top of standard TAGE:
+  statistical corrector, loop predictor, extra confidence/chooser logic,
+  update metadata, and frontend timing impact.
 
 #### Micro-op Cache / Decoded Instruction Cache
 
