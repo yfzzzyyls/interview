@@ -1,0 +1,420 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2700" height="2250" viewBox="0 0 2700 2250" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <rect x="0" y="0" width="2700" height="2250" fill="white"/>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263238"/>
+    </marker>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1565C0"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E7D32"/>
+    </marker>
+    <marker id="arrRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#C62828"/>
+    </marker>
+    <marker id="arrOrange" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#E65100"/>
+    </marker>
+    <marker id="arrPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#AD1457"/>
+    </marker>
+
+    <style>
+      .title { font-size: 28px; font-weight: 700; fill: #1f2933; }
+      .subtitle { font-size: 14px; fill: #52606d; }
+      .colTitle { font-size: 20px; font-weight: 700; }
+      .stageTitle { font-size: 17px; font-weight: 700; }
+      .compTitle { font-size: 13px; font-weight: 700; }
+      .small { font-size: 11px; fill: #334e68; }
+      .tiny { font-size: 10px; fill: #52606d; }
+      .pipe { stroke: #263238; stroke-width: 1.8; fill: none; marker-end: url(#arr); }
+      .ld { stroke: #1565C0; stroke-width: 1.8; fill: none; marker-end: url(#arrBlue); }
+      .st { stroke: #2E7D32; stroke-width: 1.8; fill: none; marker-end: url(#arrGreen); }
+      .replay { stroke: #C62828; stroke-width: 1.7; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrRed); }
+      .update { stroke: #E65100; stroke-width: 1.7; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrOrange); }
+      .wake { stroke: #AD1457; stroke-width: 1.7; fill: none; stroke-dasharray: 5 4; marker-end: url(#arrPink); }
+      .stageBox { fill: #F8FAFC; stroke: #455A64; stroke-width: 1.8; rx: 7; }
+      .loadBox { fill: #F5FAFF; stroke: #1565C0; stroke-width: 1.7; rx: 6; }
+      .storeBox { fill: #F5FEF5; stroke: #2E7D32; stroke-width: 1.7; rx: 6; }
+      .stateBox { fill: #FFF8FB; stroke: #AD1457; stroke-width: 1.7; rx: 6; }
+      .note { fill: #FAFAFA; stroke: #B0BEC5; stroke-width: 1.2; rx: 6; }
+    </style>
+
+    <g id="pipeReg">
+      <rect x="0" y="0" width="920" height="46" fill="#FFF3E0" stroke="#E65100" stroke-width="1.8" rx="4"/>
+      <polygon points="0,17 15,23 0,29" fill="none" stroke="#E65100" stroke-width="1.5"/>
+    </g>
+
+    <g id="dffSmall">
+      <rect x="0" y="0" width="96" height="58" fill="#FFF3E0" stroke="#E65100" stroke-width="1.7" rx="4"/>
+      <polygon points="0,22 12,29 0,36" fill="none" stroke="#E65100" stroke-width="1.4"/>
+      <text x="48" y="24" text-anchor="middle" class="compTitle" fill="#BF360C">DFF</text>
+      <text x="48" y="42" text-anchor="middle" class="tiny">valid/meta</text>
+    </g>
+
+    <g id="mux">
+      <polygon points="0,0 92,20 92,86 0,106" fill="#E1F5FE" stroke="#01579B" stroke-width="1.7"/>
+      <text x="46" y="58" text-anchor="middle" class="compTitle" fill="#01579B">MUX</text>
+    </g>
+
+    <g id="muxWide">
+      <polygon points="0,0 126,26 126,124 0,150" fill="#E1F5FE" stroke="#01579B" stroke-width="1.7"/>
+      <text x="63" y="80" text-anchor="middle" class="compTitle" fill="#01579B">MUX</text>
+    </g>
+
+    <g id="adder">
+      <circle cx="30" cy="30" r="28" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.7"/>
+      <text x="30" y="38" text-anchor="middle" font-size="24" font-weight="700" fill="#F57F17">+</text>
+    </g>
+
+    <g id="cmp">
+      <polygon points="30,0 60,30 30,60 0,30" fill="white" stroke="#37474F" stroke-width="1.6"/>
+      <text x="30" y="36" text-anchor="middle" font-size="15" font-weight="700" fill="#37474F">=</text>
+    </g>
+
+    <g id="cam">
+      <rect x="0" y="0" width="165" height="94" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.7" rx="5"/>
+      <line x1="0" y1="26" x2="165" y2="26" stroke="#AD1457" stroke-width="1"/>
+      <text x="82" y="18" text-anchor="middle" class="compTitle" fill="#880E4F">CAM</text>
+    </g>
+
+    <g id="sram">
+      <rect x="0" y="0" width="178" height="100" fill="#EDE7F6" stroke="#5E35B1" stroke-width="1.7" rx="5"/>
+      <line x1="0" y1="27" x2="178" y2="27" stroke="#5E35B1" stroke-width="1"/>
+      <text x="89" y="19" text-anchor="middle" class="compTitle" fill="#4527A0">SRAM</text>
+    </g>
+
+    <g id="queueWide">
+      <rect x="0" y="0" width="410" height="210" fill="#FFF8FB" stroke="#AD1457" stroke-width="1.7" rx="6"/>
+      <line x1="0" y1="34" x2="410" y2="34" stroke="#AD1457" stroke-width="1"/>
+      <line x1="0" y1="69" x2="410" y2="69" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="104" x2="410" y2="104" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="139" x2="410" y2="139" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="174" x2="410" y2="174" stroke="#AD1457" stroke-width="0.8"/>
+    </g>
+
+    <g id="queueSmall">
+      <rect x="0" y="0" width="300" height="150" fill="#FFF8FB" stroke="#AD1457" stroke-width="1.7" rx="6"/>
+      <line x1="0" y1="32" x2="300" y2="32" stroke="#AD1457" stroke-width="1"/>
+      <line x1="0" y1="62" x2="300" y2="62" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="92" x2="300" y2="92" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="122" x2="300" y2="122" stroke="#AD1457" stroke-width="0.8"/>
+    </g>
+
+    <g id="bankedCache">
+      <rect x="0" y="0" width="400" height="162" fill="#EDE7F6" stroke="#5E35B1" stroke-width="1.8" rx="6"/>
+      <line x1="0" y1="34" x2="400" y2="34" stroke="#5E35B1" stroke-width="1"/>
+      <line x1="100" y1="34" x2="100" y2="162" stroke="#5E35B1" stroke-width="0.8"/>
+      <line x1="200" y1="34" x2="200" y2="162" stroke="#5E35B1" stroke-width="0.8"/>
+      <line x1="300" y1="34" x2="300" y2="162" stroke="#5E35B1" stroke-width="0.8"/>
+      <text x="200" y="23" text-anchor="middle" class="compTitle" fill="#4527A0">BANKED L1D</text>
+      <text x="50" y="82" text-anchor="middle" class="tiny">bank0</text>
+      <text x="150" y="82" text-anchor="middle" class="tiny">bank1</text>
+      <text x="250" y="82" text-anchor="middle" class="tiny">bank2</text>
+      <text x="350" y="82" text-anchor="middle" class="tiny">bank3</text>
+      <text x="200" y="125" text-anchor="middle" class="tiny">tag/data arrays, ECC, byte masks</text>
+    </g>
+  </defs>
+
+  <text x="1350" y="42" text-anchor="middle" class="title">Modern OoO LSU + L1D Baseline Pipeline</text>
+  <text x="1350" y="68" text-anchor="middle" class="subtitle">Generic RISC-V-friendly baseline for interview reasoning. Queues are storage; rectangular boxes are pipeline stages.</text>
+  <text x="1350" y="94" text-anchor="middle" class="subtitle">Fast L1D-hit timing: C0 issue -> C1 AGU/DTLB/index -> C2 tag/data + SQ check -> C3 align/wakeup -> C4 dependent use. Dispatch and commit are outside load-to-use.</text>
+
+  <text x="380" y="118" text-anchor="middle" class="colTitle" fill="#880E4F">Ordering / Replay State</text>
+  <text x="1350" y="118" text-anchor="middle" class="colTitle" fill="#263238">Load / Store Pipeline</text>
+  <text x="2300" y="118" text-anchor="middle" class="colTitle" fill="#2E7D32">Committed Store / Cache State</text>
+
+  <!-- Left state column -->
+  <use href="#queueWide" x="90" y="170"/>
+  <text x="295" y="193" text-anchor="middle" class="compTitle" fill="#880E4F">LOAD QUEUE (LQ)</text>
+  <text x="115" y="228" class="tiny">per entry: rob_idx, valid, addr_valid</text>
+  <text x="115" y="258" class="tiny">paddr/tag, byte mask, executed</text>
+  <text x="115" y="288" class="tiny">data valid, exception/replay cause</text>
+  <text x="115" y="318" class="tiny">older-store dependency state</text>
+  <text x="115" y="348" class="tiny">used for violation search and commit</text>
+
+  <use href="#queueWide" x="90" y="430"/>
+  <text x="295" y="453" text-anchor="middle" class="compTitle" fill="#880E4F">STORE QUEUE / SAQ + SDQ</text>
+  <text x="115" y="488" class="tiny">SAQ: addr_valid, paddr, byte mask</text>
+  <text x="115" y="518" class="tiny">SDQ: data_valid, data bytes</text>
+  <text x="115" y="548" class="tiny">committed bit, drained bit</text>
+  <text x="115" y="578" class="tiny">age ordering versus younger loads</text>
+  <text x="115" y="608" class="tiny">CAM source for forwarding</text>
+
+  <use href="#queueSmall" x="145" y="720"/>
+  <text x="295" y="743" text-anchor="middle" class="compTitle" fill="#880E4F">LOAD REPLAY QUEUE</text>
+  <text x="170" y="777" class="tiny">bank conflict / MSHR full</text>
+  <text x="170" y="807" class="tiny">unknown older store</text>
+  <text x="170" y="837" class="tiny">forward data not ready</text>
+  <text x="170" y="867" class="tiny">TLB miss / cache miss replay</text>
+
+  <rect x="130" y="965" width="330" height="140" class="stateBox"/>
+  <text x="295" y="990" text-anchor="middle" class="compTitle" fill="#880E4F">MEMORY DEPENDENCE PREDICTOR</text>
+  <text x="155" y="1025" class="tiny">store sets / wait table / confidence</text>
+  <text x="155" y="1055" class="tiny">predict: load may issue or must wait</text>
+  <text x="155" y="1085" class="tiny">train on store/load violation</text>
+
+  <rect x="130" y="1190" width="330" height="130" class="stateBox"/>
+  <text x="295" y="1215" text-anchor="middle" class="compTitle" fill="#880E4F">VIOLATION SEARCH</text>
+  <text x="155" y="1250" class="tiny">store address resolves</text>
+  <text x="155" y="1280" class="tiny">CAM younger executed loads</text>
+  <text x="155" y="1310" class="tiny">selective replay or flush from load</text>
+
+  <!-- Right state column -->
+  <rect x="2070" y="170" width="410" height="170" class="storeBox"/>
+  <text x="2275" y="196" text-anchor="middle" class="compTitle" fill="#1B5E20">STORE BUFFER (POST-COMMIT)</text>
+  <text x="2100" y="232" class="tiny">non-speculative stores after ROB commit</text>
+  <text x="2100" y="262" class="tiny">lets ROB retire before cache accepts store</text>
+  <text x="2100" y="292" class="tiny">holds paddr, data, byte mask, coherence state</text>
+  <text x="2100" y="322" class="tiny">drains when L1D port/ownership is available</text>
+
+  <use href="#queueSmall" x="2125" y="430"/>
+  <text x="2275" y="453" text-anchor="middle" class="compTitle" fill="#880E4F">MSHRS / MISS QUEUE</text>
+  <text x="2150" y="487" class="tiny">miss allocate or merge</text>
+  <text x="2150" y="517" class="tiny">MSHR full -> replay/backpressure</text>
+  <text x="2150" y="547" class="tiny">refill wakeup to load/store path</text>
+  <text x="2150" y="577" class="tiny">ownership request for stores</text>
+
+  <rect x="2070" y="690" width="410" height="155" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7" rx="6"/>
+  <text x="2275" y="716" text-anchor="middle" class="compTitle" fill="#1B5E20">L1D PORT ARBITER</text>
+  <text x="2100" y="752" class="tiny">load read, committed store write</text>
+  <text x="2100" y="782" class="tiny">refill write, eviction/writeback</text>
+  <text x="2100" y="812" class="tiny">bank conflict and write-port conflict source</text>
+
+  <rect x="2070" y="955" width="410" height="135" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7" rx="6"/>
+  <text x="2275" y="981" text-anchor="middle" class="compTitle" fill="#1B5E20">COHERENCE / LOWER CACHE</text>
+  <text x="2100" y="1017" class="tiny">read miss, write miss, RFO/ownership</text>
+  <text x="2100" y="1047" class="tiny">refill data, snoop/invalidation events</text>
+  <text x="2100" y="1077" class="tiny">see Part 6 for detailed coherence model</text>
+
+  <!-- Main pipeline column -->
+  <rect x="635" y="155" width="1430" height="185" class="stageBox"/>
+  <text x="665" y="188" class="stageTitle" fill="#263238">Pre-LSU: rename / dispatch allocation</text>
+  <text x="665" y="210" class="small">Memory uops allocate ordering state before they execute out of order.</text>
+
+  <rect x="700" y="235" width="260" height="70" class="loadBox"/>
+  <text x="830" y="262" text-anchor="middle" class="compTitle" fill="#0D47A1">load uop</text>
+  <text x="830" y="286" text-anchor="middle" class="tiny">allocate LQ entry</text>
+
+  <rect x="1020" y="235" width="300" height="70" class="storeBox"/>
+  <text x="1170" y="262" text-anchor="middle" class="compTitle" fill="#1B5E20">store addr uop</text>
+  <text x="1170" y="286" text-anchor="middle" class="tiny">allocate SQ/SAQ entry</text>
+
+  <rect x="1380" y="235" width="300" height="70" class="storeBox"/>
+  <text x="1530" y="262" text-anchor="middle" class="compTitle" fill="#1B5E20">store data uop</text>
+  <text x="1530" y="286" text-anchor="middle" class="tiny">fills SDQ when data ready</text>
+
+  <rect x="1740" y="235" width="240" height="70" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.5" rx="5"/>
+  <text x="1860" y="262" text-anchor="middle" class="compTitle" fill="#4A148C">ROB link</text>
+  <text x="1860" y="286" text-anchor="middle" class="tiny">age, exception, commit</text>
+
+  <path d="M 700 270 C 610 270 570 235 500 235" class="ld"/>
+  <path d="M 1170 305 C 1000 385 590 510 500 520" class="st"/>
+  <path d="M 1530 305 C 1240 390 610 555 500 555" class="st"/>
+
+  <use href="#pipeReg" x="890" y="360"/>
+  <text x="1350" y="388" text-anchor="middle" class="compTitle" fill="#BF360C">dispatch -> C0 register: mem_uop, lq_idx/sq_idx, src tags, rob_idx, branch mask</text>
+
+  <rect x="635" y="430" width="1430" height="225" class="stageBox"/>
+  <text x="665" y="463" class="stageTitle" fill="#263238">C0: memory issue, register read, and bypass</text>
+  <text x="665" y="485" class="small">Loads and store-address uops need base register. Store-data uops may arrive independently.</text>
+
+  <rect x="700" y="520" width="270" height="88" fill="#FFF8E1" stroke="#F9A825" stroke-width="1.5" rx="5"/>
+  <text x="835" y="548" text-anchor="middle" class="compTitle" fill="#F57F17">memory IQ / select</text>
+  <text x="835" y="573" text-anchor="middle" class="tiny">ready loads, store addr</text>
+  <text x="835" y="591" text-anchor="middle" class="tiny">store data issue if ready</text>
+
+  <use href="#sram" x="1045" y="510"/>
+  <text x="1134" y="548" text-anchor="middle" class="compTitle" fill="#4527A0">PRF read</text>
+  <text x="1134" y="573" text-anchor="middle" class="tiny">base / store data</text>
+  <text x="1134" y="591" text-anchor="middle" class="tiny">read-port pressure</text>
+
+  <use href="#mux" x="1325" y="505"/>
+  <text x="1371" y="625" text-anchor="middle" class="tiny">bypass MUX</text>
+  <text x="1310" y="485" class="tiny">WB/forwarding bus</text>
+
+  <rect x="1535" y="510" width="270" height="96" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+  <text x="1670" y="538" text-anchor="middle" class="compTitle" fill="#1B5E20">store-data capture</text>
+  <text x="1670" y="563" text-anchor="middle" class="tiny">write SDQ when operand ready</text>
+  <text x="1670" y="581" text-anchor="middle" class="tiny">may be before/after store addr</text>
+  <text x="1670" y="599" text-anchor="middle" class="tiny">actual bytes, not just pointer</text>
+
+  <path d="M 970 562 L 1045 560" class="pipe"/>
+  <path d="M 1223 560 L 1325 556" class="pipe"/>
+  <path d="M 1417 558 L 1535 558" class="st"/>
+  <path d="M 1670 606 C 1460 675 630 575 500 555" class="st"/>
+
+  <use href="#pipeReg" x="890" y="675"/>
+  <text x="1350" y="703" text-anchor="middle" class="compTitle" fill="#BF360C">C0 -> C1 register: base/data operands, lq/sq index, op size, sign/zero extend, memory ordering metadata</text>
+
+  <rect x="635" y="745" width="1430" height="245" class="stageBox"/>
+  <text x="665" y="778" class="stageTitle" fill="#263238">C1: AGU, DTLB, and L1D index/bank generation</text>
+  <text x="665" y="800" class="small">Generate virtual address, translate to physical address, and carry precise fault information with the uop.</text>
+
+  <use href="#adder" x="735" y="850"/>
+  <text x="765" y="925" text-anchor="middle" class="tiny">base + imm</text>
+  <text x="700" y="840" class="tiny">base</text>
+  <text x="810" y="840" class="tiny">offset</text>
+
+  <use href="#sram" x="960" y="820"/>
+  <text x="1049" y="858" text-anchor="middle" class="compTitle" fill="#4527A0">DTLB</text>
+  <text x="1049" y="881" text-anchor="middle" class="tiny">VA -> PA</text>
+  <text x="1049" y="898" text-anchor="middle" class="tiny">permission / page fault</text>
+
+  <rect x="1225" y="820" width="260" height="100" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="1355" y="848" text-anchor="middle" class="compTitle" fill="#B71C1C">exception tag</text>
+  <text x="1355" y="873" text-anchor="middle" class="tiny">access/page fault metadata</text>
+  <text x="1355" y="891" text-anchor="middle" class="tiny">reported precisely at commit</text>
+
+  <rect x="1605" y="815" width="310" height="112" class="loadBox"/>
+  <text x="1760" y="843" text-anchor="middle" class="compTitle" fill="#0D47A1">physical address bundle</text>
+  <text x="1760" y="868" text-anchor="middle" class="tiny">paddr, line offset, bank index</text>
+  <text x="1760" y="886" text-anchor="middle" class="tiny">byte mask, size, signedness</text>
+  <text x="1760" y="904" text-anchor="middle" class="tiny">lq/sq index and age</text>
+
+  <path d="M 793 880 L 960 870" class="pipe"/>
+  <path d="M 1138 870 L 1225 870" class="pipe"/>
+  <path d="M 1485 870 L 1605 871" class="pipe"/>
+  <path d="M 1760 927 C 1570 1025 730 1020 500 488" class="update"/>
+  <text x="840" y="1005" class="tiny" fill="#E65100">load/store address valid update</text>
+
+  <use href="#pipeReg" x="890" y="1010"/>
+  <text x="1350" y="1038" text-anchor="middle" class="compTitle" fill="#BF360C">C1 -> C2 register: physical address, bank, byte mask, fault bits, LQ/SQ age metadata</text>
+
+  <rect x="635" y="1080" width="1430" height="285" class="stageBox"/>
+  <text x="665" y="1113" class="stageTitle" fill="#263238">C2: SQ ordering/forwarding check in parallel with L1D tag/data</text>
+  <text x="665" y="1135" class="small">The hardest LSU timing path is often address compare, age filtering, data select, and replay decision.</text>
+
+  <use href="#cam" x="705" y="1192"/>
+  <text x="787" y="1230" text-anchor="middle" class="compTitle" fill="#880E4F">SQ CAM</text>
+  <text x="787" y="1254" text-anchor="middle" class="tiny">older stores only</text>
+  <text x="787" y="1271" text-anchor="middle" class="tiny">addr + byte mask</text>
+
+  <rect x="955" y="1165" width="260" height="135" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="1085" y="1193" text-anchor="middle" class="compTitle" fill="#B71C1C">unknown older store?</text>
+  <text x="1085" y="1219" text-anchor="middle" class="tiny">conservative: wait/replay</text>
+  <text x="1085" y="1237" text-anchor="middle" class="tiny">aggressive: speculate</text>
+  <text x="1085" y="1255" text-anchor="middle" class="tiny">train MDP on violation</text>
+  <text x="1085" y="1273" text-anchor="middle" class="tiny">store sets guide future loads</text>
+
+  <rect x="1300" y="1165" width="290" height="135" class="storeBox"/>
+  <text x="1445" y="1193" text-anchor="middle" class="compTitle" fill="#1B5E20">forward candidate</text>
+  <text x="1445" y="1219" text-anchor="middle" class="tiny">full overlap: bypass cache data</text>
+  <text x="1445" y="1237" text-anchor="middle" class="tiny">partial overlap: merge bytes</text>
+  <text x="1445" y="1255" text-anchor="middle" class="tiny">data not ready: replay load</text>
+  <text x="1445" y="1273" text-anchor="middle" class="tiny">multiple matches: pick youngest older</text>
+
+  <use href="#muxWide" x="1710" y="1158"/>
+  <text x="1773" y="1324" text-anchor="middle" class="tiny">data/replay MUX</text>
+  <text x="1690" y="1146" class="tiny">SQ data</text>
+  <text x="1690" y="1305" class="tiny">D$ data later</text>
+
+  <path d="M 500 520 C 600 570 650 1145 705 1239" class="st"/>
+  <path d="M 870 1239 L 955 1232" class="pipe"/>
+  <path d="M 1215 1232 L 1300 1232" class="pipe"/>
+  <path d="M 1590 1232 L 1710 1232" class="st"/>
+  <path d="M 1085 1300 C 1000 1420 650 1440 445 795" class="replay"/>
+  <path d="M 295 1035 C 455 1110 585 1190 705 1239" class="wake"/>
+
+  <path d="M 1170 1080 C 910 1220 560 1230 460 1255" class="update"/>
+  <text x="540" y="1240" class="tiny" fill="#E65100">store addr resolves -> search LQ</text>
+
+  <use href="#pipeReg" x="890" y="1385"/>
+  <text x="1350" y="1413" text-anchor="middle" class="compTitle" fill="#BF360C">C2 -> C3 register: forwarding decision, replay cause, paddr/bank, store-hit mask, selected store bytes</text>
+
+  <rect x="635" y="1455" width="1430" height="300" class="stageBox"/>
+  <text x="665" y="1488" class="stageTitle" fill="#263238">C2/C3: L1D banked access, MSHR, and miss handling</text>
+  <text x="665" y="1510" class="small">Loads access tag/data; committed stores and refills arbitrate for write/update resources.</text>
+
+  <rect x="700" y="1570" width="210" height="98" fill="#E0F7FA" stroke="#006064" stroke-width="1.5" rx="5"/>
+  <text x="805" y="1598" text-anchor="middle" class="compTitle" fill="#006064">bank select</text>
+  <text x="805" y="1623" text-anchor="middle" class="tiny">paddr bits / hash</text>
+  <text x="805" y="1641" text-anchor="middle" class="tiny">bank conflict detect</text>
+
+  <use href="#bankedCache" x="1005" y="1535"/>
+
+  <use href="#cam" x="1505" y="1570"/>
+  <text x="1587" y="1608" text-anchor="middle" class="compTitle" fill="#880E4F">MSHR CAM</text>
+  <text x="1587" y="1632" text-anchor="middle" class="tiny">line hit? merge</text>
+  <text x="1587" y="1649" text-anchor="middle" class="tiny">miss? allocate</text>
+
+  <rect x="1770" y="1570" width="220" height="98" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="1880" y="1598" text-anchor="middle" class="compTitle" fill="#B71C1C">miss/replay cause</text>
+  <text x="1880" y="1623" text-anchor="middle" class="tiny">cache miss / TLB miss</text>
+  <text x="1880" y="1641" text-anchor="middle" class="tiny">MSHR full / bank conflict</text>
+
+  <path d="M 910 1619 L 1005 1616" class="ld"/>
+  <path d="M 1405 1616 L 1505 1617" class="ld"/>
+  <path d="M 1670 1617 L 1770 1619" class="pipe"/>
+  <path d="M 1587 1664 C 1815 1785 2140 565 2125 505" class="wake"/>
+  <path d="M 1880 1668 C 1540 1815 690 1730 445 795" class="replay"/>
+  <path d="M 2070 767 C 1840 900 1770 1450 1405 1616" class="st"/>
+  <path d="M 2275 600 C 2220 950 2015 1350 1405 1616" class="wake"/>
+
+  <use href="#pipeReg" x="890" y="1775"/>
+  <text x="1350" y="1803" text-anchor="middle" class="compTitle" fill="#BF360C">C3 -> C4 register: cache data, hit/miss, refill/forward bytes, replay status, exception bits</text>
+
+  <rect x="635" y="1845" width="1430" height="240" class="stageBox"/>
+  <text x="665" y="1878" class="stageTitle" fill="#263238">C3/C4: load data merge, bypass/wakeup, and commit/store drain</text>
+  <text x="665" y="1900" class="small">Load result becomes architectural only when the ROB later commits; store visibility waits for commit.</text>
+
+  <rect x="700" y="1940" width="295" height="100" class="loadBox"/>
+  <text x="848" y="1968" text-anchor="middle" class="compTitle" fill="#0D47A1">load-data merge</text>
+  <text x="848" y="1993" text-anchor="middle" class="tiny">merged = SQ bytes | D$ bytes</text>
+  <text x="848" y="2011" text-anchor="middle" class="tiny">byte mask, align, sign/zero extend</text>
+
+  <rect x="1085" y="1940" width="250" height="100" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.5" rx="5"/>
+  <text x="1210" y="1968" text-anchor="middle" class="compTitle" fill="#4A148C">writeback arbiter</text>
+  <text x="1210" y="1993" text-anchor="middle" class="tiny">PRF write port conflict</text>
+  <text x="1210" y="2011" text-anchor="middle" class="tiny">completion to ROB/LQ</text>
+
+  <rect x="1415" y="1940" width="250" height="100" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.5" rx="5"/>
+  <text x="1540" y="1968" text-anchor="middle" class="compTitle" fill="#880E4F">wakeup bus</text>
+  <text x="1540" y="1993" text-anchor="middle" class="tiny">broadcast load pdst ready</text>
+  <text x="1540" y="2011" text-anchor="middle" class="tiny">dependent IQ operands wake</text>
+
+  <rect x="1745" y="1940" width="260" height="100" class="storeBox"/>
+  <text x="1875" y="1968" text-anchor="middle" class="compTitle" fill="#1B5E20">store commit/drain</text>
+  <text x="1875" y="1993" text-anchor="middle" class="tiny">ROB commit marks SQ entry safe</text>
+  <text x="1875" y="2011" text-anchor="middle" class="tiny">store buffer writes L1D later</text>
+
+  <path d="M 1773 1308 C 1600 1500 1110 1870 995 1990" class="ld"/>
+  <path d="M 1205 1697 C 1125 1805 1020 1900 995 1989" class="ld"/>
+  <path d="M 995 1990 L 1085 1990" class="ld"/>
+  <path d="M 1335 1990 L 1415 1990" class="wake"/>
+  <path d="M 1540 1940 C 1450 1800 650 980 445 795" class="wake"/>
+  <path d="M 1745 1990 C 1600 2130 380 2060 295 320" class="update"/>
+  <path d="M 1875 1940 C 1985 1600 2130 420 2070 255" class="st"/>
+
+  <!-- Store-buffer/cache lower path -->
+  <path d="M 2275 340 L 2275 430" class="st"/>
+  <path d="M 2275 580 L 2275 690" class="wake"/>
+  <path d="M 2275 845 L 2275 955" class="st"/>
+  <path d="M 2275 955 C 2155 1180 1965 1470 1680 1617" class="wake"/>
+
+  <!-- LQ/SQ cross checks -->
+  <path d="M 500 235 C 595 380 620 930 705 1239" class="ld"/>
+  <path d="M 460 1255 C 635 1380 1040 1560 1210 1940" class="replay"/>
+  <path d="M 295 1320 C 485 1420 620 1745 700 1990" class="replay"/>
+
+  <!-- Legend and notes -->
+  <rect x="90" y="2110" width="520" height="95" class="note"/>
+  <text x="115" y="2138" class="compTitle" fill="#263238">Legend</text>
+  <line x1="115" y1="2160" x2="175" y2="2160" class="ld"/>
+  <text x="190" y="2165" class="tiny">load path / load completion</text>
+  <line x1="115" y1="2184" x2="175" y2="2184" class="st"/>
+  <text x="190" y="2189" class="tiny">store path / committed store drain</text>
+
+  <rect x="690" y="2110" width="710" height="95" class="note"/>
+  <text x="715" y="2138" class="compTitle" fill="#263238">Key timing paths</text>
+  <text x="715" y="2163" class="tiny">AGU -> DTLB/L1D index -> SQ CAM/age filter -> forward/merge MUX -> WB/wakeup</text>
+  <text x="715" y="2187" class="tiny">store address resolve -> LQ CAM violation search -> selective replay or flush decision</text>
+
+  <rect x="1470" y="2110" width="1060" height="95" class="note"/>
+  <text x="1495" y="2138" class="compTitle" fill="#263238">Performance-modeling counters</text>
+  <text x="1495" y="2163" class="tiny">LQ/SQ full, unknown-store stalls, forwarding hits/partial hits, violation replays, bank conflicts, MSHR full, cache/TLB misses, store-buffer full, writeback-port conflicts.</text>
+  <text x="1495" y="2187" class="tiny">Do not count these as one additive CPI bucket when events overlap; keep diagnostic counters and explain the dominant bottleneck.</text>
+</svg>

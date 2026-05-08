@@ -8258,17 +8258,44 @@ RTL must not be written until this spec is frozen.
 
 ---
 
-### 0. Unified LSU + L1D Pipeline Diagrams
+### 0. LSU + L1D Pipeline Diagrams
 
-#### LSU Architectural Sketch
+#### Modern LSU Baseline Pipeline
 
-This is the LSU-specific architectural sketch. It is useful for interview
-whiteboarding because it separates the load/store queue and forwarding path from
-the L1D optimization details.
+This is the clean interview baseline for a modern out-of-order LSU. It shows
+the main lifetime of a memory uop: dispatch allocation, memory issue, AGU/DTLB,
+store-to-load forwarding and ordering checks, L1D/MSHR handling, load replay,
+writeback/wakeup, and committed-store drain.
+
+The important interview point is that LQ/SQ, store buffer, replay queue, MSHRs,
+and dependence predictor are storage structures attached to the pipeline. They
+are not themselves pipeline stages.
+
+The load-to-use timing in the diagram should be read from **C0 issue**, not from
+rename/dispatch. A high-performance Oryon-like L1D hit path is roughly:
+
+```text
+C0: load issues, base register read / bypass
+C1: AGU computes address, DTLB and L1D index/bank selection start
+C2: L1D tag/data access and SQ ordering/forwarding checks run in parallel
+C3: hit data is aligned/merged, bypass and wakeup are produced
+C4: dependent consumer can issue/use the value
+```
+
+So the complete memory-uop lifetime may span more boxes, but common L1D
+load-to-use is still about 3-4 cycles on Apple/Oryon-class cores.
+
+![Modern LSU baseline pipeline](diagrams/lsu_modern_baseline_pipeline.svg)
+
+#### RSD LSU Optimization Sketch
+
+This older sketch is useful as an RSD-specific optimization reference. It is not
+the clean baseline model above; it focuses on the implemented RSD/RiVAI-style
+LSU + L1D optimizations such as selective SQ lookup and load replay buffering.
 
 ![LSU architectural datapath sketch](diagrams/lsu_architectural_datapath.svg)
 
-#### Unified LSU + L1D Optimized Datapath
+#### RSD Unified LSU + L1D Optimized Datapath
 
 Top-to-bottom vertical flow through the 4 LSU stages plus the coupled L1D pipeline. The four resume-level optimizations are highlighted in yellow:
 - **Optimization A** (Selective SQ Lookup) is shown inside stage ② D$TAG — partial-tag column on the SQ, partial-tag compare row, and GATED full CAM.
