@@ -8,12 +8,13 @@ This file has these major review blocks:
 2. Decoupled frontend implementation specification.
 3. Backend microarchitecture details.
 4. LSU + L1D optimization specification.
-5. Branch predictor microarchitecture.
-6. TLB, MMU, and page-table-walker microarchitecture.
-7. Cache, coherence, and memory-system review.
-8. Retire, commit, ROB state, and recovery.
-9. Vector / SIMD review.
-10. Operation-specific implementation notes: interrupt/exception, fences, atomics.
+5. TLB, MMU, and page-table-walker microarchitecture.
+6. Cache, coherence, and memory-system review.
+7. Vector / SIMD review.
+8. Interrupt and exception implementation.
+9. Serialization, fences, atomics, and privileged control.
+10. Architect thinking, tradeoff analysis, timing, ports, and hardware cost modeling.
+11. Prefetcher microarchitecture.
 
 The interviewer focus map below is a preparation router: use it to prioritize likely topics for each second-round interviewer, then jump into the detailed sections linked from that map.
 
@@ -33,20 +34,20 @@ Highest-priority map:
 | Likely topic | Why it may come up | Existing review section |
 |---|---|---|
 | Decoupled frontend, FTQ, fetch bubbles | Public work points toward instruction fetch and branch/fetch-bundle behavior | [Part 2 — Decoupled Frontend Specification](#part-2--decoupled-frontend-specification), [Frontend Extra Topics to Review](#frontend-extra-topics-to-review) |
-| Branch prediction and predictor metadata | Fetch patents mention branch history and fetch groups; frontend work often tests direction/target/update/recovery reasoning | [Part 5 — Branch Predictor Microarchitecture](#part-5--branch-predictor-microarchitecture), [TAGE Predictor Review](#5-tage-predictor-review) |
+| Branch prediction and predictor metadata | Fetch patents mention branch history and fetch groups; frontend work often tests direction/target/update/recovery reasoning | [Part 2 — Decoupled Frontend Specification](#part-2--decoupled-frontend-specification), [Branch Predictor Summary and Modeling Checklist](#8-branch-predictor-summary-and-modeling-checklist), [TAGE Predictor Review](#tage-predictor-review) |
 | Fetch beyond predicted-taken branch | Direct public patent theme; likely discussion around using fetch-bundle slots after a predicted-taken branch | Ajay-only notes below, plus [Decode Bandwidth and Frontend Bubbles](#decode-bandwidth-and-frontend-bubbles) |
-| Instruction TLB and ITLB prefetch | Public patent listing includes instruction TLB prefetching from retired-page history | [Part 6 — TLB, MMU, and Page Table Walker](#part-6--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#6-tlb-and-virtual-memory-corner-cases) |
+| Instruction TLB and ITLB prefetch | Public patent listing includes instruction TLB prefetching from retired-page history | [Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#7-tlb-and-virtual-memory-corner-cases) |
 | Trace cache / trace processor | His older project explicitly mentions trace processor, trace cache, trace predictor, and checkpoint recovery | Ajay-only notes below, plus [Uop Cache / Decoded Instruction Cache](#uop-cache--decoded-instruction-cache) |
 | Memory dependence prediction and speculative load forwarding | His older project mentions Alpha 21264-inspired MDP and speculative load forwarding | [Memory Dependence Prediction](#141-memory-dependence-prediction), [OoO Load/Store Consistency](#142-ooo-loadstore-consistency), [Store Queue / Store Buffer Discussion](#121-store-queue--store-buffer-discussion) |
-| Cache and memory hierarchy modeling | His older project includes C++ cache hierarchy simulation and validation | [Part 7 — Cache, Coherence, and Memory System](#part-7--cache-coherence-and-memory-system), [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs) |
-| Performance model debug and validation | Role is CPU performance modeling; likely asks how to prove model results and debug regressions | [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks), [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [Validation and Calibration](#10-validation-and-calibration) |
+| Cache and memory hierarchy modeling | His older project includes C++ cache hierarchy simulation and validation | [Part 6 — Cache, Coherence, and Memory System](#part-6--cache-coherence-and-memory-system), [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs) |
+| Performance model debug and validation | Role is CPU performance modeling; likely asks how to prove model results and debug regressions | [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks), [Validation and Calibration](#22-validation-and-calibration) |
 
 Lower-priority possible angles:
 
 | Possible topic | Why it may come up | Existing review section |
 |---|---|---|
 | Memory fabric, address decoding, CXL/HDM-style address translation | Public patent listings include CXL host-managed device memory decoding and reduced-area/power sequencing | [Interconnect Types](#5-interconnect-types), [ACE / CHI Coherent Interconnect Basics](#6-ace--chi-coherent-interconnect-basics), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints) |
-| Compiler/codegen and intrinsic-aware performance | Public coursework includes code generation/optimization; your BKFIR/intrinsics work is a good bridge if he asks software-to-microarchitecture questions | [Compiler, Intrinsics, and Scheduling Notes](#5-compiler-intrinsics-and-scheduling-notes), [Vector and SIMD](#part-9--vector-and-simd) |
+| Compiler/codegen and intrinsic-aware performance | Public coursework includes code generation/optimization; your BKFIR/intrinsics work is a good bridge if he asks software-to-microarchitecture questions | [Compiler, Intrinsics, and Scheduling Notes](#5-compiler-intrinsics-and-scheduling-notes), [Vector and SIMD](#part-7--vector-and-simd) |
 
 Expected question style:
 - Mechanism-first: explain the microarchitecture structure, not only the high-level definition.
@@ -116,20 +117,20 @@ Highest-priority map:
 
 | Likely topic | Why it may come up | Existing review section |
 |---|---|---|
-| Data prefetching beyond next-line | Public patent signal is address-delta data prefetching; likely asks accuracy/coverage/timeliness/pollution tradeoffs | [L1D Next-Line Prefetcher](#5-optimization-c--l1d-next-line-prefetcher), [Beyond Next-Line Prefetching](#58-beyond-next-line-prefetching), David-only notes below |
+| Data prefetching beyond next-line | Public patent signal is address-delta data prefetching; likely asks accuracy/coverage/timeliness/pollution tradeoffs | [L1D Next-Line Prefetcher](#5-optimization-c--l1d-next-line-prefetcher), [Part 11 — Prefetcher Microarchitecture](#part-11--prefetcher-microarchitecture), David-only notes below |
 | MSHRs, bandwidth, and demand interference | Prefetch benefit depends on miss concurrency and whether prefetches steal demand resources | [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs), [Port Conflicts and Banking](#8-port-conflicts-and-banking), [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases) |
-| Cache/memory hierarchy modeling | Publications and patent point toward memory hierarchy, cache behavior, and performance-model evidence | [Part 7 — Cache, Coherence, and Memory System](#part-7--cache-coherence-and-memory-system), [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks) |
+| Cache/memory hierarchy modeling | Publications and patent point toward memory hierarchy, cache behavior, and performance-model evidence | [Part 6 — Cache, Coherence, and Memory System](#part-6--cache-coherence-and-memory-system), [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks) |
 | Main-memory compression and ECC | `COP` publication combines compression, main-memory capacity, and error protection | David-only notes below, plus [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases) |
 | Reliability and soft errors | HPCA publication and Spare RIBs work point toward selective protection, register-file/execution logic vulnerability, and reliability/cost tradeoffs | David-only notes below, plus [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs) |
 | Power/performance/critical path tradeoffs | Spare RIBs work is about critical paths, variation, redundancy, area, and performance | [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints) |
-| Model validation and counter interpretation | Performance modeling role plus research background likely means he will care about proof, not just claims | [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [Validation and Calibration](#10-validation-and-calibration) |
+| Model validation and counter interpretation | Performance modeling role plus research background likely means he will care about proof, not just claims | [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks), [Validation and Calibration](#22-validation-and-calibration) |
 
 Lower-priority possible angles:
 
 | Possible topic | Why it may come up | Existing review section |
 |---|---|---|
 | Register file ports and backend scaling | `CRAM: Coded Registers for Amplified Multiporting` points to multi-ported RF cost, wide OoO scaling, and area/power/timing tradeoffs | [Backend Microarchitecture Details](#part-3--backend-microarchitecture-details), [Wakeup / Select](#5-wakeup--select), [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs) |
-| Low-cost error detection and memory fault patching | Public work includes time-redundant parity and patching memory faults using existing memory hierarchy structures | David-only notes below, plus [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases), [Validation and Calibration](#10-validation-and-calibration) |
+| Low-cost error detection and memory fault patching | Public work includes time-redundant parity and patching memory faults using existing memory hierarchy structures | David-only notes below, plus [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases), [Validation and Calibration](#22-validation-and-calibration) |
 
 Expected question style:
 - Tradeoff-heavy: performance gain versus bandwidth, power, area, latency, and reliability cost.
@@ -210,19 +211,19 @@ Highest-priority map:
 
 | Likely topic | Why it may come up | Existing review section |
 |---|---|---|
-| Pointer / indirect prefetching | Public patent signal is strongest around pointer and indirect-memory prefetchers | [Beyond Next-Line Prefetching](#58-beyond-next-line-prefetching), Sabine-only notes below |
-| Prefetch accuracy, coverage, timeliness, pollution | Pointer prefetchers can easily become late, wrong, or bandwidth-destructive | [Beyond Next-Line Prefetching](#58-beyond-next-line-prefetching), [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation) |
+| Pointer / indirect prefetching | Public patent signal is strongest around pointer and indirect-memory prefetchers | [Part 11 — Prefetcher Microarchitecture](#part-11--prefetcher-microarchitecture), Sabine-only notes below |
+| Prefetch accuracy, coverage, timeliness, pollution | Pointer prefetchers can easily become late, wrong, or bandwidth-destructive | [Part 11 — Prefetcher Microarchitecture](#part-11--prefetcher-microarchitecture), [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks) |
 | MSHR pressure and non-stalling prefetch pipeline | Public patent signal includes non-stalling prefetch pipeline optimization | [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs), [Port Conflicts and Banking](#8-port-conflicts-and-banking), Sabine-only notes below |
-| TLB/page-crossing correctness for prefetch | Pointer/indirect prefetch often uses virtual addresses and can cross pages or contexts | [Part 6 — TLB, MMU, and Page Table Walker](#part-6--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#6-tlb-and-virtual-memory-corner-cases) |
+| TLB/page-crossing correctness for prefetch | Pointer/indirect prefetch often uses virtual addresses and can cross pages or contexts | [Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#7-tlb-and-virtual-memory-corner-cases) |
 | Cache pollution and replacement side effects | Indirect prefetch can bring low-usefulness lines and evict useful demand lines | [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases), [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs) |
-| Performance model validation | She may ask how to prove a prefetcher helps and does not damage demand traffic | [Validation and Calibration](#10-validation-and-calibration), [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks) |
+| Performance model validation | She may ask how to prove a prefetcher helps and does not damage demand traffic | [Validation and Calibration](#22-validation-and-calibration), [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks) |
 
 Lower-priority possible angles:
 
 | Possible topic | Why it may come up | Existing review section |
 |---|---|---|
-| SystemC/TLM and fast design-space exploration | UT Austin poster signal includes SystemC/TLM and simulation methodology | [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks), [Validation and Calibration](#10-validation-and-calibration) |
-| QoS / latency / throughput modeling | NoS work mentions latency, throughput, and QoS; lower priority for CPU-core interview but relevant to performance modeling style | [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [ACE / CHI Coherent Interconnect Basics](#6-ace--chi-coherent-interconnect-basics) |
+| SystemC/TLM and fast design-space exploration | UT Austin poster signal includes SystemC/TLM and simulation methodology | [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks), [Validation and Calibration](#22-validation-and-calibration) |
+| QoS / latency / throughput modeling | NoS work mentions latency, throughput, and QoS; lower priority for CPU-core interview but relevant to performance modeling style | [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks), [ACE / CHI Coherent Interconnect Basics](#6-ace--chi-coherent-interconnect-basics) |
 
 Expected question style:
 - Practical prefetch-design questions: what state is stored, what triggers training, and when to issue/drop a prefetch.
@@ -301,13 +302,13 @@ Highest-priority map:
 
 | Likely topic | Why it may come up | Existing review section |
 |---|---|---|
-| Branch predictor modeling | Public project directly lists global/local/tournament/perceptron/YAGS predictors and BTB hit rate | [Part 5 — Branch Predictor Microarchitecture](#part-5--branch-predictor-microarchitecture), [TAGE Predictor Review](#5-tage-predictor-review), Pratishtha-only notes below |
-| ROB and issue queue arbitration | Public project lists SystemVerilog ROB/IQ with custom arbitration and synthesis | [ROB / ActiveList](#3-rob--activelist), [Issue Queue](#4-issue-queue), [Wakeup / Select](#5-wakeup--select) |
+| Branch predictor modeling | Public project directly lists global/local/tournament/perceptron/YAGS predictors and BTB hit rate | [Branch Predictor Summary and Modeling Checklist](#8-branch-predictor-summary-and-modeling-checklist), [TAGE Predictor Review](#tage-predictor-review), Pratishtha-only notes below |
+| ROB and issue queue arbitration | Public project lists SystemVerilog ROB/IQ with custom arbitration and synthesis | [Why ROB / ActiveList Exists](#7-why-rob--activelist-exists), [Issue Queue](#14-issue-queue), [Wakeup and Select](#15-wakeup-and-select) |
 | Backend power/timing/energy tradeoffs | Public project includes Genus synthesis, max frequency, and energy optimization | [Power, Timing, and Area Tradeoffs](#10-power-timing-and-area-tradeoffs), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints) |
-| Cache partitioning and DRAM scheduling | Public project lists dynamic cache partitioning, BLISS, and ATLAS | [Part 7 — Cache, Coherence, and Memory System](#part-7--cache-coherence-and-memory-system), Pratishtha-only notes below |
+| Cache partitioning and DRAM scheduling | Public project lists dynamic cache partitioning, BLISS, and ATLAS | [Part 6 — Cache, Coherence, and Memory System](#part-6--cache-coherence-and-memory-system), Pratishtha-only notes below |
 | Cache coherence and MESI | Public project lists C cache simulator and MESI protocol | [MESI and MOESI](#3-mesi-and-moesi), [Snooping vs Directory Coherence](#4-snooping-vs-directory-coherence) |
-| Snapdragon profiling and governors | Public project lists Snapdragon 855 stress tests and schedutil/ondemand/performance/powersave governor analysis | [PMU and Performance Counter Interpretation](#9-pmu-and-performance-counter-interpretation), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints), Pratishtha-only notes below |
-| C++/RTL model validation | Public project mix includes C++ models, SystemVerilog, VCS, synthesis, and profiling | [Validation and Calibration](#10-validation-and-calibration), [Architecture Performance Evaluation Hooks](#8-architecture-performance-evaluation-hooks) |
+| Snapdragon profiling and governors | Public project lists Snapdragon 855 stress tests and schedutil/ondemand/performance/powersave governor analysis | [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks), [Mobile Power / Performance Constraints](#11-mobile-power--performance-constraints), Pratishtha-only notes below |
+| C++/RTL model validation | Public project mix includes C++ models, SystemVerilog, VCS, synthesis, and profiling | [Validation and Calibration](#22-validation-and-calibration), [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks) |
 
 Expected question style:
 - Broad microarchitecture coverage: branch predictor, backend, cache, DRAM, and power/perf.
@@ -1113,7 +1114,8 @@ Review order:
    and repair.
 5. Indirect target prediction: Seznec ITTAGE algorithm and XiangShan RTL mapping.
 6. FTQ metadata and recovery lifetime.
-7. Remaining frontend extensions: TAGE-SC-L and uop cache.
+7. I-cache, ITLB, fetch faults, predecode, uop cache, redirect priority, and
+   large-cache/VIPT tradeoffs.
 
 For each topic, answer in this order:
 
@@ -4310,40 +4312,1483 @@ T3:
 
 ### 6. FTQ Metadata and Recovery Lifetime
 
-These questions connect the predictor modules above to the concrete metadata queue that makes recovery and training possible.
+FTQ means Fetch Target Queue. It is a queue of dynamic frontend prediction
+records.
 
-- What exactly does the FTQ store: `startPC`, `fetchEndPC`, `predTarget`,
-  `predTaken`, branch offset, BTB hit, conditional bit, GHR snapshot, PHT
-  index/value, resolved result, and per-lane predictions?
-- Why does each FTQ entry need a GHR snapshot instead of relying only on one
-  global GHR?
-- What are `FTQ_ID` and `ftqLast`?
-- How are `FTQ_ID`, `headPtr`, `tailPtr`, and `commitPtr` related but not
-  identical?
-- When is an FTQ entry allocated: every predicted fetch block or only every
-  predicted branch?
-- When is it released: branch execute, branch writeback, commit, recovery,
-  or interrupt flush?
+A modern frontend does not only fetch instruction bytes. It must remember:
 
-### 7. Remaining Frontend Extensions
+```text
+what PC was predicted
+what target/fallthrough was predicted
+which branch slot was selected as the CFI
+what history state was used
+which predictor entries were read
+what metadata is needed for update
+what snapshot is needed for recovery
+```
+
+Branch prediction happens early, but branch resolution and commit happen much
+later. FTQ is the bridge between:
+
+```text
+frontend prediction time
+and
+backend resolution / recovery / predictor update time
+```
+
+#### FTQ Is Dynamic, Not PC-Unique
+- FTQ entries are dynamic prediction instances, not a cache indexed by PC.
+- A new prediction event normally allocates a new FTQ entry:
+
+  ```text
+  predict next fetch PC -> create prediction record -> enqueue FTQ entry
+  ```
+
+- In a loop, the same start PC can appear multiple times in FTQ:
+
+  ```text
+  iteration 1 fetch PC 0x1000 -> FTQ entry 5
+  iteration 2 fetch PC 0x1000 -> FTQ entry 7
+  iteration 3 fetch PC 0x1000 -> FTQ entry 9
+  ```
+
+- These entries are distinct because each dynamic instance can have different:
+
+  ```text
+  GHR/PHR snapshot
+  RAS state
+  TAGE provider/alternate metadata
+  BTB/FTB hit way
+  position in program order
+  backend resolution status
+  commit timing
+  ```
+
+- Rule:
+
+  ```text
+  new prediction event -> allocate new FTQ entry
+  ```
+
+  unless the frontend is blocked by FTQ full, redirect, fetch stall, or other
+  backpressure.
+
+#### FTQ Versus BTB Target Prediction
+- Direct branch and direct jump targets are fixed by instruction bits:
+
+  ```text
+  conditional branch target = PC + immediate offset
+  JAL target                = PC + immediate offset
+  ```
+
+- A BTB/FTB stores these targets to make them available before decode.
+- For indirect branches, the same PC can have many dynamic targets:
+
+  ```text
+  JALR target = register value + immediate
+  return target = ra
+  virtual call target = function pointer / vtable result
+  ```
+
+- A BTB may store the last indirect target, but ITTAGE or another indirect
+  predictor is needed for:
+
+  ```text
+  PC + path context -> target
+  ```
+
+#### FTQ Entry Data Model
+- A realistic FTQ entry is a dynamic fetch-block prediction record:
+
+  ```text
+  FTQEntry {
+    valid
+    ftq_id
+
+    start_pc
+    fetch_end_pc
+    fallthrough_pc
+
+    inst_start_mask
+    valid_inst_mask
+    branch_mask
+
+    cfi_valid
+    cfi_idx
+    cfi_type
+    pred_taken
+    pred_target
+
+    BTB / FTB metadata
+    TAGE / direction-predictor metadata
+    indirect-predictor metadata
+    GHR / PHR snapshots
+    RAS snapshot
+
+    resolved metadata
+    exception / fetch-fault metadata
+  }
+  ```
+
+- The key is prediction-time identity. For TAGE, it is not enough to store
+  "predicted taken"; the update needs:
+
+  ```text
+  provider table/index/way
+  alternate table/index/way
+  provider counter snapshot
+  allocation candidate or history snapshot to recompute allocation
+  folded-history or PHRT/PHRB snapshot
+  ```
+
+- For BTB/FTB repair, it is not enough to store the predicted target. The
+  update needs:
+
+  ```text
+  BTB/FTB set
+  way
+  CFI slot
+  predicted type
+  predicted target
+  ```
+
+- For RAS recovery, the entry may store:
+
+  ```text
+  ras_idx before update
+  ras_top / overwritten entry if needed
+  call/return slots
+  ```
+
+#### Compressed-Instruction FTQ Lifecycle Example
+- Assume:
+
+  ```text
+  fetch width = 16B
+  RVC enabled
+  ```
+
+- Instruction stream:
+
+  ```text
+  0x1000: c.addi        // 16-bit, 2B
+  0x1002: beq           // 32-bit, 4B, predicted not taken
+  0x1006: c.mv          // 16-bit, 2B
+  0x1008: add           // 32-bit, 4B
+  0x100c: bne           // 32-bit, 4B, predicted taken to 0x3000
+  ```
+
+- Total size:
+
+  ```text
+  2 + 4 + 2 + 4 + 4 = 16B
+  ```
+
+- Halfword positions:
+
+  ```text
+  H0: 0x1000
+  H1: 0x1002
+  H2: 0x1004
+  H3: 0x1006
+  H4: 0x1008
+  H5: 0x100a
+  H6: 0x100c
+  H7: 0x100e
+  ```
+
+- Instruction starts:
+
+  ```text
+  0x1000: c.addi    uses H0
+  0x1002: beq       uses H1 + H2
+  0x1006: c.mv      uses H3
+  0x1008: add       uses H4 + H5
+  0x100c: bne       uses H6 + H7
+
+  inst_start_mask = 1 1 0 1 1 0 1 0
+                    H0 H1 H2 H3 H4 H5 H6 H7
+  ```
+
+- Predecode creates real instruction slots:
+
+  ```text
+  slot0: PC 0x1000, len 2B, c.addi
+  slot1: PC 0x1002, len 4B, beq, predicted N
+  slot2: PC 0x1006, len 2B, c.mv
+  slot3: PC 0x1008, len 4B, add
+  slot4: PC 0x100c, len 4B, bne, predicted T to 0x3000
+  ```
+
+- Predictor allocates:
+
+  ```text
+  ftq_id = 17
+  start_pc = 0x1000
+  fetch_end_pc = 0x1010
+  fallthrough_pc = 0x1010
+
+  branch_mask = slot1 and slot4
+  cfi_idx = slot4
+  cfi_type = conditional branch
+  pred_taken = true
+  pred_target = 0x3000
+  ```
+
+- Fetch/instruction buffer entries carry `ftq_id = 17`:
+
+  ```text
+  slot0: pc=0x1000, len=2, is_rvc=1, ftq_id=17, ftq_last=0
+  slot1: pc=0x1002, len=4, is_rvc=0, ftq_id=17, ftq_last=0
+  slot2: pc=0x1006, len=2, is_rvc=1, ftq_id=17, ftq_last=0
+  slot3: pc=0x1008, len=4, is_rvc=0, ftq_id=17, ftq_last=0
+  slot4: pc=0x100c, len=4, is_rvc=0, ftq_id=17, ftq_last=1
+  ```
+
+- `ftq_last` marks the last instruction belonging to the surviving FTQ entry.
+  Initially it is the selected predicted CFI slot or the end of the fetch
+  group.
+
+#### Commit-Based Deallocation
+- FTQ entries are usually released at commit/retire, not at execute.
+- Execute can resolve a branch:
+
+  ```text
+  compare predicted vs actual
+  redirect if needed
+  mark FTQ branch resolved
+  maybe do early repair/training
+  ```
+
+- Commit makes the entry architecturally safe:
+
+  ```text
+  perform durable predictor update
+  advance committed history
+  release FTQ entry
+  ```
+
+- Why not release at execute:
+
+  ```text
+  older branch mispredict
+  older exception
+  older interrupt boundary
+  older memory-order violation
+  older fault
+  ```
+
+  can still flush this branch after it executes.
+- Safe wording:
+
+  > Execute is for resolution and fast recovery. Commit is for non-speculative
+  > release and durable bookkeeping.
+
+#### Partial Recovery Inside One FTQ Entry
+- An FTQ entry can contain multiple branches. A misprediction inside the entry
+  does not necessarily discard the entire entry.
+- Example:
+
+  ```text
+  slot0: I
+  slot1: b1 predicted not taken
+  slot2: I
+  slot3: b2 predicted taken to 0x3000
+  slot4: I
+  ```
+
+- If `b2` resolves not taken:
+
+  ```text
+  slot0-slot3 survive
+  younger FTQ entries fetched from 0x3000 are flushed
+  corrected next PC = b2_pc + instruction_length
+  ```
+
+- The frontend starts fetching from the corrected next PC:
+
+  ```text
+  if actual taken:
+    next_pc = actual branch target
+
+  if actual not taken:
+    next_pc = branch_pc + instruction_length
+  ```
+
+- If `b1` resolves taken after being predicted not taken:
+
+  ```text
+  slot2-slot4 are wrong-path
+  effective FTQ last slot becomes slot1
+  fetch redirects to b1 target
+  ```
+
+- The entry is not deallocated immediately. It is released when the new
+  effective last surviving instruction commits.
+- Predictor-state recovery may replay branch outcomes inside the entry, but
+  instruction execution is not replayed for surviving older instructions.
+
+#### History and RAS Snapshot Granularity
+- Common approach:
+
+  ```text
+  one GHR/PHR/RAS snapshot before the FTQ block
+  plus per-branch metadata inside the block
+  ```
+
+- Example:
+
+  ```text
+  snapshot before block = GHR 1010
+  slot1 predicted N
+  slot4 predicted T
+
+  speculative history after block:
+    apply slot1 N -> 10100
+    apply slot4 T -> 101001
+  ```
+
+- If slot4 actually resolves not taken:
+
+  ```text
+  restore 1010
+  apply slot1 actual N -> 10100
+  apply slot4 actual N -> 101000
+  ```
+
+- If slot1 actually resolves taken:
+
+  ```text
+  restore 1010
+  apply slot1 actual T -> 10101
+  do not apply slot4, because it is wrong-path
+  ```
+
+- Alternatives:
+
+  | Snapshot policy | Benefit | Cost |
+  |---|---|---|
+  | Per-FTQ snapshot | Compact | Recovery must replay surviving branch effects inside block |
+  | Per-branch snapshot | Simpler precise restore | More storage and write bandwidth |
+  | Hybrid snapshot + undo metadata | Balance | More control complexity |
+
+#### Predictor Update Metadata and Allocation
+- FTQ stores prediction-time metadata because current history is different by
+  the time the branch resolves or commits.
+- TAGE example:
+
+  ```text
+  prediction-time PC = 0x1008
+  prediction-time GHR/PHR = H
+
+  provider = T2
+  provider_index = 0x87
+  provider_tag = 0x19
+  alternate = T0
+  allocation_candidate = T3 index 0x44 tag 0x2a
+  ```
+
+- Later, update uses FTQ metadata:
+
+  ```text
+  T2[0x87].counter--
+  maybe update useful
+  maybe update USE_ALT_ON_NA
+  maybe allocate T3[0x44]
+  ```
+
+  not indexes recomputed from current speculative history.
+- If the design stores PHRT/PHRB or folded-history snapshots instead of every
+  index/tag, update can recompute the correct prediction-time indexes/tags.
+- Allocation candidate tradeoff:
+
+  | Policy | Benefit | Cost |
+  |---|---|---|
+  | Choose candidate at prediction | Reuses table reads already done for prediction; less update-time SRAM pressure | Candidate may become stale |
+  | Choose candidate at update | Uses current table state; avoids stale candidate | Needs extra SRAM read/replacement logic on update path |
+  | Reserve candidate | Avoids staleness | Wastes capacity and complicates squash cleanup |
+
+- A practical high-performance design may choose/store an allocation candidate
+  during prediction, then recheck lightly or drop the allocation if the
+  candidate is no longer acceptable.
+
+#### Execute, Commit, and Early Repair
+- Separate three events:
+
+  ```text
+  execute / resolve:
+    actual direction and target become known
+    redirect and flush if needed
+    mark FTQ branch resolved
+
+  predictor update / repair:
+    can be execute-time, commit-time, or hybrid
+
+  commit / release:
+    update is non-speculative
+    FTQ entry can be released
+  ```
+
+- Direct branch and `JAL` target repair can often happen at predecode/decode
+  because the target is encoded in instruction bits:
+
+  ```text
+  direct target = PC + immediate
+  ```
+
+- Execute is needed for conditional direction, not for direct target
+  calculation.
+- But early repair can be wrong-path if an older branch or exception later
+  squashes this instruction. Conservative models delay durable update to
+  commit; aggressive frontends may repair early and tolerate or recover from
+  predictor pollution.
+
+#### FTQ Versus Fetch Buffer Versus ROB
+- These structures track different lifetimes:
+
+  ```text
+  FTQ:
+    in-flight fetch predictions and recovery/update metadata
+
+  Fetch buffer / instruction buffer:
+    fetched instructions waiting for decode
+
+  ROB:
+    renamed instructions waiting to commit in order
+  ```
+
+- Why not use the ROB instead of FTQ:
+
+  ```text
+  prediction happens before rename/ROB allocation
+  frontend needs prediction metadata before instructions enter the ROB
+  ```
+
+- Why not use the fetch buffer instead of FTQ:
+
+  ```text
+  fetch buffer entries can be consumed by decode and freed
+  long before branch execute/commit
+  ```
+
+- FTQ survives long enough for:
+
+  ```text
+  branch resolution
+  recovery
+  predictor update
+  commit release
+  ```
+
+#### Redirect Interaction
+- Multiple redirect sources can compete:
+
+  ```text
+  reset / trap / exception vector
+  commit-stage interrupt or exception redirect
+  backend branch mispredict
+  decode/predecode correction
+  main BTB late correction over uBTB
+  normal BPU predicted next PC
+  ```
+
+- General priority:
+
+  ```text
+  older and architecturally mandatory redirects win
+  younger speculative predictions lose
+  ```
+
+- If a branch in FTQ entry `E10` mispredicts:
+
+  ```text
+  keep E10 metadata until safe
+  flush entries younger than E10
+  restore snapshot from E10
+  replay surviving branch effects inside E10
+  redirect to actual target/fallthrough
+  ```
+
+#### FTQ Performance Modeling
+- FTQ controls frontend runahead. If it is full, the BPU cannot allocate new
+  prediction records and fetch can starve.
+- Important counters:
+
+  ```text
+  ftq_occupancy
+  ftq_full_cycles
+  ftq_alloc_rate
+  ftq_release_rate
+  average_ftq_lifetime
+  instructions_per_ftq_entry
+  wrong_path_ftq_allocs
+  wrong_path_fetch_bytes
+  recovery_penalty_cycles
+  predictor_update_latency
+  ```
+
+- Sizing rule of thumb:
+
+  ```text
+  required_depth ~= allocation_rate * average_lifetime + burst_margin
+  ```
+
+- Example:
+
+  ```text
+  allocation rate = 1 entry/cycle
+  average prediction-to-commit lifetime = 18 cycles
+  burst margin = 8 entries
+
+  practical depth ~= 26 entries
+  ```
+
+- Deep FTQ:
+
+  ```text
+  more runahead
+  better latency hiding
+  more storage
+  more wrong-path fetch after mispredict
+  more recovery metadata
+  ```
+
+- Shallow FTQ:
+
+  ```text
+  smaller and lower power
+  less wrong-path work
+  more FTQ-full frontend stalls
+  ```
+
+#### FTQ Design Tradeoffs
+- Entry granularity:
+
+  | Granularity | Benefit | Cost |
+  |---|---|---|
+  | Fixed fetch block | Simple I-cache alignment | May carry invalid slots after taken CFI |
+  | CFI-ended fetch group | Cleaner control-flow metadata | Variable instruction count per entry |
+
+- Multi-branch metadata:
+
+  ```text
+  richer design:
+    branch_mask
+    per-branch TAGE metadata
+    selected cfi_idx
+    per-branch actual outcomes
+
+  simpler design:
+    only selected CFI metadata
+  ```
+
+- Richer metadata improves accuracy and update quality for earlier not-taken
+  branches, but costs FTQ storage and recovery complexity.
+- Interview summary:
+
+  > FTQ is a dynamic prediction metadata queue. Main design choices are entry
+  > granularity, snapshot granularity, depth, multi-branch metadata richness,
+  > and update timing. A high-performance design wants enough FTQ depth and
+  > metadata to support frontend runahead and precise recovery, but every extra
+  > entry carries history snapshots, predictor metadata, and wrong-path state.
+
+### 7. I-Cache, ITLB, Predecode, Uop Cache, and Redirect Priority
+
+The frontend is not just a branch predictor plus an I-cache. A modern frontend
+has to turn speculative virtual PCs into a precise architectural instruction
+stream while hiding I-cache misses, ITLB misses, branch target latency, and
+decode bandwidth limits.
+
+This section closes the frontend review by connecting:
+
+```text
+next-PC prediction
+  -> ITLB / I-cache / uop-cache source selection
+  -> instruction boundary detection
+  -> fetch buffer / instruction buffer
+  -> precise fetch exceptions
+  -> redirect and replay priority
+```
+
+#### Demand Fetch Path
+
+Modern fetch is usually virtual-PC driven:
+
+```text
+fetch PC selected by redirect mux
+  -> BPU / BTB / RAS / indirect predictor use virtual PC
+  -> ITLB translates virtual PC to physical address
+  -> I-cache reads instruction bytes
+  -> predecode finds instruction starts and CFIs
+  -> fetch buffer / instruction buffer sends slots to decode
+```
+
+Important split:
+
+```text
+frontend control flow:
+  virtual PC
+
+cache data access:
+  physical address / physical tag after ITLB translation
+
+architectural exception PC:
+  virtual instruction PC
+```
+
+Why virtual PC still matters after translation:
+
+```text
+BTB targets are virtual PCs
+FTQ stores fetch PCs for recovery/update
+EPC/mepc/sepc report virtual instruction PCs
+debug/trace use virtual instruction PCs
+uop-cache lookup may want to start before translation finishes
+```
+
+Interview wording:
+
+> The I-cache bytes are protected by physical translation, but frontend
+> prediction and architectural bookkeeping remain virtual-PC based. Translation
+> is a check and address-generation step, not a replacement for the virtual
+> instruction stream.
+
+#### ITLB Miss, I-Cache Miss, and Fetch Page Fault
+
+These three events are easy to mix up:
+
+| Event | Architectural exception? | Usual behavior |
+|---|---:|---|
+| ITLB miss | No | Start page walk or L2 TLB lookup, then replay fetch |
+| I-cache miss | No | Refill line from lower cache, then replay fetch |
+| Instruction page/access fault | Yes, if on real path | Create exception token/uop; take trap precisely later |
+
+Concrete example:
+
+```text
+PC = 0x1040
+
+ITLB miss:
+  no translation in L1 ITLB
+  page walker/L2 TLB finds valid executable PTE
+  refill ITLB
+  replay fetch 0x1040
+
+I-cache miss:
+  translation is valid
+  L1I does not have cacheline
+  request line from L2/L3/memory
+  replay fetch 0x1040 when line returns
+
+fetch page fault:
+  translation says page is not present or not executable
+  create fetch exception for instruction stream at 0x1040
+  take exception only if it reaches precise commit
+```
+
+Rule:
+
+```text
+miss  = performance event
+fault = architectural event, but only if not wrong-path
+```
+
+#### Precise Fetch Exceptions
+
+A fetch exception is detected early, but architecturally taken late.
+
+```text
+Fetch / ITLB stage:
+  detects instruction page fault or access fault
+
+Fetch buffer / decode:
+  creates an exception-carrying instruction slot/uop
+
+ROB / commit:
+  raises the trap only when it is oldest and valid
+```
+
+This is required because of wrong-path fetch:
+
+```text
+0x1000: branch predicted not taken
+0x1004: normal instruction
+0x1008: fetch page fault
+
+if branch later resolves taken:
+  0x1008 was wrong-path
+  discard the fetch fault
+
+if branch resolves not taken:
+  0x1008 is the real next instruction
+  take instruction page fault when precise
+```
+
+BOOM reference behavior:
+
+```text
+frontend detects pf.inst / ae.inst
+fetch bundle carries xcpt_pf_if / xcpt_ae_if
+fetch buffer copies exception bits into uops
+decode maps them to fetch_page_fault / fetch_access
+ROB records oldest exception
+CSR trap is raised at precise commit
+```
+
+BOOM is conservative for frontend exceptions: it waits for older pipeline state
+to clear before letting the frontend exception pass decode. This simplifies
+precise exception handling because the exception token is not allowed to sit
+behind arbitrary older unresolved work.
+
+Interview wording:
+
+> The frontend can know a fetch page fault before it knows the instruction
+> bits. It marks the fetch slot at the faulting instruction stream position,
+> but the architectural trap is delayed until precise commit. Wrong-path fetch
+> faults are squashed.
+
+#### Which PC Is Marked for a Fetch Fault?
+
+The exception belongs to the instruction whose fetch cannot architecturally
+complete, not necessarily to the branch that led there.
+
+Example:
+
+```text
+0x1000: beq x1, x2, target
+0x1004: add
+0x1008: instruction fetch page fault
+```
+
+If branch predicted not taken and frontend fetches `0x1008`:
+
+```text
+faulting fetch slot = 0x1008
+not the branch at 0x1000
+```
+
+If the branch later resolves taken:
+
+```text
+0x1008 was wrong-path
+fault disappears
+```
+
+If the branch resolves not taken:
+
+```text
+0x1008 becomes oldest real next instruction
+trap is taken
+```
+
+#### Split RVC Instruction Across Cacheline or Page
+
+With RVC enabled, instruction starts are halfword-aligned:
+
+```text
+16-bit instruction:
+  low bits != 2'b11
+
+32-bit instruction:
+  low bits == 2'b11
+```
+
+A 32-bit instruction can start at the last halfword of a cacheline or page:
+
+```text
+0xffe:  first 16b half of 32-bit instruction
+0x1000: second 16b half of same instruction
+```
+
+If the second half faults:
+
+```text
+translation/fault address may be 0x1000
+architectural EPC should be instruction start PC = 0xffe
+```
+
+The frontend must preserve:
+
+```text
+first_half_bits
+instruction_start_pc = 0xffe
+edge/split marker
+FTQ/fetch metadata
+fault metadata from second-half fetch
+```
+
+After the OS handles the page fault and returns:
+
+```text
+restart PC = 0xffe
+fetch mask enables only the last halfword in that first page/cacheline
+frontend carries it and fetches the second half from 0x1000
+```
+
+The old TLB entry for the first page does not need to remain live. The
+frontend only needs to preserve the virtual instruction start PC and the
+carried halfword metadata.
+
+BOOM reference:
+
+```text
+prev_half / end_half:
+  track trailing 16b half
+
+edge_inst:
+  marks instruction that started in previous packet
+
+CSR EPC reconstruction:
+  fetch_block_base + pc_lob - (edge_inst ? 2 : 0)
+```
+
+Interview wording:
+
+> With RVC, fetch is a halfword stream problem. A fault may be detected while
+> fetching the second half of an instruction, but precise EPC must point to the
+> first halfword where the instruction started.
+
+#### I-Cache Miss and Replay
+
+An I-cache miss is not an exception:
+
+```text
+fetch PC = 0x1040
+ITLB translation valid
+I-cache misses line containing 0x1040
+```
+
+Frontend behavior:
+
+```text
+1. allocate miss request / line fill
+2. remember fetch PC and metadata
+3. feed decode from existing fetch buffer if possible
+4. stall when buffer drains
+5. refill I-cache
+6. replay fetch PC 0x1040
+```
+
+From decode/rename's view, demand instruction fetch is usually blocking:
+
+```text
+decode cannot skip missing PC 0x1040 and decode younger PCs out of order
+```
+
+But the I-cache subsystem can still be non-blocking internally:
+
+```text
+hit-under-miss for other independent fetches
+multiple line-fill buffers / MSHRs
+instruction prefetch
+redirect can abandon an outstanding wrong-path miss
+critical-word or critical-block return
+```
+
+Performance-modeling distinction:
+
+```text
+demand miss visible to frontend:
+  decode eventually starves
+
+prefetch miss hidden by runahead:
+  no frontend bubble if line arrives before demand
+```
+
+Useful counters:
+
+```text
+I-cache MPKI
+ITLB MPKI
+I-cache miss latency
+frontend cycles stalled on I-cache miss
+frontend cycles stalled on ITLB miss
+fetch-buffer empty cycles
+number of outstanding instruction misses
+wrong-path instruction miss requests
+prefetch coverage / accuracy / lateness
+```
+
+#### Blocking Versus Non-Blocking Apple Fetch
+
+Public sources do not expose Apple Firestorm/Oryon-level I-cache MSHR details
+with the precision needed to state the exact implementation.
+
+Safe model:
+
+```text
+demand fetch stream:
+  effectively blocking once the needed fetch block is missing and buffers drain
+
+implementation underneath:
+  likely has aggressive instruction prefetch, fill buffers, and large L1I
+  to make demand misses rare or hidden
+```
+
+Apple Firestorm uses very large private L1 caches:
+
+```text
+L1I = 192 KB
+L1D = 128 KB
+page size = 16 KB
+```
+
+The large L1I reduces instruction miss frequency, and instruction prefetch
+can hide many misses before they reach the demand fetch stream.
+
+Interview wording:
+
+> I would not claim Apple demand fetch can decode around a missing current
+> instruction block. It cannot violate program-order frontend delivery. But I
+> would model the implementation as aggressive underneath: large L1I,
+> instruction prefetch, and likely multiple fills so many misses are hidden
+> before becoming demand stalls.
+
+#### I-Cache Predecode Metadata
+
+After I-cache bytes return, the frontend must interpret a byte/halfword stream.
+With RVC enabled:
+
+```text
+16B fetch block = 8 halfwords
+instruction size = 16b or 32b
+```
+
+Example:
+
+```text
+0x1000: c.addi      16b
+0x1002: c.li        16b
+0x1004: add         32b
+0x1008: beq         32b
+0x100c: jal         32b
+```
+
+Halfword view:
+
+```text
+H0 0x1000: start of c.addi
+H1 0x1002: start of c.li
+H2 0x1004: start of add
+H3 0x1006: second half of add
+H4 0x1008: start of beq
+H5 0x100a: second half of beq
+H6 0x100c: start of jal
+H7 0x100e: second half of jal
+```
+
+Frontend predecode produces:
+
+```text
+start_mask = 1 1 1 0 1 0 1 0
+is_rvc     = 1 1 0 x 0 x 0 x
+is_cfi     = 0 0 0 x 1 x 1 x
+```
+
+Two implementation choices:
+
+| Design | Benefit | Cost |
+|---|---|---|
+| Predecode after every I-cache hit | Simpler I-cache storage | Repeated logic/power/timing cost |
+| Store predecode bits with I-cache line | Faster repeated fetch and lower decode-front power | More I-cache bits and invalidation complexity |
+
+For RISC-V, dynamic predecode is relatively cheap because length detection is
+mostly low-two-bit checking. For x86, stored predecode metadata is more
+valuable because instruction length decoding is expensive.
+
+#### BTB, FTQ, and Instruction Boundaries
+
+BTB and FTQ are not full instruction-boundary stores.
+
+Clean ownership:
+
+```text
+BTB:
+  reusable future CFI target/type metadata
+
+FTQ:
+  dynamic in-flight prediction and recovery metadata
+
+fetch buffer / instruction buffer:
+  real per-instruction slot metadata after bytes are known
+```
+
+Example instruction stream:
+
+```text
+0x1000: c.addi
+0x1002: add
+0x1006: beq
+0x100a: c.li
+0x100c: jal
+```
+
+Full instruction start map:
+
+```text
+start_mask = 1 1 0 1 0 1 1 0
+```
+
+BTB does not need to store that whole map. It may store only CFI starts:
+
+```text
+fetch block 0x1000:
+  slot 3: conditional branch, target 0x2000
+  slot 6: JAL, target 0x3000
+```
+
+FTQ may store:
+
+```text
+fetch_pc
+predicted_next_pc
+cfi_idx
+cfi_type
+branch_mask
+history snapshots
+predictor metadata
+```
+
+Fetch buffer/uops store:
+
+```text
+pc_lob / PC
+inst bits or expanded inst
+is_rvc
+exception bits
+ftq_idx
+```
+
+How BTB learns CFI boundaries:
+
+```text
+first encounter:
+  BTB may miss
+  I-cache bytes return
+  predecode/decode sees branch/JAL
+  execute resolves target/outcome
+  update trains BTB with CFI slot/type/target
+
+next encounter:
+  BTB predicts before bytes return
+```
+
+#### BOOM BTB Direction Nuance
+
+In many textbook explanations:
+
+```text
+BTB = target/type
+TAGE/BIM = taken/not-taken direction
+```
+
+This is a useful clean model, but BOOM shows the practical nuance. BOOM has
+multiple BTB-like structures:
+
+| Structure | Timing role | Stored direction? |
+|---|---|---|
+| uBTB / FA uBTB | Early F1 redirect | Yes, small 2-bit counter for conditional branches |
+| main BTB | Later target/type | Mostly target offset/full target plus branch/JAL type |
+| BIM/TAGE | Direction refinement | Yes, direction counters |
+
+BOOM `FA2MicroBTB` metadata includes:
+
+```text
+tag
+ctr        // 2-bit direction counter
+cfi_idx
+br_mask
+jal_mask
+```
+
+Its early taken decision is:
+
+```text
+taken = is_jal || ctr[1]
+```
+
+This makes sense because uBTB exists to provide a quick redirect before a
+slower TAGE-class predictor is ready.
+
+Interview wording:
+
+> In a clean model, BTB stores target/type and TAGE stores direction. In a real
+> fast path, a uBTB often also carries a small direction counter so it can make
+> the initial redirect. Later BIM/TAGE/main-BTB stages can correct it.
+
+#### Uop Cache / Decoded Instruction Cache
+
+A uop cache is an alternate frontend source:
+
+```text
+normal path:
+  PC -> ITLB/I-cache -> predecode -> instruction buffer -> decode -> rename
+
+uop-cache hit path:
+  PC -> uop cache -> uop queue / rename
+```
+
+First execution of hot loop:
+
+```text
+uop cache miss
+I-cache fetches bytes
+decode creates uops
+uop cache fills decoded block
+```
+
+Later execution:
+
+```text
+BTB predicts loop target
+uop cache hits on loop PC
+frontend supplies decoded uops directly
+decode can be bypassed
+```
+
+This is not only a decode-power optimization. It is also a frontend bandwidth
+optimization:
+
+```text
+bypass I-cache data read for that block, depending design
+bypass instruction alignment/splitting
+bypass RVC expansion / length predecode
+bypass full decode
+deliver uops closer to rename
+```
+
+Still needed on a hit:
+
+```text
+next-PC prediction
+uop-cache tag/context check
+permission/context validity
+uop ordering
+redirect recovery
+rename backpressure handling
+```
+
+Some implementations lookup uop cache and I-cache in parallel, then kill/ignore
+the I-cache result on uop-cache hit. Others suppress I-cache access after a
+fast uop-cache hit to save power.
+
+#### Does BOOM Have a Uop Cache?
+
+The inspected `riscv-boom-fengze` frontend does not have a real uop cache.
+
+BOOM has a `FetchBuffer`, which:
+
+```text
+takes FetchBundle
+creates MicroOp containers
+buffers them before decode
+```
+
+But BOOM still instantiates `DecodeUnit`s and feeds fetch-buffer output into
+decode. Therefore its path is:
+
+```text
+I-cache -> fetch/predecode -> FetchBuffer -> DecodeUnit -> rename
+```
+
+not:
+
+```text
+uop cache hit -> skip DecodeUnit -> rename
+```
+
+RSD anchor:
+
+```text
+RSD also does not implement a uop cache.
+```
+
+#### Why Uop Cache Correctness Is Hard
+
+The basic idea is simple:
+
+```text
+reuse previous decode result
+```
+
+The hard part is proving the cached decode result still corresponds to the same
+architectural instruction stream and context.
+
+Context alias example:
+
+```text
+Process A:
+  VA 0x4000 -> physical page P1 -> add
+
+Process B:
+  VA 0x4000 -> physical page P2 -> jal
+```
+
+If a uop cache is tagged only by virtual PC, process B could consume process
+A's decoded uops. Solutions:
+
+```text
+include ASID/VMID in tag
+use physical tagging
+flush on context switch / satp change
+```
+
+Self-modifying code / JIT example:
+
+```text
+old bytes at 0x4000 = add
+program writes new bytes = jal
+FENCE.I / I-cache maintenance occurs
+```
+
+The uop cache must invalidate stale decoded uops, not only the I-cache bytes.
+
+Privilege/CSR context example:
+
+```text
+same instruction bits
+legal in machine mode
+illegal in user mode
+
+or:
+FP/vector instruction legal only if status/ISA bits enable it
+```
+
+If decode result includes legality/control information, context changes must be
+tracked or force re-decode.
+
+Storage problem:
+
+```text
+4-byte RISC-V instruction -> large internal MicroOp
+```
+
+The cached decoded representation may contain:
+
+```text
+uop opcode
+source/destination types
+functional-unit selection
+immediate
+branch metadata
+memory command/size
+exception/control bits
+fusion boundaries
+commit accounting
+```
+
+For RISC-V/AArch64, decode is simpler than x86, so decode-power benefit is
+smaller. For very wide cores, however, the bandwidth benefit can still be
+large.
+
+#### Uop Cache Indexing: Virtual or Physical PC?
+
+Instruction bytes require physical translation, but the frontend prediction
+stream is virtual-PC based.
+
+A uop cache often wants to lookup early:
+
+```text
+cycle N:
+  fetch virtual PC selected
+  uop cache lookup starts
+  ITLB/I-cache path also starts
+```
+
+If uop cache waited for physical PC:
+
+```text
+cycle N:   virtual PC
+cycle N+1: ITLB produces physical address
+cycle N+2: uop cache lookup
+```
+
+This loses some of the latency advantage. Therefore many designs use some
+virtual component:
+
+```text
+virtually indexed/tagged with ASID/VMID
+virtually indexed, physically tagged
+physically tagged after parallel translation
+flush-on-context-change simple policy
+```
+
+Interview wording:
+
+> Uop-cache indexing is a speed/correctness tradeoff. Virtual lookup starts
+> early but needs ASID/VMID or flush rules. Physical tagging is cleaner but can
+> add translation latency unless overlapped.
+
+#### Frontend Link to TLB/MMU and VIPT Details
+
+The frontend chapter only needs the operational translation model:
+
+```text
+virtual fetch PC
+  -> ITLB translation
+  -> I-cache / uop-cache access
+  -> predecode / fetch buffer
+```
+
+Frontend-specific points kept here:
+
+- ITLB miss is a replay/stall event, not an architectural exception by itself.
+- Instruction page/access fault is carried as metadata until the instruction
+  becomes architecturally precise.
+- Split RVC instructions across a page must remember the first half and use the
+  instruction start PC as the architectural fault PC.
+- Wrong-path fetch faults are discarded when an older redirect flushes them.
+
+The deeper cache/TLB geometry questions belong in
+[Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker):
+
+- VIPT formula and synonym risk.
+- Page coloring.
+- 4 KB / 16 KB / 64 KB page-size tradeoffs.
+- Apple Firestorm and Oryon large L1 cache examples.
+- Set/color prediction and way prediction.
+
+#### Frontend Redirect and Replay Priority
+
+Modern frontend has many possible next-PC sources:
+
+```text
+backend exception / interrupt / commit flush
+execute branch mispredict
+memory-order replay or pipeline replay
+decode/predecode direct-target repair
+RAS repair
+main BTB / TAGE correction
+uBTB early prediction
+I-cache / ITLB replay PC
+uop-cache hit PC
+sequential fallthrough
+```
+
+The frontend needs a priority mux. Stronger and older events must override
+younger speculative predictions.
+
+Typical priority:
+
+```text
+1. architectural exception / interrupt / commit flush
+2. execute-stage branch or JALR mispredict redirect
+3. memory-order or pipeline replay redirect
+4. decode/predecode repair
+5. main BTB / TAGE / RAS correction
+6. uBTB early prediction
+7. I-cache/ITLB replay if no stronger redirect
+8. sequential fallthrough
+```
+
+Concrete example:
+
+```text
+Cycle N:
+  fetch PC = 0x1000
+  uBTB predicts target 0x2000
+
+Cycle N+1:
+  frontend begins fetching 0x2000
+
+Cycle N+2:
+  main BTB/TAGE says branch was not taken
+  correction target = 0x1010
+
+Cycle N+3:
+  older backend branch at 0x0f00 resolves mispredicted
+  actual target = 0x3000
+```
+
+The backend redirect wins:
+
+```text
+next fetch PC = 0x3000
+kill younger frontend work
+restore FTQ/GHR/RAS snapshots
+discard wrong-path fetch faults and I-cache misses if possible
+```
+
+Interview wording:
+
+> Frontend prediction is layered. Fast predictors provide early PCs, slower
+> predictors and predecode repair them, and execute/commit redirects override
+> all younger frontend predictions. The PC-select mux is fundamentally an age
+> and certainty priority problem.
+
+#### Modeling Hooks for This Whole Block
+
+Useful frontend performance counters:
+
+```text
+I-cache MPKI
+ITLB MPKI
+instruction page walk count
+I-cache miss latency distribution
+fetch-buffer empty cycles
+fetch-buffer full cycles
+decode input starvation cycles
+uBTB hit rate
+main BTB correction rate
+TAGE correction rate
+decode repair redirects
+execute redirects
+wrong-path fetch blocks
+wrong-path I-cache misses
+RVC split-instruction count
+cacheline-crossing instruction count
+page-crossing instruction count
+uop-cache hit rate, if implemented
+uop-cache invalidation count
+```
+
+For a performance model, distinguish:
+
+```text
+architectural events:
+  precise exceptions, committed branches, committed faults
+
+microarchitectural events:
+  wrong-path fetch, squashed faults, replayed loads/fetches, predictor repair
+```
+
+#### Frontend Closing Summary
+
+Modern frontend complexity comes from doing three things at once:
+
+```text
+1. predict far ahead to keep a wide backend fed
+2. recover precisely when speculation was wrong
+3. preserve architectural correctness across translation, exceptions,
+   self-modifying code, and variable/compressed instruction boundaries
+```
+
+The high-level mental model:
+
+```text
+BTB/uBTB/RAS/ITTAGE/TAGE:
+  predict where to fetch
+
+ITLB/I-cache/uop-cache:
+  supply the instruction stream or decoded uops
+
+predecode/fetch buffer:
+  convert bytes into instruction slots
+
+FTQ:
+  remember dynamic prediction metadata for update and recovery
+
+ROB/commit:
+  make exceptions and predictor updates precise
+```
 
 #### Deferred: TAGE-SC-L Direction Predictor
 
 - TAGE basics are covered in the direction-prediction section above.
-- Hold TAGE-SC-L until after the remaining frontend modules, backend, LSU, and
-  other architecture topics.
+- Hold TAGE-SC-L until after backend, LSU, TLB/MMU, atomics/LR-SC, and fences.
 - Later coverage should focus on what SC-L adds on top of standard TAGE:
   statistical corrector, loop predictor, extra confidence/chooser logic,
   update metadata, and frontend timing impact.
-
-#### Micro-op Cache / Decoded Instruction Cache
-
-- What is a micro-op cache or decoded instruction cache?
-- How is it different from I-cache, trace cache, loop buffer, and normal
-  decode queue?
-- What does it store, how is it indexed, how does it interact with branch
-  prediction, and how is it invalidated by self-modifying code or `FENCE.I`?
-- RSD anchor: not implemented in the inspected decoupled frontend.
 
 ### Real Pipeline Stage Mapping
 
@@ -4876,11 +6321,190 @@ run successfully:
 Embench is intentionally not part of the regular FE validation loop because the
 full suite is too long for iteration.
 
+### 8. Branch Predictor Summary and Modeling Checklist
+
+This subsection replaces the old standalone branch predictor chapter. Branch
+prediction is part of the frontend, so the summary belongs here with fetch
+blocks, BTB, TAGE, RAS, indirect prediction, FTQ, and I-cache/ITLB behavior.
+
+#### What A Branch Predictor Predicts
+
+Direction:
+- Conditional branch taken / not taken.
+- Structures: bimodal counters, local history, global history, gshare,
+  tournament, TAGE, perceptron-like predictors.
+
+Target:
+- BTB predicts the target PC for taken branches and jumps.
+- Return address stack predicts function returns.
+- Indirect predictor handles indirect jumps with many possible targets.
+
+Fetch-block metadata:
+- Which lane in the fetch packet is the first taken branch.
+- Where the fetch block ends.
+- What history snapshot must be restored on misprediction.
+
+#### RSD Implementation Anchor
+
+RSD decoupled frontend uses:
+- `DecoupledBPU.sv` with BTB + PHT + global-history indexing.
+- `CONF_BTB_ENTRY_NUM = 1024`.
+- `CONF_PHT_ENTRY_NUM = 2048`.
+- `CONF_BRANCH_GLOBAL_HISTORY_BIT_WIDTH = 10`.
+- A gshare-style PHT index: PC index bits XORed with global history.
+- FTQ entries that carry prediction metadata, GHR snapshots, PHT index/value,
+  branch offset, predicted target, and lane predictions.
+- Predictor update from resolved branch metadata through the FTQ update path.
+
+What RSD does not currently model:
+- RAS.
+- TAGE / tournament predictor.
+- Indirect branch target predictor.
+- Multi-level BTB hierarchy.
+
+Use this as an interview contrast:
+
+```text
+RSD is useful as a concrete implementation anchor.
+For modern high-performance frontend discussion, compare against BOOM/XiangShan-style structures:
+multi-level BTB, RAS, TAGE, ITTAGE, richer FTQ metadata, and deeper speculative history repair.
+```
+
+#### Prediction Flow
+
+1. Use fetch PC to read BTB and PHT.
+2. Match BTB tag for each fetch lane.
+3. Use PHT counter MSB as taken/not-taken direction for BTB-hit lanes.
+4. Pick the first predicted-taken lane in the fetch block.
+5. Set predicted next PC to BTB target if taken, otherwise fall-through fetch end.
+6. Enqueue prediction metadata into FTQ.
+7. Speculatively update global history for predicted conditional branches.
+8. On resolution, update BTB/PHT and restore/update global history if the
+   speculation was wrong.
+
+#### Performance-Modeling Knobs
+
+- Direction accuracy by branch class.
+- Target accuracy by branch class: direct branch, direct jump, return, indirect
+  jump.
+- BTB capacity, associativity, tag width, and aliasing.
+- uBTB/main BTB latency and correction policy.
+- PHT/TAGE size, history length, and destructive aliasing.
+- RAS depth, speculative repair, overflow/underflow behavior.
+- Indirect predictor table sizes, target compression, allocation policy, and
+  update timing.
+- Predictor latency and fetch redirection latency.
+- Update timing: execute-time, commit-time, or hybrid.
+- Misprediction penalty: frontend depth + backend recovery + lost issue/commit
+  opportunity.
+- Fetch bandwidth loss from taken branches inside a fetch packet.
+
+#### TAGE Predictor Review
+
+TAGE idea:
+- TAGE means tagged geometric history length predictor.
+- It keeps multiple predictor tables indexed with different global-history
+  lengths.
+- Short-history tables learn local/simple patterns; long-history tables learn
+  long-range correlations.
+- Each non-base table stores a partial tag to reduce destructive aliasing.
+
+Core structures:
+- Base predictor: simple bimodal predictor used when no tagged table matches.
+- Tagged tables: each entry usually has prediction counter, tag, and usefulness
+  bit.
+- Geometric history lengths: table history lengths grow roughly geometrically,
+  such as short, medium, long, and very long histories.
+- Provider: the longest-history matching table that supplies the main
+  prediction.
+- Alternate provider: a shorter-history matching table or base predictor used
+  when the provider is weak or newly allocated.
+- Usefulness tracking: tells whether an entry has been helpful enough to keep
+  during replacement.
+
+Prediction flow:
+1. Hash PC with different global-history slices for each table.
+2. Read base predictor and tagged tables in parallel if timing allows.
+3. Compare tags in tagged tables.
+4. Choose the longest matching provider.
+5. If provider confidence is weak, optionally use alternate prediction.
+6. Carry provider/alternate metadata into the FTQ or branch metadata for update.
+
+Update/allocation:
+- Correct prediction: strengthen the provider counter and possibly usefulness.
+- Misprediction: update provider, then allocate entries in longer-history tables
+  that did not match.
+- Replacement prefers entries with low usefulness.
+- History update timing is critical because speculative GHR must be recoverable
+  on misprediction.
+
+Performance-modeling knobs:
+- Number of tables.
+- History lengths.
+- Table entry count and associativity.
+- Tag width.
+- Counter width and allocation policy.
+- Predictor latency: single-cycle vs pipelined prediction.
+- Update timing and wrong-path history pollution.
+
+Interview contrast:
+- Gshare is compact and simple but aliases many unrelated branches into one
+  counter.
+- TAGE uses multiple tagged history lengths to reduce aliasing and learn both
+  short and long branch correlations.
+- TAGE improves accuracy but costs more SRAM, history bookkeeping, update
+  complexity, and possibly frontend latency.
+
+#### Review Questions
+
+- What is the difference between a direction miss and a target miss?
+- Why does a BTB miss on a taken branch look like a not-taken prediction?
+- Why do global-history predictors alias?
+- What metadata must be checkpointed to recover history after a misprediction?
+- Why is RAS important for return-heavy workloads?
+- How does TAGE choose between provider and alternate prediction?
+- Why do TAGE tables use geometric history lengths?
+- What is the usefulness bit protecting against?
+
 ## Part 3 — Backend Microarchitecture Details
 
-This section is the backend review placeholder for a Qualcomm-style CPU performance modeling interview. Use it to connect generic out-of-order backend concepts to the RSD implementation, then compare against BOOM or another open-source OoO core when useful.
+This is the single backend chapter. The old retire/commit/recovery section has been merged here because rename, ROB/ActiveList, commit, rollback, issue, wakeup, writeback, and precise recovery are one connected mechanism.
 
-### 1. RSD Backend Snapshot
+Interview framing:
+
+```text
+Rename creates the speculative dataflow graph.
+Issue/wakeup/select executes that graph out of order.
+The ROB/ActiveList commits it back in program order.
+Recovery restores the speculative structures when the prediction was wrong.
+```
+
+### 1. Backend Pipeline Big Picture
+
+Typical out-of-order backend flow:
+
+```text
+decode
+  -> rename
+  -> dispatch
+  -> issue queue / scheduler
+  -> select
+  -> register read
+  -> execute
+  -> writeback / wakeup
+  -> commit / retire
+```
+
+Important width terms:
+- Decode width: how many instructions/uops the frontend can decode per cycle.
+- Rename width: how many uops can receive physical-register mappings per cycle.
+- Dispatch width: how many renamed uops can enter backend queues per cycle.
+- Issue width: how many ready uops can be selected and launched to execution units per cycle.
+- Commit width: how many oldest completed uops/instructions can retire per cycle.
+
+When people say a core is "8-wide issue," they usually mean up to eight ready uops can be selected/launched into execution pipes per cycle. That is different from 8-wide decode or 8-wide commit, though high-performance cores often widen several of these stages together.
+
+### 2. RSD and BOOM Anchors
 
 RSD parameters to remember:
 - Fetch / decode / rename / dispatch width: 2.
@@ -4891,7 +6515,7 @@ RSD parameters to remember:
 - Load queue / store queue entries: 16 / 16.
 - Integer issue width: 2; complex integer issue width: 1 unless unified with memory; memory issue width: 2 in the split load/store configuration.
 
-Primary code anchors:
+RSD code anchors:
 - `MicroArchConf.sv` — backend sizing knobs.
 - `Pipeline/RenameStage.sv` — rename, allocation, serialization checks.
 - `Pipeline/DispatchStage.sv` — dispatch into scheduler / issue structures.
@@ -4900,32 +6524,495 @@ Primary code anchors:
 - `Pipeline/CommitStage.sv` — commit decision, store/load release, recovery trigger.
 - `Recovery/RecoveryManager.sv` — frontend/backend flush and recovered PC selection.
 
-### 2. Rename
+BOOM comparison anchors:
+- `common/micro-op.scala` has `br_mask`, the per-uop branch mask that marks which unresolved branches a uop is under.
+- `exu/rename/rename-stage.scala`, `rename-freelist.scala`, and `rename-busytable.scala` show map/free-list/busy-table style rename plumbing.
+- `lsu/lsu.scala` describes BOOM's LSU as LAQ, SAQ, and SDQ: load-address queue, store-address queue, and store-data queue.
 
-What to explain:
-- Logical registers are mapped to physical registers through rename-table state.
-- A destination register allocates a fresh physical register; the old physical register is retained until commit so precise state can be restored.
-- Source operands read producer tags and readiness; renamed operands carry physical register numbers and issue-queue dependency information.
-- Rename allocates backend resources in program order: ActiveList entry, issue-queue entry, LQ/SQ entry for memory ops, and physical destination register when needed.
-- Rename must stall on resource pressure: ActiveList full, issue queue full, free-list empty, LQ/SQ full, or a serialized instruction that requires an empty machine.
+Use BOOM when discussing a more standard open-source OoO design. Use RSD when discussing your own concrete implementation and when showing simpler or non-standard choices as useful comparison points.
 
-RSD-specific notes:
-- Serialized ops such as fences use rename-stage gating, because they need prior committed state and an empty store queue before entering the backend.
-- RSD records LSQ recovery pointers with each op so a recovery can restore LQ/SQ tail state.
+#### Modern Backend Reference: Apple Firestorm and Qualcomm Oryon
 
-Interview prompts:
-- Why does rename need both speculative and committed mapping tables?
-- What happens when a destination physical register is freed too early?
-- Where does backpressure first show up when the backend is full?
+Source-confidence rule:
+- Apple backend details are mostly reverse-engineered. Do not present them as official Apple disclosure.
+- Oryon Gen1 has stronger public signal from Qualcomm Hot Chips coverage and independent analysis, but exact physical implementation details can still differ from simplified diagrams.
+- Use these examples to understand modern backend design philosophy, not to memorize every number as guaranteed.
 
-### 3. ROB / ActiveList
+Source anchors:
+- Apple Firestorm reverse engineering: [Dougall Johnson, Apple M1/A14 P-core overview](https://dougallj.github.io/applecpu/firestorm.html)
+- Oryon public/independent coverage: [Chips and Cheese Hot Chips 2024 Oryon](https://chipsandcheese.com/p/hot-chips-2024-qualcomms-oryon-core), [Chips and Cheese Oryon deep dive](https://old.chipsandcheese.com/2024/07/09/qualcomms-oryon-core-a-long-time-in-the-making/), [ServeTheHome Hot Chips 2024 Oryon coverage](https://www.servethehome.com/snapdragon-x-elite-qualcomm-oryon-cpu-design-and-architecture-hot-chips-2024-arm/)
 
-Generic ROB state model:
-- **Allocated / busy / not finished**: entry exists, but execution result has not reached writeback.
-- **Executed / complete**: functional unit has produced result or fault state; entry waits for older entries.
-- **Exception / recovery pending**: entry contains branch misprediction, replay, trap, or fault metadata.
-- **Committed / retired**: head entry updates architectural state and is popped.
-- **Squashed / flushed**: younger speculative entries are removed after redirect, exception, or replay recovery.
+High-level comparison:
+
+| Topic | Apple Firestorm | Qualcomm Oryon Gen1 | Modeling lesson |
+| --- | --- | --- | --- |
+| Front/backend width | 8-wide style core | 8-wide decode/rename/retire style core | Wide cores need wide rename, issue, RF, bypass, commit, and recovery |
+| In-flight window | Reverse-engineered as non-traditional grouped/coalesced retirement plus separate rename/reclaim tracking | Publicly described as 600+ ROB/window, conventional-looking large OoO window | "ROB size" is not always comparable across vendors |
+| Integer execution | Reverse-engineering reports multiple distributed integer units | Public reporting shows 6 integer pipes | Model issue-port classes, not just total issue width |
+| Vector/FP | 4 x 128-bit SIMD/FP style pipes | 4 x 128-bit vector/FP pipes | Vector pipe count and width are separate knobs |
+| LSU | Reverse-engineering reports 4 LS units with mixed load/store capability | 4 flexible AGUs, large LQ/SQ | Model AGU flexibility and LQ/SQ pressure |
+| Load/store queues | Large queues by mobile-core standards | Public reporting: very large load queue, 56-entry store queue | Modern cores expect many in-flight memory ops |
+| Branch penalty | Low-teens-cycle style measurements | Public discussion around 13-cycle penalty | Mispredict penalty is a design balance, not always minimized |
+
+Main takeaway:
+
+```text
+Modern high-performance mobile cores are wide, distributed, and port-limited.
+The backend bottleneck is not just "ROB full."
+It can be scheduler pressure, PRF pressure, wakeup/select timing, AGU conflicts,
+load/store queue occupancy, bypass complexity, or recovery bandwidth.
+```
+
+##### Apple: Not A Simple One-Uop-Per-ROB Design
+
+Traditional ROB mental model:
+
+```text
+ROB[0] = uop0
+ROB[1] = uop1
+ROB[2] = uop2
+ROB[3] = uop3
+```
+
+One uop consumes one ROB entry. If the ROB has 300 entries, the simple model says it can track roughly 300 in-flight uops.
+
+Apple Firestorm appears different from public reverse engineering. A better mental model is:
+
+```text
+RetireGroup[0] = {uop0, uop1, uop2, uop3}
+RetireGroup[1] = {uop4, uop5}
+RetireGroup[2] = {uop6, uop7, uop8}
+
+separate rename/reclaim tracking remembers physical-register lifetime
+```
+
+This is not a set-associative ROB. A set-associative structure is cache-like:
+
+```text
+index -> set -> compare tags across ways -> choose hit/replacement way
+```
+
+A ROB/retire queue is still age ordered:
+
+```text
+allocate at tail
+commit from head
+preserve program order
+```
+
+The Apple idea is better described as:
+
+```text
+coalesced / grouped retirement structure
++
+separate rename / physical-register reclaim tracking
+```
+
+Why do this?
+- Larger effective in-flight window for less retire metadata.
+- Fewer retire queue entries than a one-uop-per-entry ROB for the same useful window.
+- Lower head/tail pointer and commit bookkeeping pressure.
+- Better energy/area efficiency because retirement metadata is accessed frequently.
+- Works well with aggressive rename/decode elimination of simple uops.
+
+Tradeoffs:
+- Precise exception is harder: if one uop inside a group faults, the core must still identify the exact architectural instruction.
+- Branch recovery is harder: younger uops inside the same group may need to be killed while older uops survive.
+- Register reclaim is harder: grouped retirement does not remove the need to free old physical registers per destination.
+- The design needs extra structures for rename/reclaim metadata, so complexity moves rather than disappears.
+
+Interview phrasing:
+
+```text
+I would not compare Apple's reported window directly against Oryon's ROB count.
+Apple appears to use grouped/coalesced retirement, so its effective in-flight capacity
+is not simply one ROB entry per uop. Oryon looks more like a large conventional OoO window.
+For modeling, I would represent Apple as a large effective window with retirement/reclaim
+constraints, not as a literal 330-entry traditional ROB.
+```
+
+##### Move, NOP, and Zero Elimination
+
+These are rename/decode-stage optimizations that remove simple instructions before they consume execution resources.
+
+NOP elimination:
+
+```asm
+nop
+```
+
+RISC-V encodes canonical NOP as:
+
+```asm
+addi x0, x0, 0
+```
+
+Because `x0` is hardwired zero and writes to `x0` are discarded, the instruction has no architectural effect.
+
+A high-performance core can drop it:
+
+```text
+no scheduler entry
+no execution pipe
+no physical destination register
+no writeback
+```
+
+Move elimination:
+
+```asm
+mv x5, x6
+```
+
+RISC-V pseudo-instruction:
+
+```asm
+addi x5, x6, 0
+```
+
+Instead of executing an ALU copy, rename can map the destination to the same physical register as the source:
+
+```text
+before:
+  map[x6] = P20
+
+after eliminated mv x5, x6:
+  map[x5] = P20
+```
+
+This avoids scheduler, ALU, bypass, and writeback pressure.
+
+Zero elimination / zero idiom recognition:
+
+```asm
+li   x5, 0          # often addi x5, x0, 0
+xor  x5, x6, x6     # x5 = 0
+sub  x5, x6, x6     # x5 = 0
+```
+
+RISC-V always has `x0`, so the most natural zero-producing form is:
+
+```asm
+addi x5, x0, 0
+```
+
+A core may implement:
+
+```text
+map x5 to a known-zero physical source
+or allocate a destination and mark it ready with zero
+or execute it normally
+```
+
+Important nuance:
+
+```text
+The ISA has these patterns.
+Eliminating them in rename is a microarchitecture choice.
+Simple cores may execute them normally.
+High-performance OoO cores often eliminate at least some NOP/move/zero forms
+to reduce scheduler, execution-port, PRF, bypass, and writeback pressure.
+```
+
+Performance-modeling implication:
+- Decide whether the model counts eliminated uops as occupying ROB/retire entries, scheduler entries, PRF destinations, and execution ports.
+- The answer can be different by instruction class and by core.
+- For Apple-like modeling, elimination can materially reduce backend pressure.
+- For a simpler RISC-V OoO model, it is acceptable to execute them normally unless the RTL implements elimination.
+
+##### Oryon: Large Conventional-Looking Window and Flexible LSU
+
+Oryon is a good Qualcomm-specific reference for a modern wide backend:
+- 8-wide style frontend/backend.
+- Large 600+ ROB/window.
+- Large physical register files.
+- 6 integer pipes.
+- 4 x 128-bit vector/FP pipes.
+- 4 AGU/LSU pipes with flexible load/store capability.
+- Very large load queue by mobile-core standards.
+- 56-entry store queue in public reporting.
+- Low-teens branch mispredict penalty.
+
+Important modeling lesson:
+
+```text
+Do not model Oryon as just "8-wide with a 600-entry ROB."
+The important constraints are distributed scheduler capacity, physical-register pressure,
+issue-port class restrictions, AGU flexibility, LQ/SQ fullness, memory replay,
+and branch recovery latency.
+```
+
+Flexible AGU example:
+
+```text
+less flexible design:
+  2 load-only AGUs + 2 store-only AGUs
+
+more flexible design:
+  4 AGUs can each handle load or store address generation
+```
+
+The second design can sustain more load-heavy or store-heavy mixes if the rest of the LSU has bandwidth:
+
+```text
+cycle A:
+  4 loads
+
+cycle B:
+  3 loads + 1 store
+
+cycle C:
+  2 loads + 2 stores
+```
+
+But the performance model still needs to include:
+- D-cache ports.
+- Store-data path.
+- Store queue commit/drain bandwidth.
+- Load queue CAM/search bandwidth.
+- Store-to-load forwarding paths.
+- MSHR and replay limits.
+
+##### What To Carry Into Our Backend Model
+
+Modern backend model checklist:
+- Effective in-flight window, not just literal ROB entries.
+- Rename width and free-list pressure.
+- Physical register file size and port limits.
+- Whether NOP/move/zero uops are eliminated.
+- Distributed scheduler capacities by op class.
+- Issue-port mapping by instruction type.
+- Wakeup/select timing or equivalent model latency.
+- Register-file/bypass port conflicts.
+- Branch recovery latency and checkpoint pressure.
+- Load queue size, store queue size, store data queue behavior.
+- AGU flexibility and D-cache porting.
+- Replay and memory-disambiguation recovery.
+
+One-sentence interview takeaway:
+
+```text
+Apple teaches that retirement/window capacity can be structurally optimized,
+while Oryon teaches that a modern Qualcomm-class backend is very wide, has a huge window,
+large PRFs, distributed schedulers, and a very large LSU. A good performance model must
+represent these resource limits instead of only simulating instruction dependencies.
+```
+
+### 3. Why Rename Exists
+
+Rename removes false dependencies.
+
+Types of dependencies:
+
+| Dependency | Meaning | Rename removes it? |
+| --- | --- | --- |
+| RAW | younger instruction reads value produced by older instruction | No, true dependency |
+| WAW | two instructions write same architectural register | Yes |
+| WAR | younger writes a register that older still needs to read | Yes |
+
+Example:
+
+```asm
+add x1, x2, x3      # writes x1
+mul x1, x4, x5      # also writes x1
+```
+
+Without rename, both write architectural `x1`, so the machine must preserve write order carefully. With rename:
+
+```text
+add writes P10
+mul writes P11
+architectural x1 mapping changes from P10 to P11 only when the younger writer becomes architectural
+```
+
+The two writes no longer fight for the same physical destination. Commit order still decides which value becomes architectural.
+
+### 4. Rename Structures
+
+Core rename structures:
+
+| Structure | What it stores | Why it exists |
+| --- | --- | --- |
+| Speculative map table | logical register -> current physical register | source lookup and speculative destination update |
+| Committed map table | logical register -> architectural physical register | precise recovery to committed state |
+| Free list | physical registers available for new destinations | allocate fresh destination registers |
+| Busy table / scoreboard | physical register ready/not-ready bit | tells rename/issue whether source operands are ready |
+| ROB/ActiveList entry | in-order instruction metadata | commit, recovery, exception, old-register free |
+
+Destination rename fields:
+
+```text
+LDST  = logical destination register
+PRD   = new physical destination register
+LPRD  = old physical register previously mapped to LDST
+```
+
+The old physical destination is often called `stale_pdst`, `old_pdst`, or `LPRD`.
+
+Important rule:
+
+```text
+When an instruction renames a destination:
+  allocate PRD from free list
+  remember LPRD in the ROB/ActiveList
+  update speculative map[LDST] = PRD
+  mark PRD busy
+```
+
+The old physical register cannot be freed at rename, because older precise state may still need it if this instruction is squashed.
+
+### 5. Physical Register Lifetime Example
+
+Initial state:
+
+```text
+map[x1] = P1
+map[x2] = P2
+map[x3] = P3
+map[x4] = P4
+map[x5] = P5
+free list = P10, P11, P12, ...
+```
+
+Instruction sequence:
+
+```asm
+I0: add x1, x2, x3
+I1: add x4, x1, x5
+```
+
+Rename `I0`:
+
+```text
+sources:
+  x2 -> P2
+  x3 -> P3
+destination:
+  LDST = x1
+  PRD  = P10
+  LPRD = P1
+update:
+  map[x1] = P10
+  busy[P10] = 1
+ROB stores: PRD=P10, LPRD=P1
+```
+
+Rename `I1`:
+
+```text
+sources:
+  x1 -> P10    # true RAW dependency on I0
+  x5 -> P5
+destination:
+  LDST = x4
+  PRD  = P11
+  LPRD = P4
+update:
+  map[x4] = P11
+  busy[P11] = 1
+ROB stores: PRD=P11, LPRD=P4
+```
+
+When `I0` writes back:
+
+```text
+busy[P10] = 0
+wakeup broadcasts P10
+I1 sees source P10 become ready
+```
+
+When `I0` commits:
+
+```text
+committed_map[x1] = P10
+free LPRD P1
+```
+
+So before commit, the machine temporarily needs both:
+- `P10`: new speculative value for `x1`.
+- `P1`: old architectural value of `x1`, in case recovery needs it.
+
+This is why it is correct to say an in-flight destination-writing instruction keeps both the new PRD and the old LPRD live until commit.
+
+Free-list rule:
+
+```text
+An old physical register enters the free list when the instruction that replaced it commits.
+```
+
+Squash rule:
+
+```text
+If an instruction is squashed before commit:
+  free its newly allocated PRD
+  restore the map entry back to the previous physical register
+```
+
+### 6. Busy Table / Scoreboard
+
+The busy table stores readiness of physical registers:
+
+```text
+busy[P] = 1  means value is not ready yet
+busy[P] = 0  means value can be read or bypassed
+```
+
+It mainly applies to physical destination registers produced by in-flight instructions.
+
+Rename reads the busy table for source physical registers:
+
+```text
+src logical x1 -> physical P10
+busy[P10] == 1 -> source not ready
+busy[P10] == 0 -> source ready
+```
+
+Writeback clears the busy bit:
+
+```text
+ALU writes P10
+busy[P10] = 0
+wakeup_tag = P10
+```
+
+Recovery can handle busy state in different ways:
+- Restore a checkpointed busy table.
+- Recompute readiness from the surviving map and surviving in-flight writers.
+- Free squashed PRDs and clear their busy bits because they no longer represent live values.
+
+Do not oversimplify this as "just mark recovered registers not busy." If a restored physical register is still produced by an older in-flight instruction, it may still be busy. A high-performance design usually checkpoints or reconstructs enough state to preserve that distinction.
+
+### 7. Why ROB / ActiveList Exists
+
+The ROB or ActiveList is the in-order bookkeeper for an out-of-order machine.
+
+Rename and issue are speculative. Execute can finish out of order. But architectural state must still appear to update in program order.
+
+The ROB/ActiveList provides:
+- Program-order commit.
+- Precise exceptions and interrupts.
+- Branch and replay recovery point.
+- Old physical register free point.
+- Store commit point.
+- CSR/trap serialization point.
+- Debug and performance-counter retirement point.
+
+Typical ROB/ActiveList entry fields:
+
+| Field | Why it is stored |
+| --- | --- |
+| valid / busy / complete | know whether entry can retire |
+| PC / next PC | precise trap and recovery target |
+| uop type | commit action and exception class |
+| logical destination | committed map update/debug |
+| PRD | new physical destination |
+| LPRD / stale physical destination | register to free at commit |
+| branch/checkpoint ID | recovery and branch-mask management |
+| branch prediction metadata | predictor update and redirect validation |
+| FTQ ID | frontend/predictor state alignment |
+| LQ/SQ indices | release memory-queue entries and recover LSQ tail |
+| exception cause / fault address | precise trap metadata |
+| store/atomic/fence flags | commit-time memory ordering behavior |
 
 RSD-specific model:
 - `ActiveList.sv` is a FIFO with tail allocation and head commit/recovery readout.
@@ -4933,132 +7020,596 @@ RSD-specific model:
 - A separate execution-state RAM tracks whether each entry is still unfinished or can be treated as successful at commit.
 - A recovery register records the oldest in-flight recovery point from writeback stages, including PC, execution state, fault address, and LSQ pointers.
 
-Key details to remember:
-- The ROB/ActiveList gives precise exceptions because commit is still in order.
-- Head pointer moves forward only for committed entries.
-- Tail pointer moves forward on allocation; on squash, tail is effectively rewound by recovery logic.
-- Multi-uop instructions need a `last` marker or equivalent so commit can retire complete instructions, not half an instruction.
+### 8. ROB Pointer Movement and Commit
 
-### 4. Issue Queue
+Tail pointer:
+- Moves on rename/dispatch allocation.
+- Must not overrun head.
+- On recovery, younger speculative entries are removed by restoring or rewinding tail state.
 
-What to explain:
-- The issue queue holds renamed but not-yet-issued micro-ops.
-- Entries store source tags, destination tags, op class, ActiveList pointer, LSQ pointers, and execution metadata.
-- The queue can be unified or split by type. Unified queues improve utilization but cost more CAM/selection power; split queues simplify select and routing but can fragment capacity.
+Head pointer:
+- Moves only at commit.
+- Can move by up to commit width per cycle.
+- Stops at the first not-finished instruction or at an instruction that triggers precise recovery/fault handling.
+
+Commit rule:
+
+```text
+Commit the oldest contiguous completed group.
+Do not commit around an older unfinished instruction.
+```
+
+For a 2-wide commit machine:
+
+```text
+ROB head entries:
+  E0 complete
+  E1 complete
+  E2 complete
+
+commit E0 and E1 this cycle
+E2 waits for next cycle
+```
+
+If the second entry is not complete:
+
+```text
+ROB head entries:
+  E0 complete
+  E1 not complete
+  E2 complete
+
+commit only E0
+E2 cannot commit around E1
+```
+
+Commit actions:
+- Update committed rename map.
+- Free LPRD/stale physical destination.
+- Release load queue entry.
+- Mark store as committed so the store buffer/store queue can drain it to memory.
+- Update performance counters.
+- Take precise trap/exception if the head instruction requires it.
+
+Stores are special:
+
+```text
+register-writing ALU op:
+  result can write physical register before commit
+
+store:
+  address/data may be ready before commit
+  but globally visible memory update must wait until the store is safe
+```
+
+### 9. Branch Masks and Checkpoint IDs
+
+A branch mask records which unresolved control-flow predictions a uop is speculative under.
+
+BOOM-style mental model:
+
+```text
+maxBrCount = number of unresolved branch checkpoints supported
+branch gets checkpoint ID k
+younger uops set br_mask[k] = 1
+```
+
+If branch `k` resolves correctly:
+
+```text
+surviving younger uops clear br_mask[k]
+```
+
+If branch `k` mispredicts:
+
+```text
+all uops with br_mask[k] = 1 are killed
+frontend redirects to the corrected PC
+checkpoint k restores rename/predictor state
+```
+
+The branch mask itself mostly answers:
+
+```text
+Is this uop younger than unresolved branch k?
+Should this uop be killed when branch k mispredicts?
+```
+
+It does not by itself restore:
+- Rename map.
+- Free list.
+- Busy table.
+- FTQ.
+- RAS.
+- GHR/PHR.
+- LSQ tail pointers.
+
+Those need checkpoints, recovery logs, or rollback logic.
+
+What gets a checkpoint?
+- Conditional branches usually need a checkpoint because direction can be wrong.
+- Indirect jumps, returns, and JALR often need recovery support because target can be wrong.
+- Direct unconditional JAL has a fixed decoded target, so it may not need the same kind of direction checkpoint, but it can still participate in frontend redirect/BTB update logic.
+
+Checkpoint pressure:
+- Many high-performance designs checkpoint each unresolved branch up to a hardware limit.
+- If all checkpoint IDs are in use, rename usually stalls until an older branch resolves.
+- This is why branch-mask width is a real area/timing/design parameter.
+
+### 10. What a Branch Checkpoint Stores
+
+Minimum backend checkpoint:
+
+```text
+rename map table
+free-list state or allocation delta
+possibly busy-table state
+branch checkpoint ID / branch mask bookkeeping
+```
+
+Often also needed somewhere in the machine:
+
+```text
+FTQ pointer / frontend prediction state
+GHR / PHR snapshot
+RAS snapshot
+LSQ tail pointers
+ROB/ActiveList allocation boundary
+```
+
+Frontend recovery state usually belongs to the frontend structures:
+- FTQ stores prediction metadata and history snapshots.
+- RAS snapshot/repair is normally tied to frontend prediction state.
+- GHR/PHR snapshots are often tied to FTQ or branch predictor update metadata.
+
+Backend recovery state usually belongs to rename/ROB/LSQ:
+- Map table.
+- Free list.
+- Busy state.
+- ActiveList tail/range.
+- LQ/SQ tails.
+
+Important separation:
+
+```text
+Backend branch mask tells backend storage which uops are on the wrong path.
+FTQ/predictor snapshots tell frontend how to repair fetch and predictor history.
+```
+
+### 11. Recovery Strategies
+
+There are three common recovery strategies.
+
+Strategy A: full checkpoint per branch.
+
+```text
+on branch rename:
+  snapshot rename map/free list/history state
+
+on branch mispredict:
+  restore snapshot in one or a few cycles
+  kill younger uops using branch mask / ROB age
+```
+
+Pros:
+- Fast recovery.
+- Common in high-performance OoO cores.
+
+Cons:
+- Map table snapshots are large.
+- Checkpoint count is limited.
+- More branch checkpoints increase area and wiring.
+
+Strategy B: rollback walk.
+
+```text
+on mispredict:
+  walk in-flight instructions from youngest backward toward the branch
+  undo each younger destination allocation
+  restore old mappings from each entry's LPRD
+```
+
+"From the tail" means starting at the youngest allocated in-flight entry and walking backward. It does not mean starting at the instruction immediately after the branch. The walk stops when it reaches the recovery point.
+
+Pros:
+- Smaller checkpoint state.
+- Simpler map snapshot storage.
+
+Cons:
+- Recovery latency scales with number of younger in-flight instructions.
+- Slower after deep speculation.
+
+Strategy C: coarse checkpoint plus rollback.
+
+```text
+restore nearest older checkpoint
+then roll forward/back over the small remaining window
+```
+
+This can reduce checkpoint storage while avoiding a full ROB-length rollback.
+
+RSD comparison:
+- Treat RSD as a useful concrete implementation, but do not assume it has the same full per-branch backend checkpointing policy as BOOM.
+- RSD-style ActiveList recovery and selective flush are useful to discuss as a smaller/simpler design point.
+- BOOM-style branch masks/checkpoints are a better open-source anchor for common high-performance OoO branch recovery discussion.
+
+### 12. Flush Rules and Wrong-Path Cleanup
+
+Flush sources:
+- Branch misprediction.
+- JALR/return target misprediction.
+- Exception/fault/trap.
+- Store-load memory-order violation.
+- Load replay/refetch condition.
+- `FENCE.I` frontend synchronization.
+- Interrupt entry.
+- Unsupported or serializing operation recovery.
+
+Flush target examples:
+
+| Condition | Correct restart PC |
+| --- | --- |
+| conditional branch predicted taken but actually not taken | branch fallthrough PC |
+| conditional branch predicted not taken but actually taken | branch target |
+| JALR target wrong | resolved register target |
+| exception/trap | trap vector |
+| replay same instruction | offending instruction PC |
+| instruction after completed serializing op | next PC |
+
+Backend storage that must be cleaned or gated:
+- ROB/ActiveList entries.
+- Issue queue entries.
+- Functional-unit pipeline registers.
+- Replay queues.
+- Load queue.
+- Store queue entries younger than recovery point.
+- Register writeback valid signals from killed uops.
+
+Combinational logic itself does not store state. The real rule is:
+
+```text
+Every sequential storage element must either:
+  clear killed entries,
+  ignore killed write enables,
+  or carry enough age/branch-mask metadata to be invalidated later.
+```
+
+Same-cycle writeback and flush:
+- If a wrong-path uop writes back in the same cycle a flush is detected, the writeback valid must be killed or ignored.
+- Hardware usually computes kill/flush qualification and gates the writeback, wakeup, and completion signals.
+- If the value is already on a bypass wire, that is not architectural by itself; the danger is letting a killed valid bit update PRF, busy table, ROB completion, or a dependent issue queue entry incorrectly.
+
+If any queue is not flushed correctly:
+- A killed uop may write a physical register.
+- A killed load/store may update LSQ state.
+- A killed wakeup may mark a dependent source ready incorrectly.
+- A killed store/AMO could become globally visible, which is architecturally catastrophic.
+
+### 13. Branch Recovery vs Exception Recovery
+
+Branch recovery can often be early:
+- A branch resolves in execute.
+- The core knows the correct next PC.
+- Younger wrong-path work can be killed immediately.
+- Older instructions are still allowed to commit in order.
+
+Exceptions usually wait until commit:
+- An older instruction might fault first.
+- An older branch might redirect before the faulting instruction becomes architectural.
+- Precise exceptions require the trap to be reported at the oldest faulting architectural instruction.
+
+Example:
+
+```asm
+I0: older load that may page fault
+I1: branch
+I2: younger load that page faults on wrong path
+```
+
+If `I1` is mispredicted and `I2` is wrong path, `I2` must not take a precise architectural page fault. Its fault metadata can be recorded with the uop, but the trap is only taken if it reaches commit on the correct path.
+
+Interview phrasing:
+
+```text
+Branch misprediction is a speculation error, so early recovery is useful.
+Exception is an architectural event, so the core waits until the instruction is oldest before taking the trap.
+```
+
+### 14. Issue Queue
+
+The issue queue holds renamed but not-yet-issued uops.
+
+Entry contents:
+- valid bit.
+- source physical tags.
+- source ready bits.
+- destination physical tag.
+- uop type and execution port class.
+- ROB/ActiveList index.
+- branch mask / age metadata.
+- LSQ indices for memory ops.
+- immediate/control metadata.
+
+Unified vs split issue queues:
+
+| Design | Benefit | Cost |
+| --- | --- | --- |
+| Unified queue | better capacity sharing across op types | larger CAM/select network |
+| Split queues | simpler timing/routing per FU class | capacity fragmentation |
 
 RSD-specific notes:
 - RSD has scheduler data plus type-specific issue payloads for integer, complex integer, memory, and optional FP paths.
-- The scheduler tracks selected entries and then routes them into the matching issue stage.
+- The scheduler tracks selected entries and routes them into the matching issue stage.
 - ReplayQueue is shared across pipes; this matters for performance modeling because a memory-heavy workload can create global replay pressure.
 
-Interview prompts:
-- Why is issue-queue wakeup/select often a timing-critical loop?
-- What is the tradeoff between issue queue size and frequency/power?
-- How would widening issue affect CAM comparisons and select arbitration?
-
-### 5. Wakeup / Select
+### 15. Wakeup and Select
 
 Wakeup:
-- Producers broadcast destination physical tags when results become available.
-- Waiting issue-queue entries compare source tags against broadcast tags.
-- When all required operands are ready, the entry becomes eligible to issue.
+
+```text
+producer writes physical destination P10
+broadcast wakeup_tag = P10
+issue queue entries compare src tags against P10
+matching operands set ready = 1
+```
 
 Select:
-- Select chooses ready entries for available functional-unit ports.
-- Policies usually prioritize older ops for fairness and forward progress, while also respecting port type and replay constraints.
-- Stores often do not wake up consumers because their architectural destination is memory, not a register.
 
-RSD-specific notes:
-- `Scheduler/WakeupLogic.sv`, `SourceCAM.sv`, `ProducerMatrix.sv`, and `SelectLogic.sv` are the key anchors.
-- RSD explicitly notes that store ports do not wake consumers; load and ALU writebacks do.
+```text
+find ready entries
+choose up to available issue ports
+send selected uops to register read / execution
+```
 
-Performance-modeling hooks:
-- Model wakeup/select as one or more cycles depending on issue queue size and target frequency.
-- Count issue conflicts separately from operand-not-ready stalls.
-- Track per-port utilization to identify structural bottlenecks.
+Simple RTL mental model:
 
-### 6. Execute
+```systemverilog
+for each issue_queue_entry:
+  for each wakeup_port:
+    if wakeup_valid && src_tag == wakeup_tag:
+      src_ready = 1
+```
 
-Backend execution groups to review:
-- Integer ALU: branch resolution, simple arithmetic, address-independent integer ops.
-- Complex integer: multiply/divide, potentially longer latency or pipelined execution.
-- Memory: address generation, D$ access, SQ forwarding, MSHR allocation, replay.
-- FP/vector if implemented: longer pipelines, separate register file and bypass network.
+Wakeup ports:
+- Number of independent producer results that can mark operands ready in the same cycle.
+- Example: if two ALUs and one load pipe can all write back and wake consumers, the issue queue may need three wakeup ports.
+- More wakeup ports mean more tag buses, more comparators, more muxing, more power, and harder timing.
 
-RSD-specific notes:
-- Integer branch resolution happens in the integer backend and writes branch result metadata.
-- Memory execution has multiple backend stages: address, tag, data, writeback.
-- Long-latency operations must either hold pipeline state, reserve replay resources, or write back when complete.
+Why the timing is hard:
 
-### 7. Commit and Recovery Overview
+```text
+writeback tag broadcast
+  -> CAM compare across many issue entries
+  -> update ready bits
+  -> select among ready entries
+  -> issue to FU
+```
 
-Commit rules:
-- Commit only the oldest contiguous completed instructions.
-- Commit updates the committed rename map, releases old physical registers, releases committed LQ entries, and marks retired stores for store-commit processing.
-- Store data should not update memory architecturally until the store is safe to retire.
+High-frequency cores often break or speculate this loop.
 
-Recovery rules:
-- Branch misprediction and some replay conditions may be detected before the mispredicted op reaches ROB head.
-- Exceptions, traps, and CSR-visible events usually wait until commit to preserve precise architectural state.
-- Recovery chooses a flush range, restores rename/LSQ/FTQ state, and sends a recovered PC to the frontend.
+### 16. Speculative Wakeup, Replay, and Event Wakeup
 
-RSD-specific notes:
-- RSD can start recovery from writeback for refetch-style events while CSR-visible traps/faults are handled at commit.
-- `RecoveryManager.sv` always flushes the frontend during recovery; backend structures use selective flush based on ActiveList pointer range.
-- This gives a concrete example for discussing full flush versus early restart.
+Speculative wakeup:
+- Wake a dependent instruction before the producer data is guaranteed.
+- Common for fixed-latency ALU/load pipelines when the expected latency is known.
+- If the producer is delayed, the dependent instruction must be replayed or blocked.
 
-### 8. Architecture Performance Evaluation Hooks
+Counter-based retry:
+- For fixed-latency operations, a dependent can become eligible after a known number of cycles.
+- Example: ALU latency 1, multiply latency 3.
 
-This section is the architecture-side view of performance modeling: what state, counters, and model knobs should exist so a backend proposal can be evaluated cleanly.
+Event-based wakeup:
+- For variable-latency operations such as cache misses, the wakeup/retry happens when an event arrives.
+- Example: cache refill returns, MSHR/replay logic marks the sleeping load ready to retry.
 
-Core methodology:
-- Start from a baseline core and define the one design question being tested.
-- Choose metrics before running experiments: IPC/CPI, miss penalty, queue occupancy, replay count, port conflict count, utilization, energy proxy, and area/timing risk.
-- Separate functional misses from structural stalls. A D$ miss, MSHR-full stall, D$ port conflict, and replay-queue-full event need different fixes.
-- Use CPI-stack style accounting when possible, because CPI components are additive and easier to explain than raw IPC deltas.
-- Run sensitivity sweeps on one or two key parameters: ROB size, issue queue size, MSHR count, LQ/SQ size, branch penalty, cache latency, memory latency.
-- Validate the model against code evidence, waveforms, counters, or known RTL behavior before using the result to justify an architecture change.
+Replay queue:
+- Holds uops that issued but could not complete correctly.
+- Avoids writing them back into the main issue queue.
+- Can reduce issue-queue write-port pressure.
+- Adds another arbitration and occupancy bottleneck.
 
-Interview framing:
-- A good performance model is not only a fast simulator. It should make bottlenecks visible, preserve the right resource constraints, and avoid attributing a speedup to the wrong mechanism.
-- For RSD-based discussion, tie each claim to a concrete block such as `ActiveList.sv`, `SelectLogic.sv`, `LoadQueue.sv`, `StoreQueue.sv`, `DCache.sv`, or `RecoveryManager.sv`.
+Why not always send replay back to the issue queue?
+- Reinsert needs issue-queue write ports, which are already used by dispatch.
+- Reinsert needs age/order handling.
+- The instruction may already have left the IQ entry, so the design needs extra state to restore it.
+- A replay queue can be smaller and specialized for retry causes.
 
-### 9. PMU and Performance Counter Interpretation
+### 17. Register File, Ports, Banking, and Bypass
 
-Why this matters:
-- Performance counters are the bridge between model results, RTL simulation, and real silicon measurement.
-- They help answer "what changed?" after an IPC delta, but they can mislead if the event definitions are unclear.
+Physical register file pressure grows quickly with width.
 
-Counters to know:
-- Retired instructions and cycles: base for IPC/CPI.
-- Frontend stalls: I-cache miss, ITLB miss, branch redirect, fetch bubble, decode queue empty/full.
-- Branch events: conditional branches, mispredictions, BTB misses, RAS misses, indirect misses.
-- Backend stalls: ROB full, issue queue full, physical register free-list empty, LQ/SQ full, commit blocked.
-- Memory events: L1/L2/LLC accesses and misses, DTLB misses, page walks, MSHR full, replay count, store-forwarding failure.
-- Structural events: port conflicts, bank conflicts, FU utilization, cache-array arbitration losses.
-- Power proxies: active cycles, gated cycles, SRAM/CAM access counts, predictor table accesses.
+Example:
+
+```text
+dispatch/issue width = 8
+two source operands per uop
+naive register-read demand = 16 read operands per cycle
+```
+
+If the integer physical register file has 128 entries x 64 bits and is built from flops:
+
+```text
+one read port:
+  64 separate 128:1 muxes
+
+16 read ports:
+  16 * 64 separate 128:1 muxes
+```
+
+That is huge wiring, muxing, area, delay, and power.
+
+Common mitigations:
+- Bank the register file into multiple smaller arrays.
+- Cluster execution units so local FUs read local RF banks.
+- Use bypass/forwarding so a consumer gets a just-produced value without reading RF.
+- Split integer/FP/vector register files.
+- Limit issue combinations to avoid impossible port conflicts.
+- Add arbitration and replay/stall on RF bank conflicts.
+
+Local bypass:
+
+```text
+producer result from ALU pipe
+  -> forwarded directly to nearby consumer input
+  -> avoids waiting for write RF then read RF
+```
+
+Banking:
+
+```text
+RF bank 0 stores some physical registers
+RF bank 1 stores other physical registers
+multiple banks can be read in parallel
+same-bank conflicts need arbitration or replay
+```
+
+### 18. Storage Choices: Flops, SRAM, CAM
+
+Flop array:
+- Many flip-flops arranged like a small table.
+- Good for small structures needing many read/write ports or per-entry updates.
+- Expensive per bit, but flexible.
+- Common for busy tables, small issue queues, control state, valid bits.
+
+SRAM:
+- Dense storage using bitcells, wordlines, bitlines, sense amps.
+- Good for larger tables: caches, TLB arrays, predictor tables, large queues.
+- Ports are expensive; multiported SRAM is much more expensive than single-port SRAM.
+
+CAM:
+- Content-addressable match structure.
+- Conceptually storage plus parallel comparators.
+- Good for associative lookup: issue queue wakeup, TLB tag match, load/store address match.
+- More expensive than SRAM because many entries compare in parallel.
+
+Rule of thumb:
+
+```text
+small + many ports/control updates -> flops
+large + indexed access -> SRAM
+parallel search by value -> CAM or flop/SRAM plus comparators
+```
+
+### 19. Store Address Queue and Store Data Queue
+
+A store has two independent parts:
+
+```text
+store = address + data + byte mask + ordering/commit state
+```
+
+The backend/LSU must track both address and data.
+
+Two common implementations:
+
+```text
+Unified STQ entry:
+  addr_valid + addr + data_valid + data + mask + committed + status
+
+Split queues:
+  SAQ = Store Address Queue
+  SDQ = Store Data Queue
+```
+
+Why split address and data?
+
+```asm
+sw x5, 0(x10)
+```
+
+The address source `x10` may be ready before data source `x5`.
+
+Flow:
+
+```text
+dispatch:
+  allocate store queue entry
+
+store-address uop executes:
+  addr = x10 + 0
+  addr_valid = 1
+
+store-data uop executes later:
+  data = x5
+  data_valid = 1
+
+commit:
+  mark store committed
+
+store drain:
+  when addr_valid && data_valid && committed:
+    send store to D-cache / store buffer
+```
+
+Why address queue matters:
+- Younger loads compare against older store addresses.
+- Detect memory-ordering violations.
+- Decide whether a load can access D-cache, forward, or sleep.
+
+Why data queue matters:
+- Store-to-load forwarding needs the store data.
+- Committed store drain needs the actual bytes.
+- Store data may be ready later than store address.
+
+BOOM explicitly describes its LSU as LAQ, SAQ, and SDQ. This is a good reference point for explaining why a high-performance backend should not only have a store address queue.
+
+Full load/store forwarding, replay, and memory-dependence details belong in Part 4.
+
+### 20. Interrupt, Trap, and Flush Boundary
+
+Interrupts are asynchronous, but precise interrupt delivery still happens at an instruction boundary.
+
+High-level flow:
+
+```text
+1. interrupt pending and enabled
+2. commit logic chooses a precise boundary
+3. stop committing younger work
+4. flush speculative frontend/backend state
+5. write trap CSRs
+6. redirect fetch to trap vector
+```
+
+This is why interrupt/trap handling is connected to commit, but the detailed CSR/trap rules are kept in Part 8.
+
+### 21. Architecture Performance Evaluation Hooks
+
+Backend model knobs:
+- Rename/dispatch/issue/commit width.
+- ROB/ActiveList size.
+- Issue queue size and split/unified organization.
+- Physical register count.
+- Wakeup/select latency.
+- Register file ports/banks.
+- FU latencies and issue port mapping.
+- Replay queue size and arbitration.
+- LQ/SQ size.
+- Branch recovery latency.
+- Exception/flush/refetch latency.
+
+Counters to track:
+- Retired instructions and cycles.
+- ROB full cycles.
+- Issue queue full cycles.
+- Free-list empty cycles.
+- Source-not-ready cycles.
+- Select/port conflict cycles.
+- Register-file bank conflict cycles.
+- Wakeup/replay count.
+- Branch recovery count and penalty.
+- Commit blocked cycles.
+- Load/store queue full cycles.
 
 CPI-stack discipline:
-- CPI components should be mutually exclusive when possible.
+- Keep mutually exclusive stall categories when possible.
 - If events overlap, report them as diagnostic counters, not additive CPI components.
-- Normalize counters: MPKI, branch MPKI, miss latency, bandwidth, occupancy, utilization, and replay rate.
-- Always pair a top-line metric with a bottleneck metric. Example: IPC improved because MSHR-full cycles dropped, not merely because L1D MPKI changed.
+- Always pair IPC with a bottleneck metric. Example: IPC improved because replay-queue-full cycles dropped, not merely because total cycles changed.
 
-Common pitfalls:
-- Counter skid: sampled PC may point after the causing instruction.
-- Multiplexing: limited hardware counters can require multiple runs, which adds run-to-run noise.
-- Event ambiguity: "stall cycle" may mean no dispatch, no issue, no retire, or resource-specific backpressure.
-- Double counting: a D$ miss, replay, and ROB-full cycle may all describe the same root cause.
-- Warmup effects: early misses or predictor cold-start can distort short measurements.
-- User/kernel attribution and interrupts can matter for full-system workloads.
-
-Interview framing:
-- I would first ask what each counter precisely counts and whether events are exclusive. Then I would build a small CPI-stack or bottleneck table and confirm the diagnosis with directed microbenchmarks.
-
-### 10. Validation and Calibration
+### 22. Validation and Calibration
 
 Validation goal:
-- Prove that the model is accurate enough for the design question being asked. It does not need to be perfect for all workloads, but it must preserve the bottlenecks under discussion.
+- Prove that the model is accurate enough for the design question being asked.
+- It does not need to be perfect for all workloads, but it must preserve the bottlenecks under discussion.
 
 Validation levels:
 - Unit tests: queues, predictors, cache tag/index decode, MSHR merging, replay behavior, and counter updates.
@@ -5067,12 +7618,6 @@ Validation levels:
 - Silicon/perf-counter comparison: compare aggregate counters and trends when hardware is available.
 - Sensitivity checks: sweep latency/capacity knobs and verify monotonic or explainable behavior.
 
-Calibration method:
-- Start with architectural constants: widths, queue sizes, latencies, associativity, MSHR count, predictor sizes.
-- Tune uncertain timing parameters only after structural behavior is correct.
-- Use separate workloads for calibration and validation to avoid overfitting.
-- Report error with both top-line metrics and bottleneck metrics: IPC error, MPKI error, branch miss error, latency distribution error, and stall-breakdown error.
-
 Failure modes:
 - Matching IPC for the wrong reason.
 - Using average latency where queue occupancy or overlap matters.
@@ -5080,17 +7625,593 @@ Failure modes:
 - Calibrating to one benchmark and losing generality.
 
 Interview framing:
-- I would rather explain a model's limitations explicitly than claim cycle accuracy without evidence. Credibility comes from clear assumptions, code evidence, validation tests, and counter agreement.
 
-### 11. Backend Review Checklist
+```text
+I would rather explain a model's limitations explicitly than claim cycle accuracy without evidence.
+Credibility comes from clear assumptions, code evidence, validation tests, and counter agreement.
+```
 
-- Can I draw rename -> dispatch -> schedule -> issue -> register-read -> execute -> writeback -> commit?
+### 23. Backend Review Checklist
+
+- Can I draw rename -> dispatch -> issue queue -> select -> register read -> execute -> writeback -> commit?
+- Can I explain why rename removes WAW/WAR but not RAW?
+- Can I explain PRD, LPRD/stale destination, free-list timing, and busy-table readiness?
 - Can I explain what each ROB/ActiveList entry stores?
-- Can I explain why branch recovery can sometimes start before commit, while exceptions wait until commit?
-- Can I explain how a store becomes architectural later than a register-writing ALU op?
-- Can I map each backend concept to one RSD source file?
+- Can I explain why commit is in order even though execution is out of order?
+- Can I explain branch mask vs checkpoint vs frontend FTQ/RAS/GHR snapshot?
+- Can I explain checkpoint recovery, rollback recovery, and hybrid recovery?
+- Can I explain why branch recovery can be early but precise exceptions usually wait until commit?
+- Can I explain how same-cycle flush and writeback are handled safely?
+- Can I explain wakeup ports, select arbitration, replay queues, and register-file port pressure?
+- Can I explain why stores need both address and data tracking?
+- Can I map each backend concept to an RSD or BOOM source file?
 
 ## Part 4 — LSU + L1D Optimization Specification
+
+### LSU/L1D Baseline Mental Model
+
+This section is the baseline interview mental model before discussing the RSD-specific optimization spec below.
+
+Cross-references:
+- Address translation, VIPT constraints, TLB misses, and page-table walking are covered in [Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker).
+- Cache coherence, ownership, writeback, and memory-system behavior are covered in [Part 6 — Cache, Coherence, and Memory System](#part-6--cache-coherence-and-memory-system).
+- Fences, atomics, LR/SC, and serialization are covered in [Part 9 — Serialization, Fences, Atomics, and Privileged Control](#part-9--serialization-fences-atomics-and-privileged-control).
+- Demand prefetching policy and pollution/accuracy tradeoffs are covered in [Part 11 — Prefetcher Microarchitecture](#part-11--prefetcher-microarchitecture).
+
+#### 0.1 LSU Responsibilities
+
+The LSU is not only "address generation plus D-cache access." In an out-of-order core it is responsible for:
+- Executing loads early while preserving precise memory ordering.
+- Holding speculative stores until they are safe to commit.
+- Forwarding older store data to younger loads.
+- Detecting memory-order violations when a younger load executed before an older store address became known.
+- Replaying loads blocked by structural hazards, TLB misses, cache misses, store hazards, MSHR pressure, or bank conflicts.
+- Draining committed stores to L1D and the coherence/memory system.
+
+The common high-level flow is:
+
+```text
+rename/dispatch
+    |
+    v
+allocate LQ/SQ entries
+    |
+    v
+issue load/store-address/store-data uops
+    |
+    v
+AGU + DTLB + L1D + SQ forwarding checks
+    |
+    v
+load complete / store waits for commit
+    |
+    v
+commit store -> store buffer or committed SQ drain -> L1D/coherence
+```
+
+#### 0.2 Load Queue, Store Queue, Store Data Queue, and Store Buffer
+
+Useful terminology:
+- **Load Queue (LQ):** tracks in-flight loads, their address, completion state, ordering checks, and replay/recovery metadata.
+- **Store Address Queue (SAQ):** tracks store address, byte mask, age, and validity.
+- **Store Data Queue (SDQ):** tracks actual store data once the store-data uop has read the register file or bypass network.
+- **Store Queue (SQ):** often used as a combined name for SAQ + SDQ + commit/drain state.
+- **Store Buffer:** post-commit structure that holds non-speculative stores waiting to write L1D or obtain coherence permission.
+
+Store lifecycle:
+
+```text
+sw x5, 0(x10)
+
+rename:
+  allocate SQ entry
+
+store-address issue:
+  compute address = x10 + 0
+  write address/mask into SQ
+
+store-data issue:
+  read x5 from PRF/bypass
+  write actual data bytes into SDQ/SQ
+
+before commit:
+  store can forward to younger loads
+  store cannot update L1D because it is still speculative
+
+at commit:
+  store becomes non-speculative
+  either drains from committed SQ or copies into Store Buffer
+
+after commit:
+  Store Buffer / committed SQ arbitrates for L1D write path
+```
+
+With a separate store buffer:
+- ROB entry can retire once the committed store is copied into the store buffer.
+- The speculative SQ entry can often be freed earlier.
+- Store drain can wait for L1D ports, MSHR refill, or coherence ownership without blocking commit immediately.
+
+Without a separate store buffer:
+- ROB entry can still retire, but the SQ entry may stay occupied until the store drains to L1D.
+- SQ pressure can backpressure rename/dispatch when committed stores cannot drain quickly.
+
+#### 0.3 Store-to-Load Forwarding
+
+For a younger load, the LSU must check older stores:
+
+```text
+older store:
+  sb [0x1000] = S0
+
+younger load:
+  lb [0x1000]
+
+result:
+  load gets S0 from SQ/SDQ, not stale D-cache data
+```
+
+Full forwarding is straightforward when the older store completely covers the load:
+
+```text
+older store: sw [0x1000] = S0 S1 S2 S3
+younger load: lw [0x1000]
+
+load result = S0 S1 S2 S3
+```
+
+Partial forwarding is harder:
+
+```text
+older stores:
+  sh [0x1000] = S0 S1
+  sb [0x1002] = S2
+
+younger load:
+  lw [0x1000] needs bytes 0x1000..0x1003
+
+D-cache still has old line bytes:
+  D0 D1 D2 D3
+
+correct result:
+  S0 S1 S2 D3
+```
+
+If partial forwarding is supported, the load merges store bytes and D-cache bytes:
+
+```text
+merged = (store_data & store_mask) | (dcache_data & ~store_mask)
+```
+
+If partial forwarding is not supported, the conservative design replays or sleeps the load until the store drains or until a full forward becomes possible.
+
+The 64-byte cache line matters because the common L1D unit of allocation/refill is a cache line:
+- If the load stays within one 64B line, one D-cache line read can provide all non-forwarded bytes.
+- If the load crosses a 64B line boundary, the LSU may need two cache accesses, two tag checks, two masks, and more complicated merge/replay logic.
+
+Interview framing:
+
+```text
+Partial forwarding does not necessarily avoid the D-cache access.
+It avoids waiting for the older store to commit and update the cache.
+```
+
+Public reverse-engineering reports suggest that Apple Firestorm supports very aggressive partial forwarding and multi-store merge cases, while Qualcomm Oryon supports partial forwarding but with stricter restrictions, especially for multi-store and 64B-boundary cases. Treat this as reverse-engineered behavior, not official vendor specification.
+
+References:
+- Apple Firestorm reverse-engineering: <https://jia.je/hardware/2024/12/26/apple-m1/>
+- Qualcomm Oryon reverse-engineering: <https://jia.je/hardware/2024/09/01/qualcomm-oryon/>
+
+#### 0.4 Unknown Store Address Speculation
+
+The key question:
+
+```text
+Can a younger load execute before all older store addresses are known?
+```
+
+Example:
+
+```text
+I0: sw x5, 0(x10)      // older store, x10 not ready
+I1: lw x6, 0(x11)      // younger load, x11 ready
+```
+
+Conservative policy:
+
+```text
+load waits until all older store addresses are known
+```
+
+Aggressive policy:
+
+```text
+load executes early
+if an older store later resolves to the same bytes, replay/flush from the load
+```
+
+This is a central LSU performance tradeoff:
+- Aggressive speculation is good because most loads do not alias older unknown stores.
+- Repeated true dependencies can become expensive if every iteration violates and replays.
+- A memory-dependence predictor improves this by making only historically dangerous loads wait.
+
+#### 0.5 Memory Dependence Predictor / Store Sets
+
+A classic store-set style predictor tracks which load PCs have violated with which store PCs.
+
+Simplified structures:
+
+```text
+SSIT: Store Set ID Table
+  indexed by load/store PC
+  gives a store-set ID
+
+LFST: Last Fetched Store Table
+  indexed by store-set ID
+  points to the youngest in-flight store in that set
+```
+
+Cold start:
+
+```text
+0x1000: sw x5, 0(x10)
+0x1008: lw x6, 0(x11)
+
+SSIT invalid, so load speculates.
+```
+
+If violation is detected:
+
+```text
+store PC 0x1000 and load PC 0x1008 are assigned same store-set ID.
+```
+
+Next time:
+
+```text
+store enters backend:
+  LFST[set] = this store's SQ index
+
+load enters backend:
+  SSIT says it belongs to same set
+  load waits for that older store to resolve or forward
+```
+
+Modeling rule:
+
+```text
+if load has predicted store dependency:
+  wait until predicted store resolves
+else:
+  issue speculatively
+  if violation later:
+    replay/flush and train predictor
+```
+
+#### 0.6 Violation Detection and Replay Scope
+
+When an older store address resolves, it searches the load queue for younger executed loads:
+
+```text
+for each LQ entry:
+  if load.valid
+  && load.executed
+  && load is younger than this store
+  && load address overlaps store address
+  && load did not get correct store data:
+      memory-order violation
+```
+
+Example:
+
+```text
+I0: sw x5, 0(x10)      // address late
+I1: add x7, x8, x9
+I2: lw x6, 0(x11)      // executes early
+I3: add x12, x6, x13   // depends on I2
+I4: add x14, x15, x16  // independent
+```
+
+If `I0` later resolves to the same address used by `I2`, then `I2` consumed stale data.
+
+Simple recovery:
+
+```text
+flush/replay from I2
+I0 and I1 remain valid
+I2 and younger work are invalidated
+```
+
+Advanced recovery:
+
+```text
+selectively replay I2 and its dependent chain
+keep independent younger work such as I4
+```
+
+Selective replay reduces wasted work but needs more dependency tracking, poison bits, replay queues, and careful wakeup/select handling. For a first performance model, flush-from-load is usually a cleaner baseline.
+
+#### 0.7 Store Drain to L1D
+
+Committed stores drain to L1D only after they are non-speculative and have address/data/mask ready.
+
+With a store buffer:
+
+```text
+commit -> enqueue Store Buffer -> later drain to L1D
+```
+
+Without a separate store buffer:
+
+```text
+commit -> committed SQ entry waits -> later drain to L1D
+```
+
+Store drain can be blocked by:
+- L1D write-port conflict.
+- L1D miss.
+- Lack of coherence ownership.
+- MSHR full.
+- Refill/writeback activity.
+
+Store miss or ownership miss:
+
+```text
+store buffer entry:
+  state = waiting_for_ownership / waiting_for_refill
+  mshr_id = allocated miss request
+
+refill/ownership grant returns:
+  matching mshr_id wakes the store buffer entry
+  entry retries L1D write path
+```
+
+This is an event-wakeup state machine, not the normal issue-queue register wakeup bus.
+
+Refills and stores can conflict because both may need data-array write bandwidth:
+
+```text
+cycle N:
+  refill wants to install a 64B line
+  committed store wants to write 4B
+
+if same bank or one write port:
+  one wins, the other waits/replays
+```
+
+#### 0.8 L1D Banking, Ports, and Structural Replay
+
+LSU "ports" are not a single resource. A memory operation can consume:
+- AGU pipeline bandwidth.
+- DTLB lookup bandwidth.
+- L1D read/write port bandwidth.
+- SQ CAM compare bandwidth.
+- LQ violation-check bandwidth.
+- MSHR allocation/merge bandwidth.
+- Register-file writeback bandwidth.
+
+Banking is a common way to increase L1D bandwidth without building expensive true multiported SRAMs.
+
+Example:
+
+```text
+L1D has 4 banks
+one access per bank per cycle
+bank = line_addr % 4
+
+L0: lw [0x1000] -> bank 0
+L1: lw [0x1040] -> bank 1
+L2: lw [0x1080] -> bank 2
+L3: lw [0x1100] -> bank 0
+```
+
+`L0` and `L3` conflict on bank 0, so one replays even if both lines are hot.
+
+Back-of-envelope occupancy:
+
+```text
+N requests, B banks
+expected occupied banks = B * (1 - ((B - 1) / B)^N)
+
+4 requests, 4 banks:
+  4 * (1 - (3/4)^4) ~= 2.73 useful banks
+
+4 requests, 8 banks:
+  8 * (1 - (7/8)^4) ~= 3.31 useful banks
+```
+
+So four issued memory requests do not automatically mean four useful L1D accesses. Bank conflicts must be modeled separately from cache misses.
+
+#### 0.9 Load Replay Queue
+
+A load replay queue holds loads that have left the issue queue but could not complete correctly.
+
+Common replay reasons:
+- L1D bank conflict.
+- DTLB miss or TLB-port conflict.
+- L1D miss.
+- MSHR full.
+- Store-forwarding hazard.
+- Unknown older store hazard.
+- Memory-order violation.
+- Writeback-port conflict.
+- Cache pipeline nack.
+
+Replay path:
+
+```text
+Issue Queue -> LSU pipe -> fail/nack -> Load Replay Queue -> LSU pipe retry
+```
+
+Why not send the load back to the general issue queue?
+- It would require write ports back into the IQ.
+- It would restore or preserve operand-ready state.
+- It would compete with new dispatch entries.
+- It would complicate wakeup/select logic.
+
+The replay queue must arbitrate with new load issues and refill-woken loads. If it fills, it can backpressure LSU issue and eventually backend dispatch.
+
+#### 0.10 MSHR Merge and MSHR Full
+
+On L1D miss:
+
+```text
+if matching MSHR for same cache line:
+  merge as another waiter
+elif free MSHR exists:
+  allocate new MSHR
+else:
+  nack/replay/stall because MSHRs are full
+```
+
+Example:
+
+```text
+L0: lw x5,  0(x10)   // x10 = 0x4000
+L1: lw x6,  8(x10)   // same 64B line
+L2: lw x7, 64(x10)   // next 64B line
+
+L0 -> line 0x4000 -> allocate MSHR[0]
+L1 -> line 0x4000 -> merge into MSHR[0]
+L2 -> line 0x4040 -> allocate MSHR[1]
+```
+
+MSHR count limits memory-level parallelism for distinct missing lines. MSHR merging prevents redundant requests for the same line.
+
+#### 0.11 D-Cache Load Pipeline Timing
+
+A load hit path is timing-critical because it combines multiple operations:
+
+```text
+Cycle N:
+  issue load
+  read base register / bypass
+
+Cycle N+1:
+  AGU computes VA
+  DTLB lookup begins
+  L1D bank/index selected
+  SQ CAM lookup begins
+
+Cycle N+2:
+  DTLB returns PA
+  L1D tag/data read
+  forwarding candidate selected
+
+Cycle N+3:
+  tag hit confirmed
+  choose D-cache data vs forwarded store data
+  byte align/sign-extend
+  writeback and wake dependents
+```
+
+VIPT L1D helps because cache indexing can use page-offset bits before translation completes. The physical tag still comes from the DTLB for final comparison.
+
+The timing path to watch:
+
+```text
+AGU -> DTLB / L1D index -> SQ CAM -> tag/data -> forward/merge mux -> writeback/wakeup
+```
+
+This is why high-performance LSUs pipeline the load path, bank the cache, limit forwarding cases, and use replay for hard cases.
+
+#### 0.12 Performance-Modeling Counters and Bottleneck Diagnosis
+
+Core throughput counters:
+
+```text
+load_issued
+store_addr_issued
+store_data_issued
+load_completed
+store_committed
+store_drained_to_l1d
+```
+
+Queue pressure:
+
+```text
+load_queue_full_cycles
+store_queue_full_cycles
+store_buffer_full_cycles
+load_replay_queue_full_cycles
+mshr_full_cycles
+```
+
+Cache outcome:
+
+```text
+l1d_load_hit
+l1d_load_miss
+l1d_store_hit
+l1d_store_miss_or_ownership_miss
+mshr_alloc
+mshr_merge
+mshr_full_nack
+refill_count
+```
+
+Replay reasons:
+
+```text
+load_replay_bank_conflict
+load_replay_dtlb_miss
+load_replay_store_forward_hazard
+load_replay_unknown_store
+load_replay_memory_order_violation
+load_replay_mshr_full
+load_replay_wb_port_conflict
+```
+
+Store-forwarding quality:
+
+```text
+store_forward_full
+store_forward_partial_merge
+store_forward_partial_replay
+store_forward_size_mismatch
+store_forward_line_cross_blocked
+```
+
+Memory-dependence speculation:
+
+```text
+loads_executed_with_unknown_older_store
+memory_order_violations
+violation_flush_cycles
+dependence_predictor_wait_cycles
+dependence_predictor_correct_wait
+dependence_predictor_unnecessary_wait
+```
+
+Bank/port pressure:
+
+```text
+l1d_bank_conflict_cycles
+l1d_read_port_busy
+l1d_write_port_busy
+refill_store_write_conflict
+store_drain_blocked_by_l1d_port
+```
+
+Diagnosis examples:
+- High `mshr_full_cycles`: not enough memory-level parallelism, or misses arrive too burstily.
+- High `load_replay_bank_conflict`: L1D banking/port bandwidth bottleneck.
+- High `store_queue_full_cycles`: stores cannot drain, or too many in-flight stores.
+- High `memory_order_violations`: loads are too aggressive, or dependence prediction is missing/weak.
+- High `dependence_predictor_unnecessary_wait`: predictor is too conservative.
+- High `store_forward_partial_replay`: partial-forwarding limitation hurts workload.
+- High `refill_store_write_conflict`: L1D write port is oversubscribed by refills and store drains.
+
+Interview framing:
+
+```text
+I would not only count L1D misses.
+I would break LSU stalls into queue pressure, MSHR pressure, bank conflicts,
+store-forwarding failures, memory-dependence violations, TLB misses,
+store-buffer drain stalls, and refill/write-port conflicts.
+That tells whether the bottleneck is capacity, banking, speculation policy,
+forwarding capability, or cache miss latency.
+```
 
 Source: `design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/LSU_Optimization.md`
 
@@ -6216,120 +9337,7 @@ Before enabling Step 9 as the default path, confirm the TSMC16 tag macro wrapper
 
 **Sign-off gate**: §3.2 (partial-tag hash), §4.2 (LRB entry), §4.4 (full-LRB policy), §5.3 (prefetch gates), §6.3 (way-pred retry), §9.3 open questions.
 
-## Part 5 — Branch Predictor Microarchitecture
-
-This section complements the decoupled frontend spec. The frontend section explains the implemented RSD dataflow; this section is the interview review checklist for branch prediction concepts and model knobs.
-
-### 1. What a Branch Predictor Predicts
-
-Direction:
-- Conditional branch taken / not taken.
-- Structures: bimodal counters, local history, global history, gshare, tournament, TAGE, perceptron-like predictors.
-
-Target:
-- BTB predicts the target PC for taken branches and jumps.
-- Return address stack predicts function returns.
-- Indirect predictor handles indirect jumps with many possible targets.
-
-Fetch-block metadata:
-- Which lane in the fetch packet is the first taken branch.
-- Where the fetch block ends.
-- What history snapshot must be restored on misprediction.
-
-### 2. RSD Implementation Anchor
-
-RSD decoupled frontend uses:
-- `DecoupledBPU.sv` with BTB + PHT + global-history indexing.
-- `CONF_BTB_ENTRY_NUM = 1024`.
-- `CONF_PHT_ENTRY_NUM = 2048`.
-- `CONF_BRANCH_GLOBAL_HISTORY_BIT_WIDTH = 10`.
-- A gshare-style PHT index: PC index bits XORed with global history.
-- FTQ entries that carry prediction metadata, GHR snapshots, PHT index/value, branch offset, predicted target, and lane predictions.
-- Predictor update from resolved branch metadata through the FTQ update path.
-
-What RSD does not currently model:
-- RAS.
-- TAGE / tournament predictor.
-- Indirect branch target predictor.
-- Multi-level BTB hierarchy.
-
-### 3. Prediction Flow
-
-1. Use fetch PC to read BTB and PHT.
-2. Match BTB tag for each fetch lane.
-3. Use PHT counter MSB as taken/not-taken direction for BTB-hit lanes.
-4. Pick the first predicted-taken lane in the fetch block.
-5. Set predicted next PC to BTB target if taken, otherwise fall-through fetch end.
-6. Enqueue prediction metadata into FTQ.
-7. Speculatively update global history for predicted conditional branches.
-8. On resolution, update BTB/PHT and restore/update global history if the speculation was wrong.
-
-### 4. Performance-Modeling Knobs
-
-- Direction accuracy by branch class.
-- BTB capacity, associativity, tag width, and aliasing.
-- PHT size/history length and destructive aliasing.
-- Predictor latency and fetch redirection latency.
-- Update timing: execute-time, commit-time, or hybrid.
-- Misprediction penalty: frontend depth + backend recovery + lost issue/commit opportunity.
-- Fetch bandwidth loss from taken branches inside a fetch packet.
-
-### 5. TAGE Predictor Review
-
-TAGE idea:
-- TAGE means tagged geometric history length predictor.
-- It keeps multiple predictor tables indexed with different global-history lengths.
-- Short-history tables learn local/simple patterns; long-history tables learn long-range correlations.
-- Each non-base table stores a partial tag to reduce destructive aliasing.
-
-Core structures:
-- Base predictor: simple bimodal predictor used when no tagged table matches.
-- Tagged tables: each entry usually has prediction counter, tag, and usefulness bit.
-- Geometric history lengths: table history lengths grow roughly geometrically, such as short, medium, long, and very long histories.
-- Provider: the longest-history matching table that supplies the main prediction.
-- Alternate provider: a shorter-history matching table or base predictor used when the provider is weak or newly allocated.
-- Usefulness tracking: tells whether an entry has been helpful enough to keep during replacement.
-
-Prediction flow:
-1. Hash PC with different global-history slices for each table.
-2. Read base predictor and tagged tables in parallel if timing allows.
-3. Compare tags in tagged tables.
-4. Choose the longest matching provider.
-5. If provider confidence is weak, optionally use alternate prediction.
-6. Carry provider/alternate metadata into the FTQ or branch metadata for update.
-
-Update/allocation:
-- Correct prediction: strengthen the provider counter and possibly usefulness.
-- Misprediction: update provider, then allocate entries in longer-history tables that did not match.
-- Replacement prefers entries with low usefulness.
-- History update timing is critical because speculative GHR must be recoverable on misprediction.
-
-Performance-modeling knobs:
-- Number of tables.
-- History lengths.
-- Table entry count and associativity.
-- Tag width.
-- Counter width and allocation policy.
-- Predictor latency: single-cycle vs pipelined prediction.
-- Update timing and wrong-path history pollution.
-
-Interview contrast:
-- Gshare is compact and simple but aliases many unrelated branches into one counter.
-- TAGE uses multiple tagged history lengths to reduce aliasing and learn both short and long branch correlations.
-- TAGE improves accuracy but costs more SRAM, history bookkeeping, update complexity, and possibly frontend latency.
-
-### 6. Review Questions
-
-- What is the difference between a direction miss and a target miss?
-- Why does a BTB miss on a taken branch look like a not-taken prediction?
-- Why do global-history predictors alias?
-- What metadata must be checkpointed to recover history after a misprediction?
-- Why is RAS important for return-heavy workloads?
-- How does TAGE choose between provider and alternate prediction?
-- Why do TAGE tables use geometric history lengths?
-- What is the usefulness bit protecting against?
-
-## Part 6 — TLB, MMU, and Page Table Walker
+## Part 5 — TLB, MMU, and Page Table Walker
 
 RSD note: the inspected RSD tree does not appear to implement a real TLB, MMU, `satp`, or page-table walker. The cache paths use physical-address-style indexing/tagging and the verification environment uses a pretranslated memory map. Treat this section as external architecture review unless we later find a different RSD branch with MMU support.
 
@@ -6380,7 +9388,220 @@ Sv48:
 Interview point:
 - Larger pages reduce TLB pressure but increase internal fragmentation and can complicate OS allocation.
 
-### 4. Page Table Walker Flow
+Who chooses the page size:
+
+- Hardware defines the supported translation modes and page sizes.
+- The OS chooses which size to use for each mapping by choosing where the leaf
+  PTE appears in the page table.
+- Applications can influence the OS through huge-page APIs, `mmap` policy, and
+  allocation patterns, but normal programs still need 4 KB support.
+
+Why 4 KB pages remain important:
+
+- Demand paging can bring in small chunks of memory only when used.
+- Fine-grain protection lets code, data, stacks, guard pages, and file mappings
+  have different permissions.
+- Copy-on-write is efficient because a forked process only copies the modified
+  4 KB page, not a whole 2 MB region.
+- `mmap` is flexible for small files and arbitrary offsets.
+- Dirty/accessed tracking is more precise.
+- Internal fragmentation is lower. If a program needs 8 KB, two 4 KB pages can
+  map to two unrelated physical frames; a 2 MB page would waste most of the
+  physical memory if the rest is unused.
+
+### 4. VIPT, Page Coloring, and Large L1 Caches
+
+A textbook VIPT L1 wants all set-index bits to come from the page offset so
+I-cache/D-cache array access can start in parallel with TLB translation.
+
+Formula:
+
+```text
+cache_size <= page_size * associativity
+```
+
+For 4 KB pages and 64B lines:
+
+```text
+4 KB page offset = 12 bits
+line offset      = 6 bits
+safe set bits    = 12 - 6 = 6 bits
+safe sets        = 64
+
+8-way VIPT capacity = 64 sets * 8 ways * 64B = 32 KB
+```
+
+This is why 32 KB L1D is common on 4 KB-page systems.
+
+Concrete synonym problem:
+
+```text
+L1D wants 128 sets:
+  line offset = VA[5:0]
+  set index   = VA[12:6]
+
+4 KB page offset only guarantees VA[11:0] == PA[11:0]
+VA[12] is not guaranteed to match PA[12]
+```
+
+Two virtual aliases can map to the same physical line:
+
+```text
+VA1 = 0x0000_0000 -> PA = 0x8000_0000
+VA2 = 0x0000_1000 -> PA = 0x8000_0000
+
+VA1[12] = 0
+VA2[12] = 1
+```
+
+If the cache uses VA[12] as part of the set index before translation, the same
+physical line can occupy two different sets. That breaks coherence inside the
+L1 unless the design prevents it or detects/repairs it.
+
+Page coloring:
+
+```text
+color = the virtual/physical index bits above the base page offset
+```
+
+For the example above, the extra color bit is bit 12. Page coloring means the
+OS allocates physical pages so:
+
+```text
+VA[12] == PA[12]
+```
+
+or, more generally:
+
+```text
+virtual color == physical color
+```
+
+Then two virtual mappings of the same physical page cannot legally use two
+different colors, so they cannot index different L1 sets. This is simple in
+concept but difficult as a general OS policy because it constrains physical page
+allocation and interacts with fragmentation, NUMA, huge pages, and arbitrary
+file mappings. It is not a general modern Linux mechanism used to make large
+VIPT L1 caches easy across all systems.
+
+Apple Firestorm:
+
+```text
+page size = 16 KB
+L1D       = 128 KB
+ways      = 8
+line      = 64B
+
+sets = 128KB / (8 * 64B) = 256
+set bits + line offset = 8 + 6 = 14 bits
+16KB page offset = 14 bits
+```
+
+So Apple can build a large 128 KB 8-way VIPT L1D cleanly with 16 KB pages.
+
+Oryon reported configuration:
+
+```text
+L1D  = 96 KB
+ways = 6
+line = 64B
+
+sets = 96KB / (6 * 64B) = 256
+set bits + line offset = 8 + 6 = 14 bits
+```
+
+If using 4 KB pages:
+
+```text
+page offset = 12 bits
+needed set+offset = 14 bits
+missing translated index/color bits = PA[13:12]
+```
+
+Therefore a simple textbook VIPT L1D cannot support Oryon's 96 KB 6-way design
+with 4 KB pages without additional tricks.
+
+Likely design space:
+
+```text
+physically indexed / physically tagged or near-PIPT timing
+VIPT with synonym handling
+set/color prediction plus replay
+fast TLB/tag pipeline with partial serialization
+large DTLB and translation prefetch to reduce exposed translation cost
+```
+
+Public reporting says Oryon supports 4 KB and 64 KB pages, has a 96 KB 6-way
+L1D, a 224-entry 7-way L1 DTLB, and an 8K+ L2 TLB. Qualcomm also emphasized
+timing tradeoffs for the 96 KB L1D and translation/prefetch capacity.
+
+Source anchors for these public numbers and comparisons:
+
+- Apple Firestorm reverse-engineering notes: [Dougall Johnson, Apple M1/A14 P-core overview](https://dougallj.github.io/applecpu/firestorm.html)
+- VIPT/page-size explanation for Apple Firestorm: [LWN, Cache sizes](https://lwn.net/Articles/996978/)
+- Oryon cache/TLB public summaries: [HWCooling Oryon architecture analysis](https://www.hwcooling.net/en/oryon-arm-core-in-snapdragon-x-cpus-architecture-analysis/), [Chips and Cheese Hot Chips 2024 Oryon coverage](https://chipsandcheese.com/p/hot-chips-2024-qualcomms-oryon-core), [ServeTheHome Hot Chips 2024 Oryon coverage](https://www.servethehome.com/snapdragon-x-elite-qualcomm-oryon-cpu-design-and-architecture-hot-chips-2024-arm/)
+
+Interview-safe answer:
+
+> Oryon's 96 KB 6-way L1D is too large for a naive 4 KB-page VIPT design. It
+> likely uses a more complex L1D/TLB pipeline than the textbook VIPT model,
+> with large TLBs and possibly prediction or partial serialization to keep
+> average hit latency acceptable.
+
+#### Set/Color Prediction and Way Prediction
+
+For Oryon-like L1D geometry:
+
+```text
+set index needs PA[13:6]
+4KB page offset only provides VA[11:6]
+missing bits are physical color bits PA[13:12]
+```
+
+A speculative access can predict:
+
+```text
+physical color bits PA[13:12]
+way number
+```
+
+Flow:
+
+```text
+Cycle N:
+  load VA is known
+  predictor guesses PA[13:12] and maybe way
+  predicted_set = {predicted PA[13:12], VA[11:6]}
+  read predicted set/way early
+
+Cycle N+1:
+  TLB returns real PA
+  verify predicted PA[13:12]
+  verify physical tag matches predicted way
+
+Correct:
+  use data as fast L1 hit
+
+Wrong:
+  replay load with correct set/way
+```
+
+Important distinction:
+
+```text
+way prediction:
+  predicts which way within a known set
+
+set/color prediction:
+  predicts translated index bits needed to choose the set
+```
+
+Way prediction helps timing and power by reading fewer ways early. Set/color
+prediction helps start the access before full translation resolves. Neither
+removes the correctness requirement: the physical tag/TLB result still verifies
+the load.
+
+### 5. Page Table Walker Flow
 
 For an L2 TLB miss:
 
@@ -6402,7 +9623,7 @@ Fault cases:
 - Accessed/dirty bit handling fault if hardware does not update A/D bits.
 - Page-table memory access fault.
 
-### 5. Modeling Hooks
+### 6. Modeling Hooks
 
 - ITLB miss rate, DTLB miss rate, L2 TLB hit rate.
 - PTW latency distribution and cache hit/miss behavior of page-table reads.
@@ -6411,7 +9632,7 @@ Fault cases:
 - Page size mix.
 - TLB shootdown and `SFENCE.VMA` overhead.
 
-### 6. TLB and Virtual Memory Corner Cases
+### 7. TLB and Virtual Memory Corner Cases
 
 Synonyms and homonyms:
 - Synonym: two different virtual addresses map to the same physical address. This can create VIPT cache aliasing if both VAs can occupy different L1 sets.
@@ -6439,15 +9660,18 @@ Superpage corner cases:
 - Mixed page sizes complicate TLB lookup, replacement, and page-walk refill policy.
 
 VIPT cache constraints:
-- VIPT L1 can overlap TLB lookup with cache indexing only if set-index bits fit inside the page offset.
-- If index bits extend above page offset, synonyms can map the same PA into different sets.
-- Common fixes include page coloring, lower associativity/index constraints, or physical-indexed lookup.
+- VIPT L1 can overlap TLB lookup with cache indexing only if set-index bits fit
+  inside the page offset.
+- If index bits extend above page offset, synonyms can map the same PA into
+  different sets.
+- The detailed sizing math, page coloring example, and set/color prediction
+  discussion are in [VIPT, Page Coloring, and Large L1 Caches](#4-vipt-page-coloring-and-large-l1-caches).
 
 Memory attributes:
 - TLB/PTE result may carry cacheability, ordering, executable, user/supervisor, dirty/accessed, and device-memory attributes.
 - MMIO/device mappings are usually non-cacheable and strongly ordered relative to normal cacheable memory.
 
-### 7. Review Questions
+### 8. Review Questions
 
 - Why is L1 TLB often fully associative while L2 TLB is set associative?
 - What is the difference between a page fault and an access fault?
@@ -6458,7 +9682,7 @@ Memory attributes:
 - Why do ASIDs reduce context-switch overhead?
 - Why are TLB shootdowns expensive?
 
-## Part 7 — Cache, Coherence, and Memory System
+## Part 6 — Cache, Coherence, and Memory System
 
 This is the broader memory-system review section beyond the RSD L1D optimization spec.
 
@@ -6763,89 +9987,7 @@ ECC/parity:
 - Caches often protect tags/data with parity or ECC.
 - Correctable errors may add latency or counters; uncorrectable errors can raise machine checks or poison data paths.
 
-## Part 8 — Retire, Commit, ROB State, and Recovery
-
-This section overlaps with backend commit, but keeps retire-specific interview questions in one place.
-
-### 1. Instruction States in a ROB
-
-Typical states:
-- Not allocated: free ROB slot.
-- Allocated / busy: instruction is in-flight and not complete.
-- Issued: instruction has left the issue queue.
-- Executed: result is ready or memory op has produced a completion state.
-- Writeback complete: destination physical register or completion bit is updated.
-- Exception/replay pending: instruction has a non-success completion state.
-- Commit-ready: instruction and all older instructions are complete.
-- Committed / retired: architectural state updated; ROB head can advance.
-- Squashed: entry is younger than a redirect/recovery point.
-
-RSD simplification:
-- `ActiveList.sv` stores metadata and uses a compact execution-state bit for normal completion, plus a recovery register for the oldest exceptional/refetch state.
-- Debug/reference logic retains full execution-state checking for verification.
-
-### 2. ROB Pointer Movement
-
-Tail pointer:
-- Moves on rename/dispatch allocation.
-- Must not overrun head.
-- On recovery, younger speculative entries are removed by moving/recovering tail state.
-
-Head pointer:
-- Moves only at commit.
-- Can move by up to commit width per cycle.
-- Stops at the first not-finished instruction or at an instruction that triggers recovery/fault handling.
-
-Commit width:
-- A 2-wide commit core can retire up to two ops/instructions per cycle, but only if they form an oldest contiguous completed group.
-- Multi-uop instruction commit requires tracking instruction boundaries.
-
-### 3. Branch Misprediction: Commit-Time vs Early Recovery
-
-Commit-time recovery:
-- Detect or record the misprediction, but wait until the branch reaches ROB head before redirect/flush.
-- Simpler precise-state reasoning.
-- Worse performance because wrong-path fetch/execute continues longer.
-
-Early recovery:
-- When a branch resolves in execute/writeback, redirect frontend immediately and squash younger backend work using ROB age/range.
-- Must prove that older unresolved exceptions still take priority.
-- Needs checkpoints or recovery state for rename map, LSQ pointers, predictor history, and frontend queues.
-
-Frontend-only early restart:
-- Redirect fetch as soon as the correct PC is known.
-- Temporarily block new wrong-path instructions from entering backend while older backend work drains or until recovery is safe.
-- Reduces fetch bubble cost but still needs careful handling of backend resources and architectural side effects.
-
-RSD anchor:
-- RSD records refetch/recovery events from writeback and can start recovery before the op reaches commit for branch/refetch-style events.
-- CSR-visible traps/faults wait for commit-stage handling to keep precise exception semantics.
-
-### 4. Flush Rules
-
-Flush on:
-- Branch misprediction.
-- Exception/fault/trap.
-- Store-load forwarding failure or memory-order violation.
-- FENCE.I refetch after cache flush.
-- Interrupt entry.
-- Atomic/fence serialization failure or unsupported operation, if implemented.
-
-Flush range:
-- `THIS_PC`: flush starting at the offending instruction and refetch it.
-- `NEXT_PC`: let offending instruction commit/effect complete, flush younger, refetch next.
-- `BRANCH_TARGET`: redirect to resolved target.
-- CSR target: redirect to trap vector or `mepc`.
-
-### 5. Review Questions
-
-- Why does commit happen in order even when execution is out of order?
-- What exactly moves head and tail pointers?
-- Why can branch recovery often be early but exceptions wait until commit?
-- What state is restored during recovery?
-- How do stores interact with commit and memory visibility?
-
-## Part 9 — Vector and SIMD
+## Part 7 — Vector and SIMD
 
 RSD note: the inspected RSD source does not show a full RISC-V Vector extension pipeline. This section is for external review and for discussing your prior vector/SIMD kernel optimization work.
 
@@ -6978,7 +10120,7 @@ Microarchitecture connection:
 - Why can predication help an unpredictable branch, and when can it hurt?
 - What signs in generated assembly indicate register pressure or poor scheduling?
 
-## Part 10 — Interrupt and Exception Implementation
+## Part 8 — Interrupt and Exception Implementation
 
 To fill with RSD implementation evidence and interview explanation.
 
@@ -6990,24 +10132,952 @@ Topics to cover:
 - Pipeline drain or flush requirements.
 - Interrupt priority and masking.
 
-## Part 11 — FENCE and FENCE.I and ecall/ebreak/csr/sret/mret Implementation
+## Part 9 — Serialization, Fences, Atomics, and Privileged Control
 
-To fill with RSD implementation evidence and interview explanation.
+This section groups instructions that are not just normal out-of-order ALU or memory uops. They either impose ordering, change frontend visibility, update privileged state, or require atomic interaction with the coherent memory system.
 
-Topics to cover:
-- Memory-ordering fence vs instruction-cache synchronization fence.
-- Why `FENCE` serializes memory ordering.
-- Why `FENCE.I` needs instruction-side visibility after data-side code writes.
-- Cache flush, pipeline refetch, and store-buffer drain requirements.
+Related sections:
+- Part 4, LSU: store buffer, load/store ordering, replay, and memory dependence.
+- Part 5, TLB/MMU: `SFENCE.VMA`, page-table visibility, and TLB shootdown.
+- Part 3, Backend: precise recovery, ActiveList/ROB state, and pipeline flush.
+- Part 8, Interrupt/Exception: exact trap CSR updates and interrupt priority.
 
-## Part 12 — Atomic, LR/SC, and AMO Implementation
+RSD note:
+- Do not claim full support until checking the RTL. RSD is useful for studying CSR/recovery plumbing and simple in-order/OOO control, but full RISC-V A-extension behavior, instruction-cache synchronization, and coherent atomic behavior may be incomplete or configuration-dependent.
 
-To fill with RSD implementation evidence and interview explanation.
+### 1. Unifying Mental Model
 
-Topics to cover:
-- LR/SC reservation set and failure conditions.
-- AMO read-modify-write atomicity.
-- Coherence permission requirements for atomics.
-- Store-buffer interaction.
-- Memory-ordering acquire/release bits.
-- RSD implementation status versus what a full RISC-V A-extension core would need.
+Normal uop:
+
+```text
+rename -> dispatch -> issue -> execute -> writeback -> commit
+```
+
+A normal uop can execute out of order as long as dependencies, exceptions, and commit ordering are respected.
+
+Serializing or ordering-sensitive uop:
+
+```text
+wait for a precise boundary
+possibly drain older memory operations
+possibly block younger issue/rename
+perform globally visible side effect
+possibly flush/refetch younger work
+then allow the machine to continue
+```
+
+Examples:
+- `FENCE`: does not change the PC, but constrains memory ordering.
+- `FENCE.I`: makes prior data-side instruction writes visible to the instruction-fetch side.
+- CSR writes: may change privilege, interrupt enable, address translation, or architectural control state.
+- `ecall` / `ebreak`: synchronous traps, usually handled at a precise commit boundary.
+- `mret` / `sret`: privileged control transfer back from a trap.
+- AMO: one indivisible read-modify-write operation.
+- LR/SC: reservation-based atomic sequence.
+
+The ROB/ActiveList is the structure that lets the core say: all older work is known, this instruction is now the oldest unresolved architectural side effect, and younger work can be held or flushed safely.
+
+### 2. Backend Serialization Policies
+
+There are several common implementation choices:
+
+1. Rename-stage barrier:
+   - When the serializing instruction enters rename, younger instructions stop renaming until it passes.
+   - Simple, but can reduce frontend/backend overlap.
+
+2. Dispatch or issue barrier:
+   - Younger instructions may be renamed, but cannot issue past the barrier.
+   - More overlap, but more bookkeeping.
+
+3. Commit-head execution:
+   - The instruction waits until it reaches the ROB/ActiveList head, then performs its side effect.
+   - Very precise and simple for traps/privileged state, but higher latency.
+
+4. Early execute plus commit validation:
+   - The instruction may do some safe work early, but the architectural side effect only becomes final at commit.
+   - Common for normal loads, branches, and some predictor updates.
+
+Concrete table:
+
+| Instruction class | Usually waits for | Main action | Flush/refetch? |
+| --- | --- | --- | --- |
+| `FENCE` | Required older memory operations | Enforce predecessor/successor memory ordering | Usually no frontend flush |
+| `FENCE.I` | Older data writes to code visible | Synchronize instruction side and refetch | Usually yes, frontend refetch |
+| `SFENCE.VMA` | Older page-table writes visible | Invalidate translation state | Often yes for affected fetch/translation state |
+| CSR write | Older precise state, depends on CSR | Update architectural control state | Sometimes |
+| `ecall` / `ebreak` | Commit head / precise point | Write trap CSRs and redirect to handler | Yes |
+| `mret` / `sret` | Commit head / precise point | Restore privilege/status and redirect | Yes |
+| AMO | Address/data ready, coherence permission | Atomic read-modify-write | No, unless fault/retry |
+| LR/SC | Reservation protocol | Set/check reservation and optionally store | No, unless fault/retry |
+
+### 3. `FENCE`
+
+`FENCE` is a memory-ordering instruction, not a cache-flush instruction.
+
+A simple way to say it in interview:
+
+```text
+FENCE makes selected older memory operations become ordered before selected younger memory operations.
+It does not mean "clear the cache."
+```
+
+Example:
+
+```asm
+sw   x5, 0(x10)      # store data
+fence rw, rw         # make older reads/writes ordered before younger reads/writes
+lw   x6, 0(x11)      # younger memory op
+```
+
+Implementation idea:
+- The fence enters the ROB/ActiveList like a normal instruction.
+- The LSU checks whether older memory operations have completed the required visibility/order condition.
+- Younger memory operations are held until the fence is satisfied.
+- The store buffer may need to drain, or at least reach a point where ordering is guaranteed, depending on the memory model and fence masks.
+
+Important nuance:
+- A store buffer does not automatically violate the memory model.
+- It is legal if the core has correct store-to-load forwarding, ordering checks, fence handling, and commit rules.
+- Under RISC-V RVWMO, many reorderings are allowed unless constrained by dependencies, acquire/release, or fences.
+- Under a stronger model like TSO, the store buffer is still legal, but the core must preserve the required global store order and own-store forwarding behavior.
+
+Performance-modeling hooks:
+- Count fence instructions.
+- Measure cycles blocked by older store-buffer drain.
+- Measure cycles younger loads/stores are blocked behind the fence.
+- Separate lightweight ordering fences from heavyweight device/MMIO fences.
+
+### 4. `FENCE.I`
+
+`FENCE.I` solves a different problem from `FENCE`.
+
+Problem:
+
+```text
+core writes instruction bytes through the data side
+instruction side may still have stale I-cache / fetch buffer / uop-cache contents
+later fetch must see the new instruction bytes
+```
+
+Concrete example:
+
+```asm
+sw      x5, 0(x10)       # write new code bytes
+fence.i                 # synchronize instruction fetch side
+jalr    x0, x10, 0       # execute the newly written code
+```
+
+What a core may need to do:
+- Ensure older data-side writes are visible enough for instruction fetch.
+- Invalidate or synchronize relevant I-cache state.
+- Invalidate decoded/uop-cache entries if present.
+- Flush younger frontend work and refetch from the correct PC.
+
+Why this is expensive:
+- It crosses the data side and instruction side.
+- It may break speculative frontend work.
+- It may require coordination with caches, fill buffers, predecode metadata, and uop cache state.
+
+Interview phrasing:
+
+```text
+FENCE orders memory operations.
+FENCE.I orders the data-side creation of instruction bytes with later instruction fetch.
+That is why FENCE.I usually needs frontend invalidation/refetch behavior, not just LSU ordering.
+```
+
+### 5. CSR, `ecall`, `ebreak`, `mret`, and `sret`
+
+These instructions are grouped here because they serialize architectural control state.
+
+CSR instructions:
+- Some CSRs are harmless counters or status reads.
+- Some CSRs affect interrupt enable, privilege state, address translation, floating/vector enable, or trap behavior.
+- A high-performance core may classify CSRs into cheap and serializing classes.
+
+Example:
+
+```asm
+csrw mstatus, x5
+```
+
+If `mstatus` changes interrupt enable or privilege-related state, the core cannot freely let younger instructions execute under an ambiguous machine state.
+
+`ecall` / `ebreak`:
+- These are synchronous exceptions.
+- They should be precise.
+- When taken, the core writes trap CSRs such as `mepc`, `mcause`, `mtval` when applicable, updates status fields, and redirects to the trap vector.
+- Exact trap CSR details belong in Part 8.
+
+`mret` / `sret`:
+- These restore privilege/status state and redirect to the saved exception PC.
+- Younger instructions fetched under the old privilege context are not valid after the return.
+- Therefore they usually act as serializing control-transfer instructions.
+
+Concrete flow for `mret`:
+
+```text
+1. mret reaches the precise retirement point.
+2. Core restores privilege/status from trap CSRs.
+3. Core redirects fetch to mepc/sepc.
+4. Younger speculative instructions are flushed.
+5. Frontend restarts under the restored privilege context.
+```
+
+### 6. AMO: Atomic Read-Modify-Write
+
+AMO instructions perform a load and store as one atomic memory operation.
+
+Example:
+
+```asm
+amoadd.w x5, x6, (x10)
+```
+
+Meaning:
+
+```text
+old = memory[x10]
+memory[x10] = old + x6
+x5 = old
+```
+
+But the load and store cannot be observed as two independent operations by other cores.
+
+Implementation requirements:
+- Address translation and permission check.
+- Alignment check.
+- Coherence permission for the cache line, often exclusive/modified ownership.
+- Atomic update in the L1/L2/coherence pipeline.
+- Correct interaction with older stores and younger loads.
+- Correct exception behavior: no partial architectural side effect on fault.
+
+Common implementation paths:
+
+1. Execute AMO in the LSU after it reaches the memory pipeline.
+2. Lock or reserve the cache line internally while performing the read-modify-write.
+3. Send a coherence request if the line is not in the required state.
+4. Return the old value to the destination register.
+5. Commit in program order like other instructions.
+
+Acquire/release bits:
+- RISC-V AMOs can carry `aq` and `rl` bits.
+- `aq` constrains later memory operations from moving before the AMO.
+- `rl` constrains earlier memory operations from moving after the AMO.
+- `aqrl` makes the AMO a stronger synchronization point.
+
+Performance-modeling hooks:
+- AMO latency on L1 hit, L2 hit, and coherence miss.
+- Cycles waiting for exclusive ownership.
+- Retry/replay count.
+- Whether AMO blocks younger memory operations.
+- Whether AMO forces store-buffer drain for a given memory model.
+
+### 7. LR/SC: Reservation-Based Atomic Sequence
+
+LR/SC splits atomic update into two instructions:
+
+```asm
+lr.w    x5, (x10)        # load and create reservation
+add     x5, x5, x6       # compute new value
+sc.w    x7, x5, (x10)    # store only if reservation still valid
+```
+
+If `sc.w` succeeds:
+
+```text
+memory[x10] = x5
+x7 = 0
+```
+
+If `sc.w` fails:
+
+```text
+memory is unchanged
+x7 = nonzero
+```
+
+What the reservation tracks:
+- Usually an address granule, often at cache-line granularity or an implementation-defined reservation set.
+- The hart remembers that it has a valid reservation from a prior LR.
+
+Common SC failure conditions:
+- Another hart writes the reservation granule.
+- A coherence invalidation arrives for the reserved line.
+- This hart performs an intervening store that clears the reservation, depending on implementation/spec rule.
+- The SC address does not match the LR reservation.
+- The line is evicted or reservation times out.
+- Exception, context switch, or explicit OS action clears the reservation.
+- Misalignment or permission fault.
+
+Important interview point:
+
+```text
+LR/SC is not "guaranteed success after LR."
+It is a conditional store. Software loops until it succeeds, and hardware must provide the architectural forward-progress rules required by the ISA.
+```
+
+Performance-modeling hooks:
+- LR/SC success rate.
+- Reservation loss due to coherence traffic.
+- Reservation loss due to interrupts/context switches.
+- Retry loop cycles.
+- Cache miss and ownership latency.
+
+### 8. Store Buffer, Coherence, and Wrong-Path Safety
+
+Store buffer interaction:
+- Normal stores can sit in the store buffer after commit before reaching L1/coherence.
+- Fences and atomics may need to wait for older stores, depending on ordering requirements.
+- Loads must search the store buffer for forwarding and ordering conflicts.
+
+Coherence interaction:
+- AMO and successful SC need coherent ownership of the target line.
+- Other cores must not observe an AMO as separate load and store operations.
+- Invalidations can clear LR reservations.
+
+Wrong-path safety:
+- Wrong-path loads may be allowed to access cache speculatively, though this can create side-channel concerns.
+- Wrong-path stores must not become globally visible.
+- Wrong-path AMOs and successful SC side effects must not become globally visible.
+- Therefore stores/AMOs become architectural only under commit/LSU rules that guarantee precise recovery.
+
+Concrete example:
+
+```text
+older branch is unresolved
+younger AMO is fetched and maybe decoded
+the core must not let the AMO modify coherent memory until it is known to be on the correct path
+```
+
+### 9. How To Explain This In An Interview
+
+Good answer shape:
+
+```text
+I group these instructions as serialization or ordering-sensitive operations.
+The ROB gives the precise boundary.
+The LSU handles memory visibility and store-buffer/coherence ordering.
+The frontend may need flushing for FENCE.I and privilege-control transfers.
+Atomics require coherent ownership and must not become visible on the wrong path.
+```
+
+Then give one concrete example:
+
+```text
+For FENCE.I, if software writes new code through the data cache, the instruction side may still hold stale bytes.
+The core must ensure the data write is visible, invalidate or synchronize instruction-side structures, flush younger fetch, and refetch.
+That is different from a normal FENCE, which is about ordering memory operations rather than instruction visibility.
+```
+
+Or:
+
+```text
+For AMO, the LSU cannot treat it as an independent load plus store.
+It needs exclusive/coherent ownership of the line, performs the read-modify-write atomically, returns the old value, and only lets the architectural effect survive if the instruction is on the correct path.
+```
+
+### 10. Review Questions
+
+- Why is `FENCE` not the same as a cache flush?
+- Why does `FENCE.I` usually require frontend refetch or invalidation?
+- Which CSRs can be treated as cheap, and which ones should serialize the pipeline?
+- Why should `ecall` and `ebreak` be taken at a precise point?
+- Why does `mret` / `sret` require a frontend redirect?
+- Why is AMO not equivalent to a normal load followed by a normal store?
+- What coherence permission does an AMO usually need?
+- What conditions can make SC fail after a successful LR?
+- How can a store buffer be legal under a memory consistency model?
+- What predictor/cache pollution can wrong-path memory operations cause, and what side effects must be prevented?
+
+## Part 10 — Architect Thinking, Tradeoff Analysis, Timing, Ports, and Hardware Cost Modeling
+
+This section captures the interview skill that sits above memorizing microarchitecture facts. Strong computer architects are expected to understand the design, explain it clearly, reason from first principles, compare alternatives, do quick quantitative sanity checks, identify timing/port/area risks, and validate claims with evidence.
+
+The key mindset:
+
+```text
+Architecture knowledge is the baseline.
+Architectural judgment is tradeoff + quantification + implementation realism + validation.
+```
+
+This section includes the previous Timing/Ports content because hardware cost awareness is a core part of that judgment. A performance model that ignores ports, SRAM access limits, CAM cost, timing paths, and arbitration will overestimate designs that cannot actually be built cleanly.
+
+### 1. What Strong Architects Are Testing
+
+Common signals in senior CPU architecture interviews:
+- Can you explain the whole system before zooming into your block?
+- Can you say exactly what you personally built or debugged?
+- Can you compare alternatives instead of only describing the final answer?
+- Can you make a rough quantitative estimate without waiting for a full simulator?
+- Can you identify the likely critical path or hardware resource bottleneck?
+- Can you explain how you validated the result?
+- Can you admit uncertainty and describe how you would find the answer?
+
+A useful mental model:
+
+```text
+junior answer:
+  "I implemented feature X."
+
+strong architect answer:
+  "The baseline had bottleneck B. I considered A/B/C.
+   I chose B because it reduced resource R by about N while adding cost C.
+   The likely timing path moved from P1 to P2.
+   I validated it with counters, directed tests, and model-vs-RTL behavior."
+```
+
+### 2. Whiteboard Method: Whole System, Then One Block
+
+A strong architecture explanation usually starts broad and then zooms in:
+
+```text
+whole pipeline
+  -> relevant subsystem
+  -> exact block
+  -> key state fields
+  -> datapath
+  -> control/recovery path
+  -> timing/resource bottleneck
+  -> validation counters/tests
+```
+
+Example for LSU:
+
+```text
+frontend -> rename -> issue -> LSU address generation
+  -> TLB / D-cache
+  -> LQ/SQ dependency check
+  -> forwarding or replay
+  -> writeback
+  -> commit/store drain
+```
+
+What to practice:
+- Draw the full CPU pipeline.
+- Draw one module you actually modified.
+- Draw one failure/recovery path.
+- Draw one timing-critical path.
+
+The goal is not artistic detail. The goal is to prove that the whole system is in your head and that your local design choices are connected to the rest of the machine.
+
+### 3. Design-Tradeoff Answer Template
+
+Use this template for almost any architecture design question:
+
+1. Baseline:
+   - What does the current design do?
+   - What resource or path is expensive?
+
+2. Bottleneck:
+   - Is the limit bandwidth, latency, storage, port count, CAM compare cost, predictor accuracy, MSHR count, or recovery latency?
+
+3. Alternatives:
+   - Name at least two reasonable designs.
+   - Include the simple baseline even if it is worse.
+
+4. Tradeoff:
+   - Performance gain.
+   - Area/power cost.
+   - Timing risk.
+   - Verification complexity.
+   - Recovery/corner-case complexity.
+
+5. Quantitative estimate:
+   - Entries, ports, comparators, mux size, latency, MPKI, IPC, bandwidth, queue occupancy, or expected speedup.
+
+6. Critical path:
+   - What signal starts the path?
+   - What logic is crossed?
+   - What register captures the result?
+
+7. Validation:
+   - What counters prove the bottleneck improved?
+   - What directed test catches the corner case?
+   - What waveform/model comparison confirms the mechanism?
+
+Concrete example: selective store queue lookup.
+
+```text
+Baseline:
+  every load searches every store queue entry with a full address compare.
+
+Bottleneck:
+  SQ CAM cost = entries * load pipes * compare width.
+
+Alternative:
+  full CAM, partial-tag prefilter, banking, store-set predictor, or replay-only design.
+
+Tradeoff:
+  partial tag saves compare power but can create false-positive stalls/replays.
+
+Quant:
+  16 SQ entries * 1 load pipe * 48-bit full compare = 16 full compares per load.
+  6-bit partial tag first stage gives a cheap filter and roughly 1/64 random false-positive rate.
+
+Critical path:
+  load address -> SQ compare/filter -> forward/sleep decision -> D-cache/replay control.
+
+Validation:
+  SQ lookup count, false positives, replay count, IPC, load-stall cycles, power proxy.
+```
+
+### 4. Quantitative Sanity Checks
+
+These are quick calculations to practice until they become reflexive.
+
+AMAT:
+
+```text
+AMAT = L1_hit_latency
+     + L1_miss_rate * (L2_hit_latency
+     + L2_miss_rate * memory_latency)
+```
+
+Branch penalty:
+
+```text
+branch_cost_per_instruction
+  = branch_frequency * mispredict_rate * mispredict_penalty
+```
+
+Little's Law for in-flight window:
+
+```text
+required_window ~= throughput * average_latency
+```
+
+Example:
+
+```text
+target IPC = 6
+average effective latency to cover = 80 cycles
+required in-flight work ~= 480 instructions/uops
+```
+
+Issue queue wakeup cost:
+
+```text
+comparators = issue_entries * source_operands * wakeup_ports
+```
+
+Memory bandwidth sanity:
+
+```text
+bytes_per_cycle = memory_bandwidth / frequency
+```
+
+Prefetch usefulness:
+
+```text
+coverage = eliminated_misses / original_misses
+accuracy = useful_prefetches / issued_prefetches
+timeliness = useful_prefetches_arriving_before_demand / useful_prefetches
+```
+
+The goal is not perfect precision. The goal is to quickly reject impossible claims and guide deeper modeling.
+
+### 5. Debug, Validation, and Evidence Discipline
+
+For any resume/project story, prepare three versions:
+- 5-minute version: high-level problem, action, result.
+- 15-minute version: mechanism, alternatives, tradeoffs, validation.
+- 30-minute version: waveforms/counters/debug path/corner cases.
+
+Bug story structure:
+
+```text
+symptom
+  -> first hypothesis
+  -> why that hypothesis was wrong or incomplete
+  -> experiments/counters/waveforms
+  -> narrowed root cause
+  -> fix
+  -> validation
+  -> lesson learned
+```
+
+Good validation answers include:
+- Directed microbenchmarks.
+- Random/regression tests.
+- RTL waveform evidence.
+- Counter deltas.
+- Model-vs-RTL or model-vs-silicon comparison.
+- Negative tests that prove the bug is not just hidden.
+
+Architectural credibility comes from being precise about uncertainty:
+
+```text
+I do not know that exact implementation detail.
+But I would check the RTL table porting, search for update arbitration, and build a directed sequence that creates same-cycle read/write pressure.
+```
+
+### 6. Timing, Ports, and Hardware Cost Modeling
+
+This subsection is intentionally detailed because a CPU performance modeling engineer cannot only think in C++ containers and abstract queue sizes. The model needs to respect hardware resources: ports, banks, read/write timing, CAM compare cost, mux depth, wire fanout, arbitration, and critical paths.
+
+Core motivation:
+
+```text
+In software:
+  vector[index] looks free and unlimited.
+
+In hardware:
+  every same-cycle access needs a physical port, bank, bypass path, comparator, mux, or arbiter.
+```
+
+This section should become the place where we take real RTL snippets from RSD, BOOM, or other open-source cores and do back-of-the-envelope hardware reasoning:
+
+```text
+RTL code snippet
+  -> what structure does this infer?
+  -> flop array, SRAM, CAM, mux tree, priority encoder, or broadcast bus?
+  -> how many read/write/compare ports are needed?
+  -> what rough number of comparators, muxes, wires, and arbiters?
+  -> what is likely on the critical timing path?
+  -> how should a C++ performance model represent this limitation?
+```
+
+#### 6.1 Why Ports Matter
+
+Port examples:
+- Register-file read port: one independent operand read in a cycle.
+- Register-file write port: one independent result write in a cycle.
+- SRAM read/write port: one indexed array access per port per cycle.
+- CAM compare port: one parallel search operation across entries.
+- Wakeup port: one producer tag broadcast to waiting issue queue entries.
+- Issue port: one selected uop launched to a functional-unit pipeline.
+- Cache pipeline port: one load/store/refill/probe access path into a cache stage.
+- Predictor update port: one write/update path into BTB/TAGE/RAS/ITTAGE structures.
+
+Software modeling trap:
+
+```cpp
+for (auto& entry : issue_queue) {
+    if (entry.src0 == wakeup_tag) entry.src0_ready = true;
+}
+```
+
+This looks cheap in C++. In hardware, that loop means:
+
+```text
+issue_queue_entries * source_operands * wakeup_ports
+parallel tag comparators
+plus ready-bit write enables
+plus high-fanout wakeup_tag wires
+```
+
+The performance model does not need transistor-level accuracy, but it must know that "add more wakeup ports" is not free.
+
+#### 6.2 Common Critical Timing Paths
+
+Frontend timing paths:
+- PC select mux -> predictor table read -> tag compare -> target select -> next PC.
+- I-cache tag/data read -> predecode/length decode -> fetch packet formation.
+- BTB/TAGE read -> branch priority select -> redirect mux.
+- FTQ enqueue/update -> predictor metadata snapshot.
+
+Backend timing paths:
+- Rename map read -> free-list allocation -> map update -> dispatch valid.
+- Busy-table read -> source-ready generation -> issue queue write.
+- Wakeup broadcast -> issue queue CAM compare -> ready-bit update -> select.
+- Select priority encoder -> grant generation -> register read address mux.
+- Register-file read -> bypass mux -> execute input.
+- Execute result -> bypass network -> dependent operand input.
+- Commit scan -> oldest contiguous completed group -> free-list and store-commit updates.
+
+LSU timing paths:
+- Load address generation -> TLB/cache request.
+- Load address -> store queue CAM search -> forwarding/select/replay decision.
+- Store address generation -> load queue violation search.
+- D-cache tag/data read -> way select -> data alignment -> writeback.
+- MSHR allocation/merge arbitration.
+
+#### 6.3 Back-of-Envelope Templates
+
+Issue queue wakeup:
+
+```text
+entries = 64
+source operands per entry = 2
+wakeup ports = 4
+
+comparators = 64 * 2 * 4 = 512 tag comparators
+```
+
+If physical register tag is 7 bits:
+
+```text
+each comparator is roughly 7 XNORs + reduction AND
+plus ready-bit write-enable logic
+plus wakeup-tag broadcast wires to every entry
+```
+
+Register-file read ports:
+
+```text
+physical registers = 128
+register width = 64 bits
+read ports = 16
+
+flop-based RF read mux cost:
+  one read port = 64 separate 128:1 muxes
+  sixteen read ports = 16 * 64 128:1 muxes
+```
+
+Store queue CAM:
+
+```text
+store queue entries = 48
+load pipes = 2
+full address compare width = 48 bits
+
+full compare count per cycle = 48 * 2 = 96 address comparisons
+```
+
+This is why real designs use age masks, partial tags, banking, staged search, selective lookup, or replay.
+
+Set-associative cache access:
+
+```text
+ways = 8
+line data = 64B
+load ports = 2
+
+naive parallel way read:
+  read tags for all ways
+  compare all tags
+  read/select data
+```
+
+Hardware cost depends heavily on whether the design reads all ways, predicts a way, banks the cache, or pipelines the access.
+
+#### 6.4 RTL Snippet Review Format
+
+For every future RTL example, use this checklist.
+
+1. Code snippet:
+   - Paste the small relevant RTL block.
+   - Identify whether it is combinational or sequential.
+
+2. Structure inferred:
+   - Flop array, SRAM, CAM, priority encoder, mux tree, queue, scoreboard, or broadcast network.
+
+3. Access pattern:
+   - Number of reads per cycle.
+   - Number of writes per cycle.
+   - Number of associative searches per cycle.
+   - Whether reads/writes can collide.
+
+4. Port estimate:
+   - Required ports if implemented directly.
+   - Possible banking or arbitration if direct ports are too expensive.
+
+5. Rough resource math:
+   - Comparators.
+   - Mux inputs.
+   - SRAM banks.
+   - Broadcast wires.
+   - Priority encoder width.
+
+6. Timing path:
+   - What signal starts the path?
+   - What combinational logic is crossed?
+   - What register captures the result?
+   - Is this likely single-cycle, pipelined, or speculative?
+
+7. Performance-modeling abstraction:
+   - Model as port count.
+   - Model as bank conflict.
+   - Model as one-cycle or multi-cycle latency.
+   - Model as replay probability.
+   - Model as arbitration priority.
+
+#### 6.5 Structures To Analyze Later
+
+Frontend:
+- PC select mux and redirect priority.
+- uBTB/main BTB read ports and update ports.
+- TAGE/ITTAGE banking and update bandwidth.
+- I-cache way prediction and tag/data porting.
+- FTQ enqueue/dequeue/update paths.
+
+Backend:
+- Rename map table read/write ports.
+- Free-list allocation for multi-rename.
+- Busy table read/write ports.
+- Issue queue wakeup/select CAM.
+- Replay queue arbitration.
+- Register file read/write ports and bypass network.
+- ROB/ActiveList commit scan.
+
+LSU:
+- Load queue CAM search.
+- Store address queue CAM search.
+- Store data queue porting.
+- Store-to-load forwarding mux.
+- D-cache load/store/refill/probe arbitration.
+- MSHR merge and allocation logic.
+
+### 7. Interview Summary
+
+Strong answer shape:
+
+```text
+I would first translate the microarchitectural idea into hardware resources:
+which array, how many entries, how many reads/writes/searches per cycle, and whether it is SRAM, flop array, or CAM.
+Then I would estimate the number of comparators/muxes/ports and identify the likely timing path.
+Only after that would I decide how the performance model should represent the feature.
+```
+
+Important attitude:
+- Do not say "just make it wider" without naming the ports and timing path.
+- Do not say "just add another table lookup" without asking if the SRAM has another read port.
+- Do not say "just search the queue" without counting CAM comparisons and age-mask logic.
+- Do not say "just forward the value" without accounting for bypass mux and wire delay.
+
+### 8. Review Questions
+
+- Why is a C++ array access not equivalent to a hardware SRAM access?
+- What makes an architecture answer stronger than just naming the design?
+- How do I explain a project from whole-system view down to one timing path?
+- What are the alternatives and tradeoffs for my store queue / FTQ / prefetcher design?
+- What quick quantitative estimate supports my claim?
+- Why are multiported register files expensive?
+- What is the rough comparator count for issue queue wakeup?
+- Why does adding wakeup ports hurt timing and power?
+- Why is a store queue associative search expensive?
+- When should a structure be implemented as flops, SRAM, or CAM?
+- What does banking solve, and what conflicts does it introduce?
+- How would I model a one-read-port SRAM in a cycle-level simulator?
+- How do I identify whether an RTL block is likely on a critical path?
+- How can a performance model capture hardware timing limits without becoming a circuit simulator?
+
+## Part 11 — Prefetcher Microarchitecture
+
+This section is a dedicated placeholder for prefetcher design because prior interviewers asked heavily about it. Prefetching is a major performance-modeling topic: it can reduce miss latency, but it can also waste bandwidth, pollute caches, consume MSHRs, increase power, and interfere with demand requests.
+
+Core framing:
+
+```text
+A prefetcher predicts future memory accesses and issues requests before demand execution needs them.
+Good prefetching improves timeliness and coverage.
+Bad prefetching wastes bandwidth, pollutes caches, and creates resource contention.
+```
+
+### 1. Prefetcher Taxonomy
+
+Instruction-side:
+- Next-line I-cache prefetcher.
+- BTB-directed target prefetch.
+- ITLB/page-table prefetch.
+- Fetch-stream prefetcher.
+
+Data-side:
+- Next-line prefetcher.
+- Stride prefetcher.
+- Stream prefetcher.
+- Spatial/region prefetcher.
+- Correlation prefetcher.
+- Pointer-chasing / indirect prefetcher.
+- AMPM/access-map style prefetcher.
+
+Cache-level placement:
+- L1 prefetcher: low latency, high pollution risk, tight MSHR/port pressure.
+- L2 prefetcher: more capacity and latency slack, less direct L1 pollution.
+- LLC/system prefetcher: long-distance bandwidth-oriented behavior.
+
+### 2. Core Design Questions
+
+For any prefetcher, answer:
+
+| Question | Why it matters |
+| --- | --- |
+| What trains it? | load PC, miss stream, access stream, retired accesses, speculative accesses |
+| What triggers it? | every access, miss only, confidence threshold, stream detector |
+| What does it predict? | next line, stride, region, target page, pointer target |
+| Prefetch degree? | how many requests per trigger |
+| Prefetch distance? | how far ahead |
+| Where does it fill? | L1, L2, LLC, special prefetch buffer |
+| What priority? | demand requests must usually win |
+| How is it throttled? | bandwidth, MSHR occupancy, accuracy, pollution, page boundary |
+| How is usefulness measured? | prefetch hit, late prefetch, unused prefetch, evicted-before-use |
+
+### 3. Evaluation Metrics
+
+Useful counters:
+- Prefetch requests issued.
+- Prefetch requests dropped due to queue/MSHR/bandwidth pressure.
+- Prefetch hits.
+- Prefetch late hits: demand arrived before prefetch completed.
+- Prefetch accuracy: used prefetches / issued prefetches.
+- Prefetch coverage: misses eliminated / original misses.
+- Pollution: useful demand lines evicted by prefetches.
+- MSHR occupancy caused by prefetches.
+- Demand-request delay caused by prefetches.
+- Bandwidth overhead.
+- Energy/power proxy from prefetch accesses.
+
+Performance-modeling warning:
+
+```text
+Prefetcher improves IPC only if the prefetch arrives early enough and does not create a larger bottleneck elsewhere.
+```
+
+### 4. Hardware Integration Points
+
+Prefetcher needs to interact with:
+- Load/store pipeline.
+- I-cache/D-cache miss path.
+- MSHRs.
+- Fill buffers.
+- Cache replacement policy.
+- TLB/page boundary checks.
+- Coherence request path.
+- Demand-vs-prefetch arbitration.
+- Power/throttle logic.
+
+Important implementation questions:
+- Can prefetch requests allocate MSHRs?
+- Can they evict demand lines?
+- Are prefetch fills marked with lower replacement priority?
+- Are prefetches canceled on branch flush or context switch?
+- Does the prefetcher train on wrong-path/speculative accesses?
+- Does it cross 4KB page boundaries?
+- Does it need physical address, virtual address, or both?
+
+### 5. Concrete Examples To Fill Later
+
+RSD / project examples:
+- L1D next-line prefetcher from the LSU/L1D optimization section.
+- Interaction with D-cache MSHRs and demand load priority.
+- Whether prefetch requests are dropped, queued, or backpressured.
+
+Modern-core interview examples:
+- Why next-line prefetching helps instruction fetch streams.
+- Why stride prefetching helps arrays but not pointer chasing.
+- Why aggressive prefetching can hurt memory-level parallelism by filling MSHRs.
+- Why prefetch distance must scale with memory latency and loop body work.
+- Why prefetch degree must be throttled by bandwidth and accuracy.
+
+### 6. Interview Summary
+
+Strong answer shape:
+
+```text
+I would evaluate a prefetcher by coverage, accuracy, timeliness, bandwidth cost, pollution, and interaction with scarce resources like MSHRs and cache ports.
+The performance model needs to represent not just miss reduction, but also the extra traffic and contention introduced by prefetch requests.
+```
+
+### 7. Review Questions
+
+- What is the difference between prefetch accuracy and coverage?
+- Why can a highly accurate prefetcher still fail to improve IPC?
+- Why can an inaccurate prefetcher improve IPC in some cases?
+- What is prefetch timeliness?
+- Why is L1 prefetching riskier than L2 prefetching?
+- How should prefetches be prioritized against demand misses?
+- What happens when prefetches consume all MSHRs?
+- Should prefetchers train on speculative accesses?
+- Why are page boundaries hard for prefetchers?
+- How would I model a stride prefetcher in C++ without overestimating its benefit?
