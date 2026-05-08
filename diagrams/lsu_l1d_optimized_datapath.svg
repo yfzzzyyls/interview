@@ -1,0 +1,476 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1400 1800" font-family="Helvetica, Arial, sans-serif" font-size="12">
+  <rect x="0" y="0" width="1400" height="1800" fill="white"/>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#222"/>
+    </marker>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1976D2"/>
+    </marker>
+    <marker id="arrOrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#E65100"/>
+    </marker>
+
+    <g id="dff_v">
+      <rect x="0" y="0" width="90" height="70" fill="#FFF3E0" stroke="#E65100" stroke-width="1.6"/>
+      <text x="45" y="12" text-anchor="middle" font-size="11" font-weight="bold" fill="#555">D</text>
+      <text x="45" y="64" text-anchor="middle" font-size="11" font-weight="bold" fill="#555">Q</text>
+      <text x="18" y="30" font-size="10" font-weight="bold" fill="#1976D2">EN</text>
+      <polygon points="0,40 10,47 0,54" fill="none" stroke="#E65100" stroke-width="1.4"/>
+      <text x="14" y="51" font-size="9" fill="#BF360C">clk</text>
+    </g>
+
+    <g id="mux21_v">
+      <polygon points="0,0 80,0 60,40 20,40" fill="#E1F5FE" stroke="#01579B" stroke-width="1.5"/>
+      <text x="8"  y="14" font-size="11" fill="#01579B">0</text>
+      <text x="70" y="14" font-size="11" fill="#01579B">1</text>
+      <text x="40" y="28" text-anchor="middle" font-size="10" font-weight="bold" fill="#01579B">M</text>
+    </g>
+
+    <g id="sram_v">
+      <rect x="0" y="0" width="140" height="90" fill="#FFCDD2" stroke="#C62828" stroke-width="1.6"/>
+      <line x1="0" y1="22" x2="140" y2="22" stroke="#C62828" stroke-width="0.8"/>
+      <text x="70" y="15" text-anchor="middle" font-size="10" font-weight="bold" fill="#B71C1C">SRAM</text>
+    </g>
+
+    <g id="eqg_v">
+      <polygon points="20,0 40,20 20,40 0,20" fill="white" stroke="#333" stroke-width="1.5"/>
+      <text x="20" y="25" text-anchor="middle" font-size="10" font-weight="bold" fill="#333">=</text>
+    </g>
+
+    <g id="andg_v">
+      <path d="M 1 1 L 41 1 L 41 20 Q 41 40 21 40 Q 1 40 1 20 Z" fill="white" stroke="#333" stroke-width="1.5"/>
+      <text x="21" y="23" text-anchor="middle" font-size="9" font-weight="bold" fill="#333">AND</text>
+    </g>
+
+    <g id="addg_v">
+      <circle cx="18" cy="18" r="17" fill="white" stroke="#333" stroke-width="1.5"/>
+      <text x="18" y="23" text-anchor="middle" font-size="16" font-weight="bold" fill="#333">+</text>
+    </g>
+
+    <g id="pregbar_h">
+      <rect x="0" y="0" width="880" height="32" fill="#FFF3E0" stroke="#E65100" stroke-width="1.8"/>
+      <polygon points="16,6 26,16 16,26" fill="none" stroke="#E65100" stroke-width="1.5"/>
+      <text x="40" y="21" font-size="11" font-weight="bold" fill="#BF360C">▷ clk</text>
+    </g>
+  </defs>
+
+  <!-- ==================== TITLE ==================== -->
+  <text x="700" y="30" text-anchor="middle" font-size="17" font-weight="bold" fill="#222">RSD LSU + L1D Optimized Pipeline — LSU Checks + Opt C Prefetcher + Opt D Way Predictor</text>
+  <text x="700" y="52" text-anchor="middle" font-size="11" font-style="italic" fill="#666">
+    LSU forwarding / replay / ordering logic is shown inside the same cache-coupled memory pipeline
+  </text>
+
+  <!-- ================ STAGE ① D$ADDR  (y=80 to y=420) ================ -->
+  <rect x="40" y="80" width="880" height="340" fill="#F5FAFF" stroke="#1565C0" stroke-width="1.2" stroke-dasharray="6 4" rx="4"/>
+  <text x="60" y="105" font-size="15" font-weight="bold" fill="#0D47A1">① D$ADDR — Address + Way Prediction  (MemoryExecutionStage)</text>
+
+  <!-- Input: addr from LSU -->
+  <text x="130" y="140" font-size="10" fill="#333">load_addr (from LSU)</text>
+  <line x1="170" y1="150" x2="170" y2="200" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+
+  <!-- Extract set_idx and tag -->
+  <rect x="120" y="200" width="110" height="45" fill="white" stroke="#333" stroke-width="1.2" rx="3"/>
+  <text x="175" y="218" text-anchor="middle" font-size="10" font-weight="bold">addr slice</text>
+  <text x="175" y="234" text-anchor="middle" font-size="9">set[7:0], tag[…]</text>
+
+  <!-- Split into set_idx (to way pred + tag SRAM) and tag (to compare later) -->
+  <line x1="175" y1="245" x2="175" y2="270" stroke="#222" stroke-width="1.3"/>
+  <circle cx="175" cy="270" r="3" fill="#222"/>
+
+  <!-- To WayPred table (new, left) -->
+  <line x1="175" y1="270" x2="175" y2="320" stroke="#222" stroke-width="1.3"/>
+  <line x1="175" y1="320" x2="390" y2="320" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="260" y="312" font-size="10" fill="#555">set_idx</text>
+  <text x="398" y="333" font-size="8" fill="#555">set_idx</text>
+
+  <!-- === NEW: Way Predictor Table === -->
+  <rect x="390" y="120" width="200" height="220" fill="#FFF9C4" stroke="#F57F17" stroke-width="2" rx="6"/>
+  <text x="490" y="144" text-anchor="middle" font-size="12" font-weight="bold" fill="#F57F17">✦ Way Predictor  (Optimization D) ✦</text>
+  <line x1="400" y1="156" x2="580" y2="156" stroke="#F57F17" stroke-width="0.5"/>
+
+  <!-- Table visualization -->
+  <rect x="420" y="165" width="140" height="130" fill="white" stroke="#F57F17" stroke-width="1.3"/>
+  <text x="490" y="182" text-anchor="middle" font-size="10" font-weight="bold" fill="#F57F17">dc_way_pred_table</text>
+  <text x="490" y="198" text-anchor="middle" font-size="9" fill="#F57F17">256 × 1b  (32 B)</text>
+  <line x1="425" y1="208" x2="555" y2="208" stroke="#F57F17" stroke-width="0.3"/>
+  <text x="440" y="222" font-size="9" fill="#F57F17">set 0</text>
+  <text x="540" y="222" text-anchor="end" font-size="9" fill="#F57F17">1</text>
+  <text x="440" y="237" font-size="9" fill="#F57F17">set 1</text>
+  <text x="540" y="237" text-anchor="end" font-size="9" fill="#F57F17">0</text>
+  <text x="440" y="252" font-size="9" fill="#F57F17">set 2</text>
+  <text x="540" y="252" text-anchor="end" font-size="9" fill="#F57F17">1</text>
+  <text x="490" y="275" text-anchor="middle" font-size="9" fill="#F57F17">...</text>
+
+  <!-- output: pred_way -->
+  <line x1="490" y1="295" x2="490" y2="320" stroke="#F57F17" stroke-width="1.5"/>
+  <text x="520" y="315" font-size="10" font-weight="bold" fill="#F57F17">pred_way</text>
+
+  <!-- pred_way becomes tag_rd_en[pred_way] at the SRAM input below. -->
+
+  <!-- Also: tag forwarded to pipe reg (for D$TAG compare) -->
+  <line x1="175" y1="270" x2="800" y2="270" stroke="#222" stroke-width="1.1"/>
+  <line x1="800" y1="270" x2="800" y2="425" stroke="#222" stroke-width="1.1"/>
+  <text x="700" y="264" font-size="10" fill="#555">addr_tag</text>
+
+  <!-- LSU request setup (stage ① baseline) -->
+  <rect x="620" y="130" width="240" height="90" fill="white" stroke="#1565C0" stroke-width="1.4" rx="5"/>
+  <text x="740" y="150" text-anchor="middle" font-size="11" font-weight="bold" fill="#0D47A1">LSU request setup</text>
+  <line x1="628" y1="158" x2="852" y2="158" stroke="#1565C0" stroke-width="0.5"/>
+  <text x="740" y="178" text-anchor="middle" font-size="9" fill="#0D47A1">EA / phy addr / memMapType / uncachable</text>
+  <text x="740" y="194" text-anchor="middle" font-size="9" fill="#0D47A1">drive dcReadReq + dcReadAddr + ActiveListPtr</text>
+  <text x="740" y="210" text-anchor="middle" font-size="9" fill="#0D47A1">fresh demand load or LRB replay enters here</text>
+
+  <!-- Accepted probe / retry state (stage ① add-on for way prediction) -->
+  <rect x="620" y="300" width="240" height="78" fill="#FFF9C4" stroke="#F57F17" stroke-width="1.8" rx="6"/>
+  <text x="740" y="320" text-anchor="middle" font-size="11" font-weight="bold" fill="#F57F17">Accepted read-side probe</text>
+  <line x1="628" y1="328" x2="852" y2="328" stroke="#F57F17" stroke-width="0.5"/>
+  <text x="740" y="346" text-anchor="middle" font-size="9" fill="#F57F17">presented request ≠ accepted request</text>
+  <text x="740" y="361" text-anchor="middle" font-size="9" fill="#F57F17">capture {set_idx, addr_tag, pred_way, retried}</text>
+  <text x="740" y="375" text-anchor="middle" font-size="9" fill="#F57F17">retrying probe holds this slot for one extra cycle</text>
+
+  <!-- ================ PIPE REG ① → ② ================ -->
+  <use xlink:href="#pregbar_h" x="60" y="425"/>
+  <text x="620" y="446" text-anchor="middle" font-size="11" font-weight="bold" fill="#BF360C">D$ADDR → D$TAG  pipeline register</text>
+
+  <line x1="800" y1="457" x2="800" y2="495" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="810" y="480" font-size="9" fill="#555">addr_tag</text>
+
+  <!-- ================ STAGE ② D$TAG  (y=500 to y=940) ================ -->
+  <rect x="40" y="500" width="880" height="440" fill="#F5FAFF" stroke="#1565C0" stroke-width="1.2" stroke-dasharray="6 4" rx="4"/>
+  <text x="60" y="525" font-size="15" font-weight="bold" fill="#0D47A1">② D$TAG — Tag Compare + Misprediction Detect  (MemoryTagAccessStage)</text>
+
+  <!-- Tag SRAM (single-way, gated) -
+       STRADDLES D$ADDR / D$TAG pipe-reg boundary: address + rd_en fire in D$ADDR (combinational),
+       SRAM latches at posedge, tag_out valid throughout D$TAG. -->
+  <use xlink:href="#sram_v" x="130" y="380"/>
+  <text x="200" y="402" text-anchor="middle" font-size="11" font-weight="bold" fill="#B71C1C">Tag SRAM</text>
+  <text x="200" y="418" text-anchor="middle" font-size="10" fill="#B71C1C">pred_way only</text>
+  <text x="200" y="434" text-anchor="middle" font-size="9" fill="#B71C1C">(other way gated off)</text>
+  <text x="200" y="462" text-anchor="middle" font-size="8" font-style="italic" fill="#B71C1C">addr/rd_en in D$ADDR · tag_out in D$TAG</text>
+
+  <!-- Data SRAM (two-way array) -
+       STRADDLES D$ADDR / D$TAG pipe-reg boundary: set_idx indexes both ways in D$ADDR,
+       data_out[0..1] becomes available in D$TAG and is registered into D$DATA. -->
+  <use xlink:href="#sram_v" x="330" y="380"/>
+  <text x="400" y="402" text-anchor="middle" font-size="11" font-weight="bold" fill="#B71C1C">Data SRAM ×2</text>
+  <text x="400" y="418" text-anchor="middle" font-size="10" fill="#B71C1C">per way array</text>
+  <text x="400" y="434" text-anchor="middle" font-size="9" fill="#B71C1C">indexed by set_idx</text>
+  <text x="400" y="462" text-anchor="middle" font-size="8" font-style="italic" fill="#B71C1C">addr in D$ADDR · data_out in D$TAG · way-mux in D$DATA</text>
+
+  <!-- Input: set_idx fed combinationally from D$ADDR (y=312) directly into SRAM addr pin -->
+  <line x1="175" y1="320" x2="175" y2="350" stroke="#222" stroke-width="1.3"/>
+  <circle cx="175" cy="350" r="3" fill="#222"/>
+  <line x1="175" y1="350" x2="150" y2="350" stroke="#222" stroke-width="1.3"/>
+  <line x1="150" y1="350" x2="150" y2="378" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+  <line x1="175" y1="350" x2="350" y2="350" stroke="#222" stroke-width="1.3"/>
+  <line x1="350" y1="350" x2="350" y2="378" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="224" y="366" font-size="9" fill="#555">set_idx</text>
+
+  <!-- Enable: tag_rd_en[pred_way] from way-predictor output direct to Tag SRAM rd_en pin -->
+  <line x1="490" y1="320" x2="490" y2="345" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="490" y1="345" x2="185" y2="345" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="185" y1="345" x2="185" y2="360" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="185" y1="360" x2="160" y2="360" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="160" y1="360" x2="160" y2="378" stroke="#F57F17" stroke-width="1.5" marker-end="url(#arrOrg)"/>
+  <text x="292" y="339" font-size="9" fill="#F57F17">tag_rd_en[pred_way]</text>
+  <text x="164" y="374" font-size="9" fill="#F57F17">rd_en</text>
+
+  <!-- Tag SRAM output: tag_out exits bottom (y=470) in D$TAG, routes to tag compare at y=720 -->
+  <line x1="200" y1="470" x2="200" y2="690" stroke="#222" stroke-width="1.3"/>
+  <circle cx="200" cy="690" r="3" fill="#222"/>
+
+  <!-- Data SRAM outputs: two 64b way results continue through D$TAG -->
+  <line x1="365" y1="470" x2="365" y2="488" stroke="#222" stroke-width="1.2"/>
+  <line x1="365" y1="488" x2="318" y2="488" stroke="#222" stroke-width="1.2"/>
+  <line x1="318" y1="488" x2="318" y2="930" stroke="#222" stroke-width="1.2"/>
+  <text x="372" y="484" font-size="8" fill="#555">data_out[0] 64b</text>
+  <line x1="435" y1="470" x2="435" y2="506" stroke="#222" stroke-width="1.2"/>
+  <line x1="435" y1="506" x2="345" y2="506" stroke="#222" stroke-width="1.2"/>
+  <line x1="345" y1="506" x2="345" y2="930" stroke="#222" stroke-width="1.2"/>
+  <text x="442" y="502" font-size="8" fill="#555">data_out[1] 64b</text>
+
+  <!-- Tag compare -->
+  <use xlink:href="#eqg_v" x="240" y="700"/>
+  <line x1="200" y1="690" x2="240" y2="720" stroke="#222" stroke-width="1.3"/>
+  <text x="210" y="705" font-size="9" fill="#555">tag_out</text>
+
+  <!-- addr_tag into compare -->
+  <line x1="800" y1="495" x2="800" y2="720" stroke="#222" stroke-width="1.1"/>
+  <line x1="800" y1="720" x2="280" y2="720" stroke="#222" stroke-width="1.1" marker-end="url(#arr)"/>
+
+  <!-- compare output → pred_hit -->
+  <line x1="260" y1="740" x2="260" y2="770" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="270" y="760" font-size="10" font-weight="bold" fill="#0D47A1">pred_hit</text>
+  <circle cx="260" cy="770" r="3" fill="#222"/>
+
+  <!-- On pred_hit: done. On !pred_hit: misprediction, retry other way -->
+  <rect x="380" y="680" width="260" height="140" fill="#FFF9C4" stroke="#F57F17" stroke-width="1.8" rx="6"/>
+  <text x="510" y="700" text-anchor="middle" font-size="11" font-weight="bold" fill="#F57F17">Misprediction handler</text>
+  <line x1="390" y1="708" x2="630" y2="708" stroke="#F57F17" stroke-width="0.5"/>
+  <text x="510" y="726" text-anchor="middle" font-size="10" fill="#F57F17">if !pred_hit → stall 1 cycle</text>
+  <text x="510" y="742" text-anchor="middle" font-size="10" fill="#F57F17">re-drive tag_rd_en[~pred_way]</text>
+  <text x="510" y="758" text-anchor="middle" font-size="10" fill="#F57F17">read other way's tag next cycle</text>
+  <text x="510" y="779" text-anchor="middle" font-size="10" fill="#F57F17">if other_hit  → update table, proceed</text>
+  <text x="510" y="795" text-anchor="middle" font-size="10" fill="#F57F17">else (miss)   → allocate MSHR</text>
+
+  <line x1="260" y1="790" x2="380" y2="790" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrBlue)"/>
+  <text x="300" y="785" font-size="9" fill="#1976D2">!pred_hit</text>
+
+  <!-- Stage ② visual LSU structures: SQ + LQ + cross-check nodes -->
+  <text x="705" y="545" text-anchor="middle" font-size="10" font-weight="bold" fill="#F57F17">older stores</text>
+  <rect x="640" y="555" width="150" height="128" fill="#FFF9C4" stroke="#F57F17" stroke-width="1.8" rx="6"/>
+  <text x="715" y="575" text-anchor="middle" font-size="12" font-weight="bold" fill="#F57F17">SQ</text>
+  <text x="715" y="591" text-anchor="middle" font-size="9" fill="#F57F17">Store Queue</text>
+  <rect x="665" y="607" width="100" height="16" fill="white" stroke="#F57F17" stroke-width="1"/>
+  <rect x="665" y="625" width="100" height="16" fill="white" stroke="#F57F17" stroke-width="1"/>
+  <rect x="665" y="643" width="100" height="16" fill="white" stroke="#F57F17" stroke-width="1"/>
+  <rect x="665" y="661" width="100" height="16" fill="white" stroke="#F57F17" stroke-width="1"/>
+  <text x="654" y="620" text-anchor="middle" font-size="9" font-weight="bold" fill="#F57F17">H</text>
+  <text x="654" y="674" text-anchor="middle" font-size="9" font-weight="bold" fill="#F57F17">T</text>
+  <line x1="610" y1="602" x2="640" y2="602" stroke="#F57F17" stroke-width="1.2" marker-end="url(#arrOrg)"/>
+  <text x="608" y="595" text-anchor="end" font-size="9" fill="#F57F17">ld probe</text>
+  <line x1="715" y1="683" x2="715" y2="705" stroke="#F57F17" stroke-width="1.2" marker-end="url(#arrOrg)"/>
+  <text x="726" y="699" font-size="9" fill="#F57F17">fwd</text>
+
+  <circle cx="850" cy="725" r="42" fill="white" stroke="#1565C0" stroke-width="1.8"/>
+  <text x="850" y="718" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D47A1">LD</text>
+  <text x="850" y="735" text-anchor="middle" font-size="9" fill="#0D47A1">fwd / hit</text>
+  <text x="850" y="749" text-anchor="middle" font-size="9" fill="#0D47A1">miss / mshr</text>
+  <line x1="260" y1="770" x2="260" y2="760" stroke="#1976D2" stroke-width="0"/>
+  <line x1="640" y1="725" x2="808" y2="725" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrBlue)"/>
+  <text x="758" y="717" text-anchor="middle" font-size="9" fill="#1976D2">tag compare + SQ</text>
+
+  <text x="705" y="790" text-anchor="middle" font-size="10" font-weight="bold" fill="#6A1B9A">executed loads</text>
+  <rect x="640" y="800" width="150" height="110" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.6" rx="6"/>
+  <text x="715" y="820" text-anchor="middle" font-size="12" font-weight="bold" fill="#4A148C">LQ</text>
+  <text x="715" y="836" text-anchor="middle" font-size="9" fill="#4A148C">Load Queue</text>
+  <rect x="665" y="852" width="100" height="14" fill="white" stroke="#6A1B9A" stroke-width="1"/>
+  <rect x="665" y="868" width="100" height="14" fill="white" stroke="#6A1B9A" stroke-width="1"/>
+  <rect x="665" y="884" width="100" height="14" fill="white" stroke="#6A1B9A" stroke-width="1"/>
+  <text x="654" y="863" text-anchor="middle" font-size="9" font-weight="bold" fill="#6A1B9A">H</text>
+  <text x="654" y="895" text-anchor="middle" font-size="9" font-weight="bold" fill="#6A1B9A">T</text>
+
+  <circle cx="850" cy="855" r="34" fill="white" stroke="#1565C0" stroke-width="1.8"/>
+  <text x="850" y="850" text-anchor="middle" font-size="13" font-weight="bold" fill="#0D47A1">ST</text>
+  <text x="850" y="866" text-anchor="middle" font-size="9" fill="#0D47A1">viol chk</text>
+
+  <line x1="850" y1="767" x2="850" y2="800" stroke="#6A1B9A" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="861" y="786" font-size="9" fill="#6A1B9A">upd</text>
+  <line x1="605" y1="835" x2="816" y2="835" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrBlue)"/>
+  <text x="640" y="827" font-size="9" fill="#1976D2">store exec</text>
+  <line x1="790" y1="855" x2="816" y2="855" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrBlue)"/>
+  <text x="803" y="846" text-anchor="middle" font-size="9" fill="#1976D2">probe</text>
+  <line x1="816" y1="873" x2="790" y2="873" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrBlue)"/>
+  <text x="803" y="889" text-anchor="middle" font-size="9" fill="#1976D2">viol?</text>
+
+  <!-- === NEW: Prefetch probe tap on tag SRAM (shared port) === -->
+  <text x="60" y="928" font-size="10" fill="#666" font-style="italic">Tag port also shared with prefetch probes (§3.5) — see prefetch block on the right.</text>
+
+  <!-- ================ PIPE REG ② → ③ ================ -->
+  <use xlink:href="#pregbar_h" x="60" y="945"/>
+  <text x="500" y="966" text-anchor="middle" font-size="11" font-weight="bold" fill="#BF360C">D$TAG → D$DATA  pipeline register</text>
+
+  <line x1="318" y1="930" x2="318" y2="977" stroke="#222" stroke-width="1.2" marker-end="url(#arr)"/>
+  <line x1="345" y1="930" x2="345" y2="977" stroke="#222" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="360" y="1000" font-size="9" fill="#555">data_out_r[0..1] (2×64b)</text>
+
+  <line x1="260" y1="977" x2="260" y2="1015" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="270" y="1000" font-size="9" fill="#555">hit_way_r</text>
+
+  <!-- ================ STAGE ③ D$DATA  (y=1020 to y=1320) ================ -->
+  <rect x="40" y="1020" width="880" height="300" fill="#F5FAFF" stroke="#1565C0" stroke-width="1.2" stroke-dasharray="6 4" rx="4"/>
+  <text x="60" y="1045" font-size="15" font-weight="bold" fill="#0D47A1">③ D$DATA — Data Read + Mux  (MemoryAccessStage)</text>
+
+  <text x="230" y="1088" text-anchor="middle" font-size="11" font-weight="bold" fill="#01579B">Way mux</text>
+  <use xlink:href="#mux21_v" transform="translate(160 1100) scale(1.75)"/>
+
+  <line x1="318" y1="977" x2="318" y2="1065" stroke="#222" stroke-width="1.2"/>
+  <line x1="318" y1="1065" x2="178" y2="1065" stroke="#222" stroke-width="1.2"/>
+  <line x1="178" y1="1065" x2="178" y2="1098" stroke="#222" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="184" y="1058" font-size="8" fill="#555">data_out_r[0]</text>
+
+  <line x1="345" y1="977" x2="345" y2="1083" stroke="#222" stroke-width="1.2"/>
+  <line x1="345" y1="1083" x2="282" y2="1083" stroke="#222" stroke-width="1.2"/>
+  <line x1="282" y1="1083" x2="282" y2="1098" stroke="#222" stroke-width="1.2" marker-end="url(#arr)"/>
+  <text x="286" y="1077" font-size="8" fill="#555">data_out_r[1]</text>
+
+  <line x1="260" y1="1015" x2="260" y2="1040" stroke="#222" stroke-width="1.3"/>
+  <line x1="260" y1="1040" x2="315" y2="1040" stroke="#222" stroke-width="1.3"/>
+  <line x1="315" y1="1040" x2="315" y2="1135" stroke="#222" stroke-width="1.3"/>
+  <line x1="315" y1="1135" x2="303" y2="1135" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="320" y="1128" font-size="9" fill="#555">sel hit_way_r</text>
+
+  <!-- Data out -->
+  <line x1="230" y1="1170" x2="230" y2="1250" stroke="#222" stroke-width="1.5" marker-end="url(#arr)"/>
+  <text x="240" y="1225" font-size="10" font-weight="bold" fill="#0D47A1">data_out → LSU</text>
+
+  <!-- D$DATA / LSU result shaping -->
+  <rect x="390" y="1210" width="360" height="82" fill="white" stroke="#1565C0" stroke-width="1.4" rx="5"/>
+  <text x="570" y="1230" text-anchor="middle" font-size="11" font-weight="bold" fill="#0D47A1">Load data select + result shaping</text>
+  <line x1="398" y1="1238" x2="742" y2="1238" stroke="#1565C0" stroke-width="0.5"/>
+  <text x="570" y="1258" text-anchor="middle" font-size="9" fill="#0D47A1">source select: SQ forward / D$ hit way / MSHR / IO</text>
+  <text x="570" y="1273" text-anchor="middle" font-size="9" fill="#0D47A1">byte shift + sign/zero extend by access size</text>
+  <text x="570" y="1288" text-anchor="middle" font-size="9" fill="#0D47A1">latch executedLoadData toward bypass / writeback</text>
+
+  <!-- MSHR block (right) -->
+  <rect x="480" y="1080" width="320" height="100" fill="#FFCDD2" stroke="#C62828" stroke-width="1.3" rx="4"/>
+  <text x="640" y="1100" text-anchor="middle" font-size="11" font-weight="bold" fill="#B71C1C">MSHR (×2) — miss holding registers</text>
+  <line x1="488" y1="1108" x2="792" y2="1108" stroke="#C62828" stroke-width="0.5"/>
+  <text x="640" y="1128" text-anchor="middle" font-size="9" fill="#B71C1C">entry 0: {addr, phase, pendLine,  prefetch_flag (NEW)}</text>
+  <text x="640" y="1146" text-anchor="middle" font-size="9" fill="#B71C1C">entry 1: {addr, phase, pendLine,  prefetch_flag (NEW)}</text>
+  <text x="640" y="1166" text-anchor="middle" font-size="9" fill="#B71C1C">demand miss: prefetch_flag=0   ·   prefetch hit here: drop</text>
+
+  <!-- ================ PREFETCH BLOCK (right side, vertical) y=80 to y=1320 ================ -->
+  <rect x="940" y="80" width="420" height="1240" fill="#FFFDE7" stroke="#F57F17" stroke-width="1.8" stroke-dasharray="5 3" rx="6"/>
+  <text x="1150" y="105" text-anchor="middle" font-size="14" font-weight="bold" fill="#F57F17">Next-Line Prefetcher (Optimization C)</text>
+  <text x="1150" y="122" text-anchor="middle" font-size="10" fill="#F57F17">load-triggered only · low priority · no stream buffer in v1</text>
+
+  <!-- Prefetch addr compute -->
+  <rect x="970" y="150" width="360" height="90" fill="white" stroke="#F57F17" stroke-width="1.3" rx="4"/>
+  <text x="1150" y="170" text-anchor="middle" font-size="11" font-weight="bold" fill="#F57F17">next-line addr gen + enqueue gate</text>
+  <line x1="978" y1="178" x2="1322" y2="178" stroke="#F57F17" stroke-width="0.5"/>
+  <text x="1150" y="198" text-anchor="middle" font-size="10" fill="#F57F17">load addr -> next line: (addr &amp; ~7) + 8</text>
+  <text x="1150" y="214" text-anchor="middle" font-size="9" fill="#F57F17">drop: store / uncachable / non-memory / same-line MSHR</text>
+  <text x="1150" y="228" text-anchor="middle" font-size="9" fill="#F57F17">drop: both MSHRs busy / queue full / own-miss alias</text>
+
+  <!-- input: load_addr tapped from D$ADDR -->
+  <line x1="175" y1="150" x2="200" y2="150" stroke="#222" stroke-width="0"/>
+  <line x1="175" y1="140" x2="1350" y2="140" stroke="#222" stroke-width="1" stroke-dasharray="3 2"/>
+  <line x1="1350" y1="140" x2="1350" y2="165" stroke="#222" stroke-width="1" stroke-dasharray="3 2"/>
+  <line x1="1350" y1="165" x2="1330" y2="165" stroke="#222" stroke-width="1" stroke-dasharray="3 2" marker-end="url(#arr)"/>
+  <text x="1165" y="136" font-size="9" fill="#555">load_addr tap from D$ADDR</text>
+
+  <!-- gating inputs (blue dashed) -->
+  <line x1="970" y1="196" x2="940" y2="196" stroke="#1976D2" stroke-width="0"/>
+
+  <line x1="1150" y1="240" x2="1150" y2="270" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+
+  <!-- Prefetch address queue -->
+  <rect x="1015" y="262" width="270" height="96" fill="#FDE6EE" stroke="#AD1457" stroke-width="1.4" rx="4"/>
+  <text x="1150" y="282" text-anchor="middle" font-size="11" font-weight="bold" fill="#880E4F">Prefetch AddrQ</text>
+  <text x="1150" y="296" text-anchor="middle" font-size="9" fill="#880E4F">address queue only</text>
+  <rect x="1075" y="308" width="150" height="16" fill="white" stroke="#AD1457" stroke-width="0.8"/>
+  <rect x="1075" y="326" width="150" height="16" fill="white" stroke="#AD1457" stroke-width="0.8"/>
+  <text x="1064" y="321" text-anchor="middle" font-size="9" font-weight="bold" fill="#AD1457">H</text>
+  <text x="1064" y="339" text-anchor="middle" font-size="9" font-weight="bold" fill="#AD1457">T</text>
+  <text x="1150" y="353" text-anchor="middle" font-size="9" fill="#AD1457">no data / line storage here</text>
+
+  <line x1="1150" y1="358" x2="1150" y2="390" stroke="#222" stroke-width="1.3" marker-end="url(#arr)"/>
+
+  <!-- PrefetchEngine -->
+  <rect x="1000" y="390" width="300" height="124" fill="white" stroke="#F57F17" stroke-width="1.3" rx="4"/>
+  <text x="1150" y="410" text-anchor="middle" font-size="11" font-weight="bold" fill="#F57F17">PrefetchEngine</text>
+  <line x1="1008" y1="418" x2="1292" y2="418" stroke="#F57F17" stroke-width="0.5"/>
+  <text x="1150" y="438" text-anchor="middle" font-size="10" fill="#F57F17">dequeue only when D$ read-side slot is idle</text>
+  <text x="1150" y="455" text-anchor="middle" font-size="10" fill="#F57F17">issue low-priority tag probe</text>
+  <text x="1150" y="474" text-anchor="middle" font-size="10" fill="#F57F17">tag hit -> drop</text>
+  <text x="1150" y="490" text-anchor="middle" font-size="10" fill="#F57F17">tag miss + free MSHR -> prefetch alloc</text>
+  <text x="1150" y="506" text-anchor="middle" font-size="9" fill="#F57F17">tag miss + no free MSHR -> drop in v1</text>
+
+  <!-- Tag probe goes back to tag SRAM (low priority vs demand) -->
+  <text x="970" y="555" font-size="10" font-weight="bold" fill="#F57F17">prefetch tag probe -> Tag port (low priority)</text>
+  <circle cx="130" cy="465" r="3" fill="#FFFDE7" stroke="#F57F17" stroke-width="1"/>
+  <line x1="1000" y1="570" x2="930" y2="570" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="930" y1="570" x2="930" y2="935" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="930" y1="935" x2="30" y2="935" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="30" y1="935" x2="30" y2="465" stroke="#F57F17" stroke-width="1.5"/>
+  <line x1="30" y1="465" x2="130" y2="465" stroke="#F57F17" stroke-width="1.5" marker-end="url(#arrOrg)"/>
+  <text x="134" y="478" font-size="9" fill="#F57F17">Tag port</text>
+
+  <!-- MSHR allocation arrow -->
+  <text x="970" y="1060" font-size="10" font-weight="bold" fill="#F57F17">MSHR allocation (prefetch_flag=1) — low priority</text>
+  <circle cx="800" cy="1120" r="3" fill="#FFFDE7" stroke="#F57F17" stroke-width="1"/>
+  <line x1="1000" y1="1120" x2="800" y2="1120" stroke="#F57F17" stroke-width="1.5" marker-end="url(#arrOrg)"/>
+  <text x="806" y="1112" font-size="9" fill="#F57F17">MSHR allocation</text>
+
+  <!-- Feedback: MSHR tells PrefetchEngine which MSHRs are busy -->
+  <circle cx="800" cy="1160" r="3" fill="#E3F2FD" stroke="#1976D2" stroke-width="1"/>
+  <circle cx="1000" cy="425" r="3" fill="#E3F2FD" stroke="#1976D2" stroke-width="1"/>
+  <line x1="800" y1="1160" x2="950" y2="1160" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="950" y1="1160" x2="950" y2="425" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2"/>
+  <line x1="950" y1="425" x2="1000" y2="425" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrBlue)"/>
+  <text x="806" y="1154" font-size="9" fill="#1976D2">mshr_busy</text>
+  <text x="956" y="416" font-size="9" fill="#1976D2">mshr_busy</text>
+
+  <!-- No stream buffer in v1 -->
+  <rect x="1015" y="598" width="270" height="54" fill="white" stroke="#AD1457" stroke-width="1.2" rx="4"/>
+  <text x="1150" y="619" text-anchor="middle" font-size="10" font-weight="bold" fill="#880E4F">v1 install policy</text>
+  <text x="1150" y="636" text-anchor="middle" font-size="9" fill="#880E4F">prefetch fill -> normal D$ refill path</text>
+  <text x="1150" y="649" text-anchor="middle" font-size="9" fill="#880E4F">no separate stream / data buffer</text>
+
+  <!-- Way-predictor update on MSHR fill -->
+  <text x="970" y="700" font-size="10" font-weight="bold" fill="#F57F17">Way-predictor update</text>
+  <rect x="1000" y="720" width="300" height="80" fill="white" stroke="#F57F17" stroke-width="1.3" rx="4"/>
+  <text x="1150" y="740" text-anchor="middle" font-size="10" font-weight="bold" fill="#F57F17">dc_way_pred_table write</text>
+  <line x1="1008" y1="748" x2="1292" y2="748" stroke="#F57F17" stroke-width="0.5"/>
+  <text x="1150" y="764" text-anchor="middle" font-size="9" fill="#F57F17">pred hit      : no update</text>
+  <text x="1150" y="780" text-anchor="middle" font-size="9" fill="#F57F17">other way hit : flip bit for set_idx</text>
+  <text x="1150" y="795" text-anchor="middle" font-size="9" fill="#F57F17">MSHR fills    : write fill_way to set_idx</text>
+
+  <!-- Arrows from WayPred update to table (wrap around) -->
+  <line x1="1000" y1="760" x2="900" y2="760" stroke="#F57F17" stroke-width="1" stroke-dasharray="4 3"/>
+  <line x1="900" y1="760" x2="900" y2="250" stroke="#F57F17" stroke-width="1" stroke-dasharray="4 3"/>
+  <line x1="900" y1="250" x2="610" y2="250" stroke="#F57F17" stroke-width="1" stroke-dasharray="4 3"/>
+  <line x1="610" y1="250" x2="610" y2="230" stroke="#F57F17" stroke-width="1" stroke-dasharray="4 3"/>
+  <circle cx="590" cy="230" r="3" fill="#FFFDE7" stroke="#F57F17" stroke-width="1"/>
+  <line x1="610" y1="230" x2="590" y2="230" stroke="#F57F17" stroke-width="1" stroke-dasharray="4 3" marker-end="url(#arrOrg)"/>
+  <text x="596" y="222" font-size="8" fill="#F57F17">update table</text>
+
+  <!-- === Memory interface (bottom) === -->
+  <rect x="40" y="1340" width="880" height="80" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.3" rx="4"/>
+  <text x="480" y="1363" text-anchor="middle" font-size="13" font-weight="bold" fill="#4A148C">Memory Interface (MemoryAccessController)</text>
+  <text x="480" y="1383" text-anchor="middle" font-size="10" fill="#4A148C">MSHR ↔ external memory bus (shared with ICache)</text>
+  <text x="480" y="1400" text-anchor="middle" font-size="10" fill="#4A148C">prefetch fills indistinguishable from demand fills at this layer</text>
+
+  <line x1="640" y1="1180" x2="640" y2="1340" stroke="#222" stroke-width="1.5"/>
+  <line x1="640" y1="1340" x2="640" y2="1340" stroke="#222" stroke-width="1.5" marker-end="url(#arr)"/>
+
+  <!-- ================ LEGEND ================ -->
+  <g transform="translate(40, 1460)">
+    <text x="0" y="-8" font-size="11" font-weight="bold" fill="#333">Legend</text>
+    <g transform="translate(0, 0)">
+      <use xlink:href="#dff_v" transform="scale(0.45)"/>
+      <text x="48" y="22" font-size="10" fill="#333">register</text>
+    </g>
+    <g transform="translate(130, 0)">
+      <use xlink:href="#mux21_v" transform="scale(0.4)"/>
+      <text x="36" y="22" font-size="10" fill="#333">2:1 MUX</text>
+    </g>
+    <g transform="translate(220, 0)">
+      <use xlink:href="#sram_v" transform="scale(0.3)"/>
+      <text x="50" y="22" font-size="10" fill="#333">SRAM</text>
+    </g>
+    <g transform="translate(310, 0)">
+      <use xlink:href="#andg_v" transform="scale(0.55)"/>
+      <text x="28" y="22" font-size="10" fill="#333">AND</text>
+    </g>
+    <g transform="translate(380, 0)">
+      <use xlink:href="#eqg_v" transform="scale(0.5)"/>
+      <text x="26" y="22" font-size="10" fill="#333">compare</text>
+    </g>
+    <g transform="translate(460, 0)">
+      <rect x="0" y="0" width="40" height="10" fill="#FFF3E0" stroke="#E65100" stroke-width="1.2"/>
+      <polygon points="4,1 10,5 4,9" fill="none" stroke="#E65100" stroke-width="0.8"/>
+      <text x="46" y="9" font-size="10" fill="#333">pipe reg bar</text>
+    </g>
+    <g transform="translate(580, 0)">
+      <rect x="0" y="0" width="26" height="14" fill="#FFF9C4" stroke="#F57F17" stroke-width="1.5"/>
+      <text x="32" y="10" font-size="10" fill="#333">NEW optimization</text>
+    </g>
+    <g transform="translate(720, 0)">
+      <line x1="0" y1="6" x2="30" y2="6" stroke="#222" stroke-width="1.4" marker-end="url(#arr)"/>
+      <text x="36" y="10" font-size="10" fill="#333">data</text>
+    </g>
+    <g transform="translate(790, 0)">
+      <line x1="0" y1="6" x2="30" y2="6" stroke="#1976D2" stroke-width="1" stroke-dasharray="4 2" marker-end="url(#arrBlue)"/>
+      <text x="36" y="10" font-size="10" fill="#333">control</text>
+    </g>
+    <g transform="translate(860, 0)">
+      <line x1="0" y1="6" x2="30" y2="6" stroke="#F57F17" stroke-width="1.4" marker-end="url(#arrOrg)"/>
+      <text x="36" y="10" font-size="10" fill="#333">prefetch / way-pred paths</text>
+    </g>
+  </g>
+</svg>

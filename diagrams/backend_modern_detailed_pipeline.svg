@@ -1,0 +1,398 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2600" height="2200" viewBox="0 0 2600 2200" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <rect x="0" y="0" width="2600" height="2200" fill="white"/>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263238"/>
+    </marker>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1565C0"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E7D32"/>
+    </marker>
+    <marker id="arrPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#AD1457"/>
+    </marker>
+    <marker id="arrRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#C62828"/>
+    </marker>
+    <marker id="arrOrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#E65100"/>
+    </marker>
+
+    <style>
+      .title { font-size: 28px; font-weight: 700; fill: #1f2933; }
+      .subtitle { font-size: 14px; fill: #52606d; }
+      .colTitle { font-size: 20px; font-weight: 700; }
+      .stageTitle { font-size: 17px; font-weight: 700; }
+      .compTitle { font-size: 13px; font-weight: 700; }
+      .small { font-size: 11px; fill: #334e68; }
+      .tiny { font-size: 10px; fill: #52606d; }
+      .line { stroke: #263238; stroke-width: 1.8; fill: none; marker-end: url(#arr); }
+      .ctrl { stroke: #1565C0; stroke-width: 1.7; fill: none; marker-end: url(#arrBlue); }
+      .data { stroke: #2E7D32; stroke-width: 1.8; fill: none; marker-end: url(#arrGreen); }
+      .state { stroke: #AD1457; stroke-width: 1.7; fill: none; marker-end: url(#arrPink); }
+      .redir { stroke: #C62828; stroke-width: 1.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrRed); }
+      .update { stroke: #E65100; stroke-width: 1.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrOrg); }
+      .stageBox { fill: #F8FBFF; stroke: #1565C0; stroke-width: 1.8; rx: 7; }
+      .oooBox { fill: #F7FFF7; stroke: #2E7D32; stroke-width: 1.8; rx: 7; }
+      .commitBox { fill: #FFF8F0; stroke: #E65100; stroke-width: 1.8; rx: 7; }
+      .storeBox { fill: #FFF8FB; stroke: #AD1457; stroke-width: 1.8; rx: 7; }
+      .note { fill: #FAFAFA; stroke: #B0BEC5; stroke-width: 1.2; rx: 6; }
+    </style>
+
+    <g id="pipeReg">
+      <rect x="0" y="0" width="1260" height="48" fill="#FFF3E0" stroke="#E65100" stroke-width="1.8" rx="4"/>
+      <polygon points="0,18 15,24 0,30" fill="none" stroke="#E65100" stroke-width="1.5"/>
+    </g>
+
+    <g id="pipeRegShort">
+      <rect x="0" y="0" width="520" height="48" fill="#FFF3E0" stroke="#E65100" stroke-width="1.8" rx="4"/>
+      <polygon points="0,18 15,24 0,30" fill="none" stroke="#E65100" stroke-width="1.5"/>
+    </g>
+
+    <g id="dffSmall">
+      <rect x="0" y="0" width="92" height="58" fill="#FFF3E0" stroke="#E65100" stroke-width="1.7" rx="4"/>
+      <polygon points="0,22 12,29 0,36" fill="none" stroke="#E65100" stroke-width="1.4"/>
+      <text x="46" y="24" text-anchor="middle" class="compTitle" fill="#BF360C">DFF</text>
+      <text x="46" y="42" text-anchor="middle" class="tiny">ptr/reg</text>
+    </g>
+
+    <g id="mux">
+      <polygon points="0,0 84,18 84,82 0,100" fill="#E1F5FE" stroke="#01579B" stroke-width="1.7"/>
+      <text x="42" y="53" text-anchor="middle" class="compTitle" fill="#01579B">MUX</text>
+    </g>
+
+    <g id="sram">
+      <rect x="0" y="0" width="170" height="96" fill="#EDE7F6" stroke="#5E35B1" stroke-width="1.7" rx="5"/>
+      <line x1="0" y1="25" x2="170" y2="25" stroke="#5E35B1" stroke-width="1"/>
+      <text x="85" y="18" text-anchor="middle" class="compTitle" fill="#4527A0">SRAM</text>
+    </g>
+
+    <g id="cam">
+      <rect x="0" y="0" width="170" height="100" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.7" rx="5"/>
+      <line x1="0" y1="25" x2="170" y2="25" stroke="#AD1457" stroke-width="1"/>
+      <text x="85" y="18" text-anchor="middle" class="compTitle" fill="#880E4F">CAM</text>
+    </g>
+
+    <g id="queue">
+      <rect x="0" y="0" width="220" height="132" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.8" rx="6"/>
+      <line x1="0" y1="31" x2="220" y2="31" stroke="#AD1457" stroke-width="1"/>
+      <line x1="0" y1="62" x2="220" y2="62" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="93" x2="220" y2="93" stroke="#AD1457" stroke-width="0.8"/>
+      <text x="110" y="21" text-anchor="middle" class="compTitle" fill="#880E4F">QUEUE</text>
+    </g>
+
+    <g id="alu">
+      <polygon points="0,0 112,0 92,86 20,86" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7"/>
+      <text x="56" y="40" text-anchor="middle" class="compTitle" fill="#1B5E20">ALU</text>
+      <text x="56" y="60" text-anchor="middle" class="tiny">pipe</text>
+    </g>
+
+    <g id="select">
+      <polygon points="0,0 128,22 128,86 0,108" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.7"/>
+      <text x="64" y="52" text-anchor="middle" class="compTitle" fill="#F57F17">SELECT</text>
+      <text x="64" y="72" text-anchor="middle" class="tiny">oldest/priority</text>
+    </g>
+
+    <g id="broadcast">
+      <rect x="0" y="0" width="280" height="46" fill="#E0F7FA" stroke="#00838F" stroke-width="1.6" rx="5"/>
+      <text x="140" y="28" text-anchor="middle" class="compTitle" fill="#006064">WAKEUP BUS: pdst tag + valid</text>
+    </g>
+  </defs>
+
+  <text x="1300" y="42" text-anchor="middle" class="title">Modern Out-of-Order Backend Detailed Pipeline</text>
+  <text x="1300" y="68" text-anchor="middle" class="subtitle">Top-to-bottom backend sketch: rename creates speculative state, schedulers execute out of order, ROB commits in order.</text>
+
+  <text x="760" y="118" text-anchor="middle" class="colTitle" fill="#0D47A1">Pipeline Datapath</text>
+  <text x="1940" y="118" text-anchor="middle" class="colTitle" fill="#880E4F">Architectural / Speculative State Storage</text>
+
+  <!-- Decode input -->
+  <rect x="70" y="150" width="1260" height="115" class="stageBox"/>
+  <text x="100" y="183" class="stageTitle" fill="#0D47A1">D0: decoded uops from frontend</text>
+  <text x="100" y="208" class="small">Inputs: decoded op, logical src/dst, immediate, branch metadata, ftq_id, exception bits.</text>
+  <rect x="920" y="172" width="300" height="70" fill="#ECEFF1" stroke="#455A64" stroke-width="1.4" rx="5"/>
+  <text x="1070" y="200" text-anchor="middle" class="compTitle" fill="#37474F">decode bundle</text>
+  <text x="1070" y="224" text-anchor="middle" class="tiny">up to renameWidth uops/cycle</text>
+  <path d="M 1220 207 L 1290 207" class="line"/>
+  <text x="1302" y="211" class="small">to rename</text>
+
+  <use href="#pipeReg" x="70" y="285"/>
+  <text x="700" y="314" text-anchor="middle" class="compTitle" fill="#BF360C">Decode -> Rename pipeline register: uop fields, ftq_id, exception state, branch metadata</text>
+
+  <!-- Rename stage -->
+  <rect x="70" y="355" width="1260" height="290" class="stageBox"/>
+  <text x="100" y="388" class="stageTitle" fill="#0D47A1">R0: rename, allocation, branch checkpoint</text>
+  <text x="100" y="413" class="small">Eliminates WAW/WAR by mapping logical registers to physical registers.</text>
+
+  <use href="#sram" x="120" y="455"/>
+  <text x="205" y="493" text-anchor="middle" class="compTitle" fill="#4527A0">Map Table</text>
+  <text x="205" y="516" text-anchor="middle" class="tiny">LREG -> PRF tag</text>
+  <text x="205" y="533" text-anchor="middle" class="tiny">multi-read, multi-write</text>
+
+  <use href="#queue" x="345" y="435"/>
+  <text x="455" y="471" text-anchor="middle" class="compTitle" fill="#880E4F">Free List</text>
+  <text x="455" y="500" text-anchor="middle" class="tiny">alloc new pdst</text>
+  <text x="455" y="531" text-anchor="middle" class="tiny">return stale pdst at commit</text>
+
+  <use href="#sram" x="620" y="455"/>
+  <text x="705" y="493" text-anchor="middle" class="compTitle" fill="#4527A0">Busy Table</text>
+  <text x="705" y="516" text-anchor="middle" class="tiny">pdst ready bits</text>
+  <text x="705" y="533" text-anchor="middle" class="tiny">clear on writeback</text>
+
+  <rect x="860" y="438" width="210" height="125" fill="#FFF3E0" stroke="#E65100" stroke-width="1.5" rx="5"/>
+  <text x="965" y="466" text-anchor="middle" class="compTitle" fill="#BF360C">branch checkpoint</text>
+  <text x="965" y="491" text-anchor="middle" class="tiny">map/free-list snapshot</text>
+  <text x="965" y="509" text-anchor="middle" class="tiny">checkpoint ID</text>
+  <text x="965" y="527" text-anchor="middle" class="tiny">branch mask bit allocation</text>
+  <text x="965" y="545" text-anchor="middle" class="tiny">optional busy-table snapshot</text>
+
+  <rect x="1115" y="438" width="170" height="125" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+  <text x="1200" y="466" text-anchor="middle" class="compTitle" fill="#0D47A1">rename output</text>
+  <text x="1200" y="491" text-anchor="middle" class="tiny">psrc0/psrc1</text>
+  <text x="1200" y="509" text-anchor="middle" class="tiny">pdst + stale pdst</text>
+  <text x="1200" y="527" text-anchor="middle" class="tiny">src ready bits</text>
+  <text x="1200" y="545" text-anchor="middle" class="tiny">branch mask</text>
+
+  <path d="M 290 503 L 345 500" class="ctrl"/>
+  <path d="M 565 500 L 620 503" class="ctrl"/>
+  <path d="M 790 503 L 860 501" class="ctrl"/>
+  <path d="M 1070 501 L 1115 501" class="ctrl"/>
+
+  <!-- ROB and LSQ allocation storage -->
+  <rect x="1440" y="355" width="1010" height="290" class="storeBox"/>
+  <text x="1470" y="388" class="stageTitle" fill="#880E4F">Allocated storage at rename / dispatch</text>
+  <use href="#queue" x="1495" y="435"/>
+  <text x="1605" y="471" text-anchor="middle" class="compTitle" fill="#880E4F">ROB / ActiveList</text>
+  <text x="1605" y="500" text-anchor="middle" class="tiny">program-order queue</text>
+  <text x="1605" y="531" text-anchor="middle" class="tiny">done, exception, stale pdst</text>
+
+  <use href="#queue" x="1770" y="435"/>
+  <text x="1880" y="471" text-anchor="middle" class="compTitle" fill="#880E4F">Branch Checkpoints</text>
+  <text x="1880" y="500" text-anchor="middle" class="tiny">map/free-list snapshots</text>
+  <text x="1880" y="531" text-anchor="middle" class="tiny">active branch bits</text>
+
+  <use href="#queue" x="2045" y="435"/>
+  <text x="2155" y="471" text-anchor="middle" class="compTitle" fill="#880E4F">LQ / SQ allocation</text>
+  <text x="2155" y="500" text-anchor="middle" class="tiny">load/store order tracking</text>
+  <text x="2155" y="531" text-anchor="middle" class="tiny">address/data later</text>
+  <path d="M 1285 500 L 1440 500" class="state"/>
+
+  <use href="#pipeReg" x="70" y="665"/>
+  <text x="700" y="694" text-anchor="middle" class="compTitle" fill="#BF360C">Rename -> Dispatch pipeline register: renamed uops, ready bits, ROB index, branch mask, LSQ indexes</text>
+
+  <!-- Dispatch -->
+  <rect x="70" y="735" width="1260" height="250" class="stageBox"/>
+  <text x="100" y="768" class="stageTitle" fill="#0D47A1">D1: dispatch / steering into schedulers</text>
+  <text x="100" y="793" class="small">Writes renamed uops into the appropriate issue queues and marks operands ready if busy table says ready.</text>
+
+  <use href="#mux" x="145" y="820"/>
+  <text x="187" y="934" text-anchor="middle" class="tiny">steer by op type</text>
+
+  <use href="#cam" x="330" y="805"/>
+  <text x="415" y="843" text-anchor="middle" class="compTitle" fill="#880E4F">Int IQ</text>
+  <text x="415" y="866" text-anchor="middle" class="tiny">tags + ready bits</text>
+  <text x="415" y="883" text-anchor="middle" class="tiny">branch mask</text>
+
+  <use href="#cam" x="560" y="805"/>
+  <text x="645" y="843" text-anchor="middle" class="compTitle" fill="#880E4F">Mem IQ</text>
+  <text x="645" y="866" text-anchor="middle" class="tiny">load/store addr/data</text>
+  <text x="645" y="883" text-anchor="middle" class="tiny">LSQ index</text>
+
+  <use href="#cam" x="790" y="805"/>
+  <text x="875" y="843" text-anchor="middle" class="compTitle" fill="#880E4F">FP/Vec IQ</text>
+  <text x="875" y="866" text-anchor="middle" class="tiny">vector/FP tags</text>
+  <text x="875" y="883" text-anchor="middle" class="tiny">ready bits</text>
+
+  <rect x="1045" y="805" width="190" height="100" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+  <text x="1140" y="834" text-anchor="middle" class="compTitle" fill="#1B5E20">dispatch policy</text>
+  <text x="1140" y="859" text-anchor="middle" class="tiny">queue full checks</text>
+  <text x="1140" y="877" text-anchor="middle" class="tiny">oldest / bank steering</text>
+  <text x="1140" y="895" text-anchor="middle" class="tiny">stall if resources full</text>
+  <path d="M 229 870 L 330 855" class="ctrl"/>
+  <path d="M 229 870 L 560 855" class="ctrl"/>
+  <path d="M 229 870 L 790 855" class="ctrl"/>
+
+  <use href="#pipeReg" x="70" y="1005"/>
+  <text x="700" y="1034" text-anchor="middle" class="compTitle" fill="#BF360C">Dispatch -> Issue state update: IQ entries allocated; uops may now wait for wakeup/select</text>
+
+  <!-- Issue / wakeup select -->
+  <rect x="70" y="1075" width="1260" height="320" class="oooBox"/>
+  <text x="100" y="1108" class="stageTitle" fill="#1B5E20">OOO issue: wakeup, ready CAM, select</text>
+  <text x="100" y="1133" class="small">CAM comparisons mark operands ready; select chooses ready uops for execution ports.</text>
+
+  <use href="#broadcast" x="120" y="1165"/>
+  <text x="260" y="1230" text-anchor="middle" class="tiny">from writeback and speculative wakeup</text>
+
+  <use href="#cam" x="460" y="1148"/>
+  <text x="545" y="1186" text-anchor="middle" class="compTitle" fill="#880E4F">ready CAM</text>
+  <text x="545" y="1209" text-anchor="middle" class="tiny">src tag == wakeup tag</text>
+  <text x="545" y="1226" text-anchor="middle" class="tiny">set src ready bit</text>
+  <path d="M 400 1188 L 460 1198" class="ctrl"/>
+
+  <use href="#select" x="720" y="1138"/>
+  <text x="784" y="1260" text-anchor="middle" class="tiny">per scheduler/port</text>
+  <path d="M 630 1198 L 720 1190" class="ctrl"/>
+
+  <use href="#mux" x="940" y="1148"/>
+  <text x="982" y="1262" text-anchor="middle" class="tiny">issue port mux</text>
+  <path d="M 848 1192 L 940 1198" class="ctrl"/>
+
+  <rect x="1110" y="1158" width="160" height="90" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+  <text x="1190" y="1186" text-anchor="middle" class="compTitle" fill="#0D47A1">issue packet</text>
+  <text x="1190" y="1211" text-anchor="middle" class="tiny">uop, psrcs, pdst</text>
+  <text x="1190" y="1229" text-anchor="middle" class="tiny">fu type, rob idx</text>
+  <path d="M 1024 1198 L 1110 1203" class="ctrl"/>
+
+  <use href="#pipeReg" x="70" y="1415"/>
+  <text x="700" y="1444" text-anchor="middle" class="compTitle" fill="#BF360C">Issue -> Register Read pipeline register: selected uops, source physical tags, destination tags, FU port IDs</text>
+
+  <!-- Register read and execute -->
+  <rect x="70" y="1485" width="1260" height="335" class="oooBox"/>
+  <text x="100" y="1518" class="stageTitle" fill="#1B5E20">Register read, bypass, execute, writeback</text>
+  <text x="100" y="1543" class="small">Physical register file ports and bypass network are major wide-core timing/area costs.</text>
+
+  <use href="#sram" x="120" y="1588"/>
+  <text x="205" y="1626" text-anchor="middle" class="compTitle" fill="#4527A0">Int PRF</text>
+  <text x="205" y="1649" text-anchor="middle" class="tiny">many read/write ports</text>
+  <text x="205" y="1666" text-anchor="middle" class="tiny">or banked/clustered</text>
+
+  <use href="#sram" x="330" y="1588"/>
+  <text x="415" y="1626" text-anchor="middle" class="compTitle" fill="#4527A0">Vec/FP PRF</text>
+  <text x="415" y="1649" text-anchor="middle" class="tiny">wide data paths</text>
+  <text x="415" y="1666" text-anchor="middle" class="tiny">high port cost</text>
+
+  <use href="#mux" x="555" y="1584"/>
+  <text x="597" y="1698" text-anchor="middle" class="tiny">bypass mux</text>
+  <path d="M 290 1636 L 555 1634" class="data"/>
+  <path d="M 500 1636 L 555 1648" class="data"/>
+
+  <use href="#alu" x="735" y="1568"/>
+  <text x="791" y="1668" text-anchor="middle" class="tiny">simple int</text>
+  <path d="M 639 1634 L 735 1611" class="data"/>
+
+  <rect x="895" y="1568" width="112" height="86" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7" rx="5"/>
+  <text x="951" y="1604" text-anchor="middle" class="compTitle" fill="#1B5E20">BRU</text>
+  <text x="951" y="1627" text-anchor="middle" class="tiny">resolve</text>
+  <text x="951" y="1644" text-anchor="middle" class="tiny">redirect</text>
+
+  <rect x="1040" y="1568" width="112" height="86" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7" rx="5"/>
+  <text x="1096" y="1604" text-anchor="middle" class="compTitle" fill="#1B5E20">LSU</text>
+  <text x="1096" y="1627" text-anchor="middle" class="tiny">addr/data</text>
+  <text x="1096" y="1644" text-anchor="middle" class="tiny">LQ/SQ</text>
+
+  <rect x="1180" y="1568" width="112" height="86" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7" rx="5"/>
+  <text x="1236" y="1604" text-anchor="middle" class="compTitle" fill="#1B5E20">MUL/DIV</text>
+  <text x="1236" y="1627" text-anchor="middle" class="tiny">variable</text>
+  <text x="1236" y="1644" text-anchor="middle" class="tiny">latency</text>
+  <path d="M 639 1634 L 895 1611" class="data"/>
+  <path d="M 639 1634 L 1040 1611" class="data"/>
+  <path d="M 639 1634 L 1180 1611" class="data"/>
+
+  <rect x="720" y="1715" width="520" height="60" fill="#E0F7FA" stroke="#00838F" stroke-width="1.5" rx="5"/>
+  <text x="980" y="1740" text-anchor="middle" class="compTitle" fill="#006064">writeback / result buses</text>
+  <text x="980" y="1761" text-anchor="middle" class="tiny">write PRF, clear busy bit, broadcast wakeup tag, mark ROB done</text>
+  <path d="M 791 1654 L 850 1715" class="data"/>
+  <path d="M 951 1654 L 960 1715" class="data"/>
+  <path d="M 1096 1654 L 1060 1715" class="data"/>
+  <path d="M 1236 1654 L 1120 1715" class="data"/>
+  <path d="M 980 1715 C 760 1400 465 1210 400 1188" class="ctrl"/>
+  <path d="M 980 1775 C 640 1870 265 1750 205 1684" class="update"/>
+  <path d="M 980 1775 C 950 1850 765 1600 705 551" class="update"/>
+
+  <path d="M 951 1568 C 875 1390 650 1460 390 1515" class="redir"/>
+
+  <!-- Commit stage -->
+  <rect x="1440" y="735" width="1010" height="1085" class="storeBox"/>
+  <text x="1470" y="768" class="stageTitle" fill="#880E4F">ROB / commit / recovery state</text>
+  <text x="1470" y="793" class="small">ROB keeps program order while execution completes out of order.</text>
+
+  <use href="#queue" x="1500" y="835"/>
+  <text x="1610" y="871" text-anchor="middle" class="compTitle" fill="#880E4F">ROB / ActiveList</text>
+  <text x="1610" y="900" text-anchor="middle" class="tiny">head/tail in program order</text>
+  <text x="1610" y="931" text-anchor="middle" class="tiny">done bit, exception, branch info</text>
+  <text x="1610" y="962" text-anchor="middle" class="tiny">pdst + stale pdst</text>
+
+  <use href="#dffSmall" x="1770" y="870"/>
+  <text x="1816" y="945" text-anchor="middle" class="tiny">head ptr</text>
+  <use href="#dffSmall" x="1885" y="870"/>
+  <text x="1931" y="945" text-anchor="middle" class="tiny">tail ptr</text>
+
+  <rect x="2030" y="835" width="300" height="132" fill="#FFF3E0" stroke="#E65100" stroke-width="1.5" rx="5"/>
+  <text x="2180" y="864" text-anchor="middle" class="compTitle" fill="#BF360C">commit checker</text>
+  <text x="2180" y="891" text-anchor="middle" class="tiny">oldest completed uops</text>
+  <text x="2180" y="909" text-anchor="middle" class="tiny">precise exception at head</text>
+  <text x="2180" y="927" text-anchor="middle" class="tiny">commit width limit</text>
+  <text x="2180" y="945" text-anchor="middle" class="tiny">store becomes non-speculative</text>
+  <path d="M 1720 900 L 2030 900" class="state"/>
+
+  <rect x="1500" y="1060" width="300" height="120" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+  <text x="1650" y="1087" text-anchor="middle" class="compTitle" fill="#1B5E20">mark done / exception</text>
+  <text x="1650" y="1112" text-anchor="middle" class="tiny">writeback marks ROB entry done</text>
+  <text x="1650" y="1130" text-anchor="middle" class="tiny">branch resolve updates entry</text>
+  <text x="1650" y="1148" text-anchor="middle" class="tiny">load/store violations can trigger replay</text>
+  <path d="M 1240 1745 C 1350 1650 1450 1120 1500 1120" class="state"/>
+
+  <rect x="1870" y="1060" width="300" height="120" fill="#FFF3E0" stroke="#E65100" stroke-width="1.5" rx="5"/>
+  <text x="2020" y="1087" text-anchor="middle" class="compTitle" fill="#BF360C">free stale pdst</text>
+  <text x="2020" y="1112" text-anchor="middle" class="tiny">at commit only</text>
+  <text x="2020" y="1130" text-anchor="middle" class="tiny">old physical dest returns to free list</text>
+  <text x="2020" y="1148" text-anchor="middle" class="tiny">new pdst remains architectural</text>
+  <path d="M 2180 967 C 2160 1020 2090 1040 2020 1060" class="update"/>
+  <path d="M 2020 1180 C 1740 1310 760 580 565 500" class="update"/>
+
+  <rect x="1500" y="1260" width="300" height="120" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="1650" y="1287" text-anchor="middle" class="compTitle" fill="#B71C1C">branch recovery</text>
+  <text x="1650" y="1312" text-anchor="middle" class="tiny">restore checkpoint or rollback</text>
+  <text x="1650" y="1330" text-anchor="middle" class="tiny">flush uops with branch-mask bit</text>
+  <text x="1650" y="1348" text-anchor="middle" class="tiny">redirect frontend via FTQ</text>
+  <path d="M 951 1568 C 1110 1365 1380 1320 1500 1320" class="redir"/>
+
+  <rect x="1870" y="1260" width="300" height="120" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="2020" y="1287" text-anchor="middle" class="compTitle" fill="#B71C1C">precise exception</text>
+  <text x="2020" y="1312" text-anchor="middle" class="tiny">take only when oldest at ROB head</text>
+  <text x="2020" y="1330" text-anchor="middle" class="tiny">flush younger speculative state</text>
+  <text x="2020" y="1348" text-anchor="middle" class="tiny">write CSR/trap state</text>
+
+  <rect x="1500" y="1460" width="300" height="120" fill="#F8F9FA" stroke="#AD1457" stroke-width="1.5" rx="5"/>
+  <text x="1650" y="1487" text-anchor="middle" class="compTitle" fill="#880E4F">branch mask cleanup</text>
+  <text x="1650" y="1512" text-anchor="middle" class="tiny">uop has bit for each unresolved branch</text>
+  <text x="1650" y="1530" text-anchor="middle" class="tiny">clear bit when branch resolves correctly</text>
+  <text x="1650" y="1548" text-anchor="middle" class="tiny">kill uops when mispredicted bit matches</text>
+
+  <rect x="1870" y="1460" width="300" height="120" fill="#F8F9FA" stroke="#AD1457" stroke-width="1.5" rx="5"/>
+  <text x="2020" y="1487" text-anchor="middle" class="compTitle" fill="#880E4F">flush storage</text>
+  <text x="2020" y="1512" text-anchor="middle" class="tiny">IQ, ROB, LSQ, replay queues</text>
+  <text x="2020" y="1530" text-anchor="middle" class="tiny">drop writeback from wrong path</text>
+  <text x="2020" y="1548" text-anchor="middle" class="tiny">restore map/free-list state</text>
+
+  <path d="M 1650 1380 C 1380 1360 1110 620 965 500" class="redir"/>
+  <path d="M 1650 1380 C 1450 1335 965 1520 390 1515" class="redir"/>
+
+  <!-- Bottom notes -->
+  <rect x="75" y="1870" width="720" height="230" class="note"/>
+  <text x="105" y="1900" class="stageTitle" fill="#37474F">Critical timing / port paths</text>
+  <text x="110" y="1935" class="small">1. Rename map-table reads/writes + free-list allocation for wide rename.</text>
+  <text x="110" y="1960" class="small">2. Wakeup tag broadcast -> IQ CAM compare -> ready bits.</text>
+  <text x="110" y="1985" class="small">3. Select oldest ready uops per issue port.</text>
+  <text x="110" y="2010" class="small">4. PRF read ports + bypass muxes + FU input timing.</text>
+  <text x="110" y="2035" class="small">5. Writeback bus -> PRF write -> busy clear -> next wakeup.</text>
+
+  <rect x="940" y="1870" width="720" height="230" class="note"/>
+  <text x="970" y="1900" class="stageTitle" fill="#37474F">Why these structures exist</text>
+  <text x="975" y="1935" class="small">Rename removes WAW/WAR false dependencies.</text>
+  <text x="975" y="1960" class="small">Busy table tells whether physical source values are ready.</text>
+  <text x="975" y="1985" class="small">Issue queues hold the speculative dataflow graph.</text>
+  <text x="975" y="2010" class="small">ROB preserves program order for commit and precise exceptions.</text>
+  <text x="975" y="2035" class="small">Checkpoints/rollback restore speculative map and free-list state.</text>
+
+  <rect x="1805" y="1870" width="720" height="230" class="note"/>
+  <text x="1835" y="1900" class="stageTitle" fill="#37474F">Modeling counters</text>
+  <text x="1840" y="1935" class="small">rename_stall_map/free_list/ROB_full</text>
+  <text x="1840" y="1960" class="small">dispatch_stall_iq_full / lsq_full</text>
+  <text x="1840" y="1985" class="small">wakeup_select_blocked / issue_port_busy</text>
+  <text x="1840" y="2010" class="small">prf_read_port_conflict / wb_port_conflict</text>
+  <text x="1840" y="2035" class="small">branch_flush_cycles / exception_flush_cycles / commit_blocked</text>
+</svg>

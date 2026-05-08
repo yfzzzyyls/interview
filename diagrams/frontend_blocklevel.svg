@@ -1,0 +1,125 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" viewBox="0 0 1060 290" font-family="Helvetica, Arial, sans-serif" font-size="11">
+  <rect x="0" y="0" width="1060" height="290" fill="white"/>
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#333"/>
+    </marker>
+    <g id="preg">
+      <rect x="0" y="0" width="24" height="140" fill="#FFF3E0" stroke="#E65100" stroke-width="1.4"/>
+      <polygon points="0,64 10,70 0,76" fill="none" stroke="#E65100" stroke-width="1.3"/>
+    </g>
+  </defs>
+
+  <text x="520" y="22" text-anchor="middle" font-size="14" font-weight="bold" fill="#222">Decoupled Frontend — Pipeline Stage View</text>
+  <text x="520" y="40" text-anchor="middle" font-size="10" fill="#666" font-style="italic">orange bars = pipeline registers; ▷ marks the clock edge (D-flop)</text>
+
+  <g>
+    <rect x="40" y="70" width="130" height="140" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+    <text x="105" y="92" text-anchor="middle" font-weight="bold" fill="#0D47A1">BP_S0</text>
+    <text x="105" y="108" text-anchor="middle" font-size="9" fill="#0D47A1">Predictor Access</text>
+    <line x1="52" y1="118" x2="158" y2="118" stroke="#1565C0" stroke-width="0.6"/>
+    <text x="105" y="135" text-anchor="middle" font-size="9">bpu_pc, ghist</text>
+    <text x="105" y="152" text-anchor="middle" font-size="9">→ BTB/PHT rd_addr</text>
+    <text x="105" y="184" text-anchor="middle" font-size="9" fill="#666">cycle N</text>
+  </g>
+
+  <use xlink:href="#preg" x="180" y="70"/>
+  <text x="192" y="225" text-anchor="middle" font-size="8" fill="#BF360C">S0 / S1</text>
+
+  <g>
+    <rect x="214" y="70" width="130" height="140" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+    <text x="279" y="92" text-anchor="middle" font-weight="bold" fill="#0D47A1">BP_S1</text>
+    <text x="279" y="108" text-anchor="middle" font-size="9" fill="#0D47A1">Form + Enqueue</text>
+    <line x1="226" y1="118" x2="332" y2="118" stroke="#1565C0" stroke-width="0.6"/>
+    <text x="279" y="135" text-anchor="middle" font-size="9">btb_hit, pred_taken</text>
+    <text x="279" y="152" text-anchor="middle" font-size="9">pack FTQ_Entry</text>
+    <text x="279" y="184" text-anchor="middle" font-size="9" fill="#666">cycle N+1</text>
+  </g>
+
+  <line x1="344" y1="140" x2="382" y2="140" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="362" y="126" text-anchor="middle" font-size="10" font-weight="bold" fill="#AD1457">enq</text>
+
+  <g>
+    <rect x="382" y="90" width="100" height="100" fill="#F8BBD0" stroke="#AD1457" stroke-width="2" rx="6"/>
+    <text x="432" y="116" text-anchor="middle" font-weight="bold" fill="#880E4F">FTQ</text>
+    <text x="432" y="134" text-anchor="middle" font-size="9" fill="#880E4F">16 entries</text>
+    <text x="432" y="152" text-anchor="middle" font-size="9" fill="#880E4F">ring buffer</text>
+    <text x="432" y="170" text-anchor="middle" font-size="8" fill="#880E4F">head/tail/commit</text>
+  </g>
+
+  <line x1="482" y1="126" x2="522" y2="126" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+  <text x="502" y="116" text-anchor="middle" font-size="10" font-weight="bold" fill="#AD1457">peek</text>
+
+  <use xlink:href="#preg" x="522" y="70"/>
+  <text x="534" y="225" text-anchor="middle" font-size="8" fill="#BF360C">head reg</text>
+
+  <g>
+    <rect x="556" y="70" width="130" height="140" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+    <text x="621" y="92" text-anchor="middle" font-weight="bold" fill="#1B5E20">IF_S0</text>
+    <text x="621" y="108" text-anchor="middle" font-size="9" fill="#1B5E20">I$ Access</text>
+    <line x1="568" y1="118" x2="674" y2="118" stroke="#2E7D32" stroke-width="0.6"/>
+    <text x="621" y="135" text-anchor="middle" font-size="9">ftq[head].startPC</text>
+    <text x="621" y="152" text-anchor="middle" font-size="9">→ I$ rd_addr</text>
+    <text x="621" y="184" text-anchor="middle" font-size="9" fill="#666">cycle N+k</text>
+  </g>
+
+  <use xlink:href="#preg" x="696" y="70"/>
+  <text x="708" y="225" text-anchor="middle" font-size="8" fill="#BF360C">S0 / S1</text>
+
+  <g>
+    <rect x="730" y="70" width="130" height="140" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+    <text x="795" y="92" text-anchor="middle" font-weight="bold" fill="#1B5E20">IF_S1</text>
+    <text x="795" y="108" text-anchor="middle" font-size="9" fill="#1B5E20">Capture + Forward</text>
+    <line x1="742" y1="118" x2="848" y2="118" stroke="#2E7D32" stroke-width="0.6"/>
+    <text x="795" y="135" text-anchor="middle" font-size="9">I$ data, hit</text>
+    <text x="795" y="152" text-anchor="middle" font-size="9">advance_head</text>
+    <text x="795" y="184" text-anchor="middle" font-size="9" fill="#666">cycle N+k+1</text>
+  </g>
+
+  <line x1="860" y1="140" x2="900" y2="140" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+
+  <g>
+    <rect x="900" y="90" width="110" height="100" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.5" rx="5"/>
+    <text x="955" y="132" text-anchor="middle" font-weight="bold" fill="#4A148C">PreDec</text>
+    <text x="955" y="152" text-anchor="middle" font-size="9" fill="#4A148C">→ Decode ...</text>
+  </g>
+
+  <line x1="170" y1="126" x2="180" y2="126" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+  <line x1="204" y1="126" x2="214" y2="126" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+  <line x1="546" y1="126" x2="556" y2="126" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+  <line x1="686" y1="126" x2="696" y2="126" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+  <line x1="720" y1="126" x2="730" y2="126" stroke="#333" stroke-width="1.3" marker-end="url(#arr)"/>
+
+  <g fill="white" stroke-width="1.1">
+    <circle cx="180" cy="126" r="3" stroke="#E65100"/>
+    <circle cx="214" cy="126" r="3" stroke="#1565C0"/>
+    <circle cx="382" cy="140" r="3.2" stroke="#AD1457"/>
+    <circle cx="522" cy="126" r="3" stroke="#E65100"/>
+    <circle cx="556" cy="126" r="3" stroke="#2E7D32"/>
+    <circle cx="696" cy="126" r="3" stroke="#E65100"/>
+    <circle cx="730" cy="126" r="3" stroke="#2E7D32"/>
+    <circle cx="900" cy="140" r="3" stroke="#6A1B9A"/>
+  </g>
+  <g font-size="7" font-weight="bold" fill="#BF360C">
+    <text x="184" y="121">D</text>
+    <text x="200" y="121">Q</text>
+    <text x="526" y="121">D</text>
+    <text x="692" y="121" text-anchor="end">D</text>
+    <text x="716" y="121">Q</text>
+  </g>
+
+  <g transform="translate(40,245)">
+    <rect x="0" y="0" width="18" height="18" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.2" rx="2"/>
+    <text x="24" y="13" font-size="10">BPU stage</text>
+    <rect x="100" y="0" width="18" height="18" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.2" rx="2"/>
+    <text x="124" y="13" font-size="10">Fetch stage</text>
+    <rect x="212" y="0" width="5" height="18" fill="#FFF3E0" stroke="#E65100" stroke-width="1.2"/>
+    <polygon points="212,8 217,11 212,14" fill="none" stroke="#E65100" stroke-width="1"/>
+    <text x="225" y="13" font-size="10">pipeline register</text>
+    <rect x="340" y="0" width="18" height="18" fill="#F8BBD0" stroke="#AD1457" stroke-width="1.5" rx="3"/>
+    <text x="364" y="13" font-size="10">FTQ</text>
+    <rect x="410" y="0" width="18" height="18" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.2" rx="2"/>
+    <text x="434" y="13" font-size="10">downstream</text>
+  </g>
+</svg>

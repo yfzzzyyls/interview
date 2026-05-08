@@ -975,9 +975,9 @@ volatile int* reg = (volatile int*)0x40021000;
 
 ## Part 2 — Decoupled Frontend Specification
 
-Source: `design_and_perf/rsd_fengze/Processor/Src/FetchUnit/deCoupled_FE.md`
+Source: `rsd_fengze/Processor/Src/FetchUnit/deCoupled_FE.md`
 
-Diagram assets remain under `design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/`.
+Primary ARCH diagrams are collected under `diagrams/`. Source FE diagram assets also remain under `rsd_fengze/Processor/Src/FetchUnit/diagrams/`.
 
 This document describes the frontend that is implemented in RTL behind
 `RSD_MARCH_DECOUPLED_FRONTEND`.
@@ -5818,30 +5818,41 @@ So the correct implemented frontend view is:
 BP_S0 -> BP_S1 -> FTQ -> IF_S0/NextPCStage -> IF_S1/FetchStage -> PreDecode
 ```
 
-### Implemented Diagrams
+### Frontend Diagrams
 
-#### Detailed Datapath Pipeline View
+Only two diagrams are embedded here to keep review clean:
+- A quick block-level sketch for first-pass explanation.
+- A detailed modern frontend pipeline diagram for implementation, timing, and hardware-cost discussion.
 
-![Implemented decoupled frontend datapath](design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/implemented_datapath_vertical.svg)
+The older proposal and RSD-specific RTL diagrams remain in
+`rsd_fengze/Processor/Src/FetchUnit/diagrams/`, but the primary ARCH review
+copies are kept under `diagrams/`.
 
-This is the primary frontend pipeline diagram. It shows the implemented
-datapath with muxes, DFFs, adders, predictor SRAMs, FTQ pointers, I-cache
-arrays/FSM, fetch buffer state, backend FTQ_ID lifecycle, and the real stage
-boundaries listed above.
+#### Quick Block Diagram
 
-#### Connectivity Summary View
+![Decoupled frontend block-level sketch](diagrams/frontend_blocklevel.svg)
 
-![Implemented decoupled frontend connectivity](design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/implemented_pipeline.svg)
+Use this for a quick verbal walkthrough: PC prediction, FTQ decoupling,
+I-cache fetch, predecode, instruction buffer, and decode handoff.
 
-#### Pipeline Timing Summary View
+#### Detailed Modern Frontend Pipeline
 
-![Implemented decoupled frontend pipeline timing](design_and_perf/rsd_fengze/Processor/Src/FetchUnit/diagrams/implemented_pipeline_timing.svg)
+![Modern decoupled frontend detailed pipeline](diagrams/frontend_modern_detailed_pipeline.svg)
 
-These diagrams are the implemented path. They replace the older proposal
-diagrams that included FTQ-to-I$ bypass, raw cacheline/IBuffer forwarding, and
-head advance from an IF_S1 stage. Those older SVG/PNG files are still in
-`diagrams/` for history, but they should not be treated as the implemented
-frontend.
+Use this for deep-dive discussion. It preserves the useful schematic style of
+the old `ex3_datapath_vertical` drawing, but the content is reorganized around a
+modern decoupled frontend:
+- PC select and fast uBTB/RAS path.
+- Main BTB + TAGE direction predictor + ITTAGE indirect target predictor.
+- FTQ allocation, prediction metadata lifetime, and history/RAS snapshots.
+- VIPT I-TLB/I-cache access.
+- RVC 16/32-bit boundary predecode, CFI mask generation, optional decompression,
+  and instruction-buffer entry structure.
+- Backend execute/commit update and recovery paths.
+
+This diagram is intended as the main implementation/timing review reference.
+It is a modern frontend reference diagram, not a claim that every specific core
+implements every optional block in exactly this form.
 
 ### Macro and Core Wiring
 
@@ -6478,6 +6489,21 @@ Issue/wakeup/select executes that graph out of order.
 The ROB/ActiveList commits it back in program order.
 Recovery restores the speculative structures when the prediction was wrong.
 ```
+
+### Backend Diagram
+
+Primary ARCH diagrams are collected under `diagrams/`.
+
+![Modern out-of-order backend detailed pipeline](diagrams/backend_modern_detailed_pipeline.svg)
+
+Use this diagram for backend implementation and timing discussion:
+- Decode/rename/dispatch are shown as top-to-bottom in-order pipeline stages.
+- Issue queues, ROB/ActiveList, branch checkpoints, LSQ, map table, free list,
+  busy table, and PRF are drawn as storage structures attached to the relevant
+  stages.
+- Wakeup/select, PRF ports, bypass muxes, execution pipes, writeback buses, and
+  commit/recovery paths are explicit because these are the timing and port
+  pressure points a performance modeling engineer should reason about.
 
 ### 1. Backend Pipeline Big Picture
 
@@ -8213,9 +8239,9 @@ That tells whether the bottleneck is capacity, banking, speculation policy,
 forwarding capability, or cache miss latency.
 ```
 
-Source: `design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/LSU_Optimization.md`
+Source: `rsd_fengze/Processor/Src/LoadStoreUnit/LSU_Optimization.md`
 
-Diagram assets remain under `design_and_perf/rsd_fengze/Processor/Src/Cache/diagrams/`.
+Primary ARCH diagrams are collected under `diagrams/`. Source LSU/L1D diagram assets also remain under `rsd_fengze/Processor/Src/Cache/diagrams/` and `rsd_fengze/Processor/Src/LoadStoreUnit/diagrams/`.
 
 **Status:** DRAFT v0.1 — 2026-04-22
 **Owner:** fy2243
@@ -8234,14 +8260,24 @@ RTL must not be written until this spec is frozen.
 
 ### 0. Unified LSU + L1D Pipeline Diagrams
 
+#### LSU Architectural Sketch
+
+This is the LSU-specific architectural sketch. It is useful for interview
+whiteboarding because it separates the load/store queue and forwarding path from
+the L1D optimization details.
+
+![LSU architectural datapath sketch](diagrams/lsu_architectural_datapath.svg)
+
+#### Unified LSU + L1D Optimized Datapath
+
 Top-to-bottom vertical flow through the 4 LSU stages plus the coupled L1D pipeline. The four resume-level optimizations are highlighted in yellow:
 - **Optimization A** (Selective SQ Lookup) is shown inside stage ② D$TAG — partial-tag column on the SQ, partial-tag compare row, and GATED full CAM.
-- **Optimization B** (Load Replay Buffer) is shown as the tall block on the right; captures blocked loads from stage ② D$TAG (matching legacy RSD block detection at [MemoryTagAccessStage.sv:493](design_and_perf/rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493) — `ldUpdate[i] && !ldRegValid[i]`), replays directly into stage ① D$ADDR (bypassing IQ and scheduler).
+- **Optimization B** (Load Replay Buffer) is shown as the tall block on the right; captures blocked loads from stage ② D$TAG (matching legacy RSD block detection at [MemoryTagAccessStage.sv:493](rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493) — `ldUpdate[i] && !ldRegValid[i]`), replays directly into stage ① D$ADDR (bypassing IQ and scheduler).
 - **Optimization C** (L1D Next-Line Prefetcher) and **Optimization D** (L1D Way Predictor) are shown as L1D blocks on the same D$ADDR/D$TAG/D$DATA path.
 
-![L1D optimized datapath](design_and_perf/rsd_fengze/Processor/Src/Cache/diagrams/dcache_datapath_vertical.png)
+![L1D optimized datapath](diagrams/lsu_l1d_optimized_datapath.svg)
 
-*(source: [dcache_datapath_vertical.svg](design_and_perf/rsd_fengze/Processor/Src/Cache/diagrams/dcache_datapath_vertical.svg))*
+*(source: [dcache_datapath_vertical.svg](rsd_fengze/Processor/Src/Cache/diagrams/dcache_datapath_vertical.svg))*
 
 ---
 
@@ -8276,8 +8312,8 @@ Baseline D$ organization:
 #### 1.2 Key structures (baseline)
 | Structure | Size | Source | Notes |
 |---|---|---|---|
-| Load Queue (LQ) | 16 | [LoadQueue.sv](design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/LoadQueue.sv) | FIFO, tracks in-flight loads; allocated at rename |
-| Store Queue (SQ) | 16 | [StoreQueue.sv](design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/StoreQueue.sv) | Address/control metadata is a flop array; store data is `DistributedMultiPortRAM`; FIFO discipline |
+| Load Queue (LQ) | 16 | [LoadQueue.sv](rsd_fengze/Processor/Src/LoadStoreUnit/LoadQueue.sv) | FIFO, tracks in-flight loads; allocated at rename |
+| Store Queue (SQ) | 16 | [StoreQueue.sv](rsd_fengze/Processor/Src/LoadStoreUnit/StoreQueue.sv) | Address/control metadata is a flop array; store data is `DistributedMultiPortRAM`; FIFO discipline |
 | Global ReplayQueue | 20 | `Processor/Src/Scheduler/ReplayQueue.sv` | **Shared across all pipes** — any stall fills it |
 | MSHR | 2 | in DCache | Miss tracking |
 
@@ -8335,7 +8371,7 @@ Banking review:
 - Banking is different from associativity: associativity gives placement choices, banking gives parallel access resources.
 
 #### 1.3 SQ lookup today (the CAM)
-On every load in `D$TAG`, a **full associative CAM** runs ([StoreQueue.sv:285-294](design_and_perf/rsd_fengze/Processor/Src/LoadStoreUnit/StoreQueue.sv#L285-L294)):
+On every load in `D$TAG`, a **full associative CAM** runs ([StoreQueue.sv:285-294](rsd_fengze/Processor/Src/LoadStoreUnit/StoreQueue.sv#L285-L294)):
 
 ```
 for each load i (0..LOAD_ISSUE_WIDTH-1):
@@ -8351,7 +8387,7 @@ for each load i (0..LOAD_ISSUE_WIDTH-1):
 - `CircularRangePicker` then selects oldest-matching store between SQ head and load's `storeQueuePtr`.
 
 #### 1.4 Load blocking and replay today
-A load that cannot complete is detected at D$TAG ([MemoryTagAccessStage.sv:493](design_and_perf/rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493) — `ldUpdate[i] && !ldRegValid[i]`) and blocks via the **global ReplayQueue**:
+A load that cannot complete is detected at D$TAG ([MemoryTagAccessStage.sv:493](rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493) — `ldUpdate[i] && !ldRegValid[i]`) and blocks via the **global ReplayQueue**:
 
 | Block reason | Today's handling |
 |---|---|
@@ -8569,7 +8605,7 @@ This is intentionally closer to the existing RSD replay payload than a minimal l
 
 | Event | Action |
 |---|---|
-| Load reaches D$TAG but **can't complete** (cache miss / MSHR not ready, SQ forward miss, operand-not-ready replay) | Capture into LRB (reuses legacy `ldUpdate && !ldRegValid` detection at [MemoryTagAccessStage.sv:493](design_and_perf/rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493)); do **not** enter global ReplayQueue |
+| Load reaches D$TAG but **can't complete** (cache miss / MSHR not ready, SQ forward miss, operand-not-ready replay) | Capture into LRB (reuses legacy `ldUpdate && !ldRegValid` detection at [MemoryTagAccessStage.sv:493](rsd_fengze/Processor/Src/Pipeline/MemoryBackEnd/MemoryTagAccessStage.sv#L493)); do **not** enter global ReplayQueue |
 | LRB entry is granted for replay | Free that LRB entry; if the replay still cannot complete, normal D$TAG detection recaptures it |
 | Recovery / flush | Walk LRB; invalidate entries whose `alPtr` is ≥ redirect point |
 | LRB full + new blocked load arrives | **Stall this load in D$TAG** (single-lane stall); do not stall scheduler globally |

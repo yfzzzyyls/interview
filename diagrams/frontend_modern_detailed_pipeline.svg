@@ -1,0 +1,440 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="2600" height="2050" viewBox="0 0 2600 2050" font-family="Helvetica, Arial, sans-serif" font-size="13">
+  <rect x="0" y="0" width="2600" height="2050" fill="white"/>
+
+  <defs>
+    <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#263238"/>
+    </marker>
+    <marker id="arrBlue" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#1565C0"/>
+    </marker>
+    <marker id="arrGreen" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#2E7D32"/>
+    </marker>
+    <marker id="arrPink" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#AD1457"/>
+    </marker>
+    <marker id="arrRed" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#C62828"/>
+    </marker>
+    <marker id="arrOrg" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="8" markerHeight="8" orient="auto">
+      <path d="M 0 0 L 10 5 L 0 10 z" fill="#E65100"/>
+    </marker>
+
+    <style>
+      .title { font-size: 28px; font-weight: 700; fill: #1f2933; }
+      .subtitle { font-size: 14px; fill: #52606d; }
+      .colTitle { font-size: 20px; font-weight: 700; }
+      .stageTitle { font-size: 17px; font-weight: 700; }
+      .compTitle { font-size: 13px; font-weight: 700; }
+      .small { font-size: 11px; fill: #334e68; }
+      .tiny { font-size: 10px; fill: #52606d; }
+      .line { stroke: #263238; stroke-width: 1.8; fill: none; marker-end: url(#arr); }
+      .bpu { stroke: #1565C0; stroke-width: 1.8; fill: none; marker-end: url(#arrBlue); }
+      .fetch { stroke: #2E7D32; stroke-width: 1.8; fill: none; marker-end: url(#arrGreen); }
+      .ftq { stroke: #AD1457; stroke-width: 1.8; fill: none; marker-end: url(#arrPink); }
+      .redir { stroke: #C62828; stroke-width: 1.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrRed); }
+      .update { stroke: #E65100; stroke-width: 1.6; fill: none; stroke-dasharray: 7 5; marker-end: url(#arrOrg); }
+      .stageBoxBpu { fill: #F5FAFF; stroke: #1565C0; stroke-width: 1.8; rx: 7; }
+      .stageBoxFetch { fill: #F5FEF5; stroke: #2E7D32; stroke-width: 1.8; rx: 7; }
+      .ftqBox { fill: #FFF8FB; stroke: #AD1457; stroke-width: 1.8; rx: 7; }
+      .note { fill: #FAFAFA; stroke: #B0BEC5; stroke-width: 1.2; rx: 6; }
+    </style>
+
+    <g id="pipeReg">
+      <rect x="0" y="0" width="720" height="48" fill="#FFF3E0" stroke="#E65100" stroke-width="1.8" rx="4"/>
+      <polygon points="0,18 15,24 0,30" fill="none" stroke="#E65100" stroke-width="1.5"/>
+    </g>
+
+    <g id="dffSmall">
+      <rect x="0" y="0" width="92" height="58" fill="#FFF3E0" stroke="#E65100" stroke-width="1.7" rx="4"/>
+      <polygon points="0,22 12,29 0,36" fill="none" stroke="#E65100" stroke-width="1.4"/>
+      <text x="46" y="24" text-anchor="middle" class="compTitle" fill="#BF360C">DFF</text>
+      <text x="46" y="42" text-anchor="middle" class="tiny">ptr/reg</text>
+    </g>
+
+    <g id="mux">
+      <polygon points="0,0 86,18 86,82 0,100" fill="#E1F5FE" stroke="#01579B" stroke-width="1.7"/>
+      <text x="43" y="53" text-anchor="middle" class="compTitle" fill="#01579B">MUX</text>
+    </g>
+
+    <g id="muxWide">
+      <polygon points="0,0 110,24 110,116 0,140" fill="#E1F5FE" stroke="#01579B" stroke-width="1.7"/>
+      <text x="55" y="75" text-anchor="middle" class="compTitle" fill="#01579B">MUX</text>
+    </g>
+
+    <g id="adder">
+      <circle cx="30" cy="30" r="28" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.7"/>
+      <text x="30" y="38" text-anchor="middle" font-size="24" font-weight="700" fill="#F57F17">+</text>
+    </g>
+
+    <g id="xor">
+      <path d="M 6 8 Q 35 20 64 8" fill="none" stroke="#006064" stroke-width="1.6"/>
+      <path d="M 6 15 Q 35 30 64 15 Q 58 48 35 62 Q 12 48 6 15 Z" fill="#E0F7FA" stroke="#006064" stroke-width="1.6"/>
+      <text x="35" y="43" text-anchor="middle" class="compTitle" fill="#006064">XOR</text>
+    </g>
+
+    <g id="eq">
+      <polygon points="28,0 56,28 28,56 0,28" fill="white" stroke="#37474F" stroke-width="1.6"/>
+      <text x="28" y="34" text-anchor="middle" font-size="15" font-weight="700" fill="#37474F">=</text>
+    </g>
+
+    <g id="cam">
+      <rect x="0" y="0" width="148" height="88" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.7" rx="5"/>
+      <line x1="0" y1="25" x2="148" y2="25" stroke="#AD1457" stroke-width="1"/>
+      <text x="74" y="18" text-anchor="middle" class="compTitle" fill="#880E4F">CAM</text>
+    </g>
+
+    <g id="sram">
+      <rect x="0" y="0" width="166" height="94" fill="#EDE7F6" stroke="#5E35B1" stroke-width="1.7" rx="5"/>
+      <line x1="0" y1="25" x2="166" y2="25" stroke="#5E35B1" stroke-width="1"/>
+      <text x="83" y="18" text-anchor="middle" class="compTitle" fill="#4527A0">SRAM</text>
+    </g>
+
+    <g id="queue">
+      <rect x="0" y="0" width="360" height="210" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.8" rx="6"/>
+      <line x1="0" y1="34" x2="360" y2="34" stroke="#AD1457" stroke-width="1"/>
+      <line x1="0" y1="69" x2="360" y2="69" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="104" x2="360" y2="104" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="139" x2="360" y2="139" stroke="#AD1457" stroke-width="0.8"/>
+      <line x1="0" y1="174" x2="360" y2="174" stroke="#AD1457" stroke-width="0.8"/>
+      <text x="180" y="23" text-anchor="middle" class="compTitle" fill="#880E4F">FTQ STORAGE</text>
+    </g>
+  </defs>
+
+  <text x="1300" y="42" text-anchor="middle" class="title">Modern Decoupled Frontend Detailed Pipeline</text>
+  <text x="1300" y="68" text-anchor="middle" class="subtitle">Separate top-to-bottom pipeline stages. FTQ is drawn as storage, not as a pipeline stage.</text>
+
+  <text x="440" y="118" text-anchor="middle" class="colTitle" fill="#0D47A1">Branch Prediction Pipeline</text>
+  <text x="1300" y="118" text-anchor="middle" class="colTitle" fill="#880E4F">FTQ Storage / Metadata Lifetime</text>
+  <text x="2160" y="118" text-anchor="middle" class="colTitle" fill="#1B5E20">Fetch / I-cache / Predecode Pipeline</text>
+
+  <!-- ================= LEFT: BPU PIPELINE ================= -->
+  <rect x="55" y="150" width="770" height="285" class="stageBoxBpu"/>
+  <text x="82" y="182" class="stageTitle" fill="#0D47A1">BP0 / F0: fast next-PC path</text>
+  <text x="82" y="204" class="small">Critical path: redirect priority, uBTB/RAS target, fallthrough.</text>
+
+  <text x="82" y="247" class="small" fill="#C62828">execute redirect</text>
+  <text x="82" y="274" class="small" fill="#C62828">trap / exception vector</text>
+  <text x="82" y="301" class="small">uBTB or RAS target</text>
+  <text x="82" y="328" class="small">fallthrough PC + fetchWidth</text>
+  <use href="#muxWide" x="272" y="224"/>
+  <text x="327" y="379" text-anchor="middle" class="tiny">priority PC MUX</text>
+  <path d="M 230 246 L 272 246" class="redir"/>
+  <path d="M 230 273 L 272 273" class="redir"/>
+  <path d="M 230 300 L 272 300" class="bpu"/>
+  <path d="M 230 327 L 272 327" class="line"/>
+
+  <rect x="465" y="240" width="130" height="78" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+  <text x="530" y="266" text-anchor="middle" class="compTitle" fill="#0D47A1">fetch PC</text>
+  <text x="530" y="290" text-anchor="middle" class="tiny">selected block PC</text>
+  <path d="M 382 294 L 465 279" class="bpu"/>
+
+  <use href="#adder" x="675" y="250"/>
+  <text x="705" y="326" text-anchor="middle" class="tiny">PC + 16B</text>
+  <path d="M 595 279 L 675 280" class="line"/>
+  <path d="M 705 308 C 742 358 455 385 382 336" class="line"/>
+
+  <use href="#pipeReg" x="80" y="455"/>
+  <text x="440" y="483" text-anchor="middle" class="compTitle" fill="#BF360C">BP0 -> BP1 pipeline register: fetch_pc, fallback_pc, redirect/valid state</text>
+  <path d="M 530 318 C 520 380 470 430 440 455" class="bpu"/>
+
+  <rect x="55" y="525" width="770" height="310" class="stageBoxBpu"/>
+  <text x="82" y="557" class="stageTitle" fill="#0D47A1">BP1 / F1: lane PCs, uBTB, RAS, fast target</text>
+  <text x="82" y="579" class="small">Fast direction/target estimate for common taken control flow.</text>
+
+  <rect x="88" y="615" width="220" height="104" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+  <text x="198" y="641" text-anchor="middle" class="compTitle" fill="#0D47A1">lane PC generator</text>
+  <text x="198" y="666" text-anchor="middle" class="tiny">fetch block base PC</text>
+  <text x="198" y="684" text-anchor="middle" class="tiny">RVC: halfword lanes H0..H7</text>
+  <text x="198" y="702" text-anchor="middle" class="tiny">PC+0, +2, +4, ...</text>
+
+  <use href="#cam" x="358" y="625"/>
+  <text x="432" y="663" text-anchor="middle" class="compTitle" fill="#880E4F">uBTB</text>
+  <text x="432" y="686" text-anchor="middle" class="tiny">small, fast, partial tag</text>
+  <text x="432" y="703" text-anchor="middle" class="tiny">CFI lane/type/target</text>
+  <path d="M 308 667 L 358 669" class="bpu"/>
+
+  <rect x="575" y="620" width="180" height="110" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.5" rx="5"/>
+  <text x="665" y="646" text-anchor="middle" class="compTitle" fill="#F57F17">RAS top</text>
+  <text x="665" y="671" text-anchor="middle" class="tiny">return target</text>
+  <text x="665" y="689" text-anchor="middle" class="tiny">spec push/pop</text>
+  <text x="665" y="707" text-anchor="middle" class="tiny">snapshot in FTQ</text>
+  <path d="M 506 669 L 575 675" class="bpu"/>
+
+  <use href="#mux" x="390" y="745"/>
+  <text x="433" y="858" text-anchor="middle" class="tiny">fast target MUX</text>
+  <path d="M 432 713 L 432 745" class="bpu"/>
+  <path d="M 665 730 C 630 765 510 782 476 790" class="bpu"/>
+  <path d="M 476 795 C 545 825 545 420 382 294" class="bpu"/>
+
+  <use href="#pipeReg" x="80" y="855"/>
+  <text x="440" y="883" text-anchor="middle" class="compTitle" fill="#BF360C">BP1 -> BP2 pipeline register: lanes, uBTB hit/meta, RAS top, fast target</text>
+  <path d="M 433 845 L 440 855" class="bpu"/>
+
+  <rect x="55" y="925" width="770" height="340" class="stageBoxBpu"/>
+  <text x="82" y="957" class="stageTitle" fill="#0D47A1">BP2 / F2: main predictor correction and FTQ enqueue</text>
+  <text x="82" y="979" class="small">Large/slower predictors validate or override the fast uBTB result.</text>
+
+  <use href="#xor" x="92" y="1015"/>
+  <text x="127" y="1005" text-anchor="middle" class="tiny">PC/history fold</text>
+  <text x="82" y="1060" class="tiny">PC</text>
+  <text x="142" y="1098" text-anchor="middle" class="tiny">GHR / PHR</text>
+
+  <use href="#sram" x="250" y="980"/>
+  <text x="333" y="1018" text-anchor="middle" class="compTitle" fill="#4527A0">main BTB</text>
+  <text x="333" y="1041" text-anchor="middle" class="tiny">set assoc, fuller tag</text>
+  <text x="333" y="1058" text-anchor="middle" class="tiny">lane/type/target</text>
+  <path d="M 162 1050 L 250 1028" class="bpu"/>
+
+  <use href="#sram" x="460" y="980"/>
+  <text x="543" y="1018" text-anchor="middle" class="compTitle" fill="#4527A0">TAGE</text>
+  <text x="543" y="1041" text-anchor="middle" class="tiny">direction provider</text>
+  <text x="543" y="1058" text-anchor="middle" class="tiny">alternate + useful bits</text>
+  <path d="M 162 1050 L 460 1028" class="bpu"/>
+
+  <use href="#sram" x="250" y="1110"/>
+  <text x="333" y="1148" text-anchor="middle" class="compTitle" fill="#4527A0">ITTAGE</text>
+  <text x="333" y="1171" text-anchor="middle" class="tiny">indirect target</text>
+  <text x="333" y="1188" text-anchor="middle" class="tiny">PC + path history</text>
+  <path d="M 162 1050 C 205 1085 220 1140 250 1158" class="bpu"/>
+
+  <use href="#eq" x="657" y="1010"/>
+  <text x="685" y="1078" text-anchor="middle" class="tiny">tag hit?</text>
+  <path d="M 626 1028 L 657 1038" class="bpu"/>
+
+  <rect x="480" y="1110" width="250" height="112" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+  <text x="605" y="1136" text-anchor="middle" class="compTitle" fill="#0D47A1">earliest CFI picker</text>
+  <text x="605" y="1161" text-anchor="middle" class="tiny">BTB CFI meta + TAGE direction</text>
+  <text x="605" y="1179" text-anchor="middle" class="tiny">RAS for ret, ITTAGE for indirect</text>
+  <text x="605" y="1197" text-anchor="middle" class="tiny">main predictor may redirect</text>
+  <path d="M 416 1028 C 460 1065 505 1088 535 1110" class="bpu"/>
+  <path d="M 543 1074 C 555 1088 570 1100 585 1110" class="bpu"/>
+  <path d="M 416 1158 L 480 1166" class="bpu"/>
+  <path d="M 685 1066 C 700 1085 700 1098 685 1110" class="bpu"/>
+
+  <path d="M 605 1222 C 640 1250 760 1265 910 525" class="ftq"/>
+  <text x="675" y="1248" class="tiny" fill="#AD1457">enqueue FTQ packet</text>
+
+  <!-- backend update in left column -->
+  <rect x="55" y="1390" width="770" height="220" class="stageBoxBpu"/>
+  <text x="82" y="1422" class="stageTitle" fill="#0D47A1">Backend update / recovery inputs</text>
+  <rect x="90" y="1460" width="300" height="110" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="240" y="1487" text-anchor="middle" class="compTitle" fill="#B71C1C">execute redirect</text>
+  <text x="240" y="1512" text-anchor="middle" class="tiny">actual direction/target differs</text>
+  <text x="240" y="1530" text-anchor="middle" class="tiny">restore FTQ GHR/PHR/RAS snapshot</text>
+  <text x="240" y="1548" text-anchor="middle" class="tiny">corrected PC to BP0 mux</text>
+  <path d="M 240 1460 C 180 1150 205 580 272 276" class="redir"/>
+
+  <rect x="475" y="1460" width="300" height="110" fill="#FFF3E0" stroke="#E65100" stroke-width="1.5" rx="5"/>
+  <text x="625" y="1487" text-anchor="middle" class="compTitle" fill="#BF360C">commit train</text>
+  <text x="625" y="1512" text-anchor="middle" class="tiny">BTB/TAGE/ITTAGE/RAS update</text>
+  <text x="625" y="1530" text-anchor="middle" class="tiny">architectural history advances</text>
+  <text x="625" y="1548" text-anchor="middle" class="tiny">retire FTQ entries when safe</text>
+  <path d="M 625 1460 C 650 1355 572 1240 543 1074" class="update"/>
+
+  <!-- ================= MIDDLE: FTQ STORAGE ================= -->
+  <rect x="925" y="205" width="750" height="1025" class="ftqBox"/>
+  <text x="955" y="238" class="stageTitle" fill="#880E4F">FTQ is storage, not a pipeline stage</text>
+  <text x="955" y="260" class="small">It decouples prediction from fetch and keeps metadata alive until update/recovery.</text>
+
+  <use href="#queue" x="1120" y="315"/>
+  <text x="1300" y="362" text-anchor="middle" class="compTitle" fill="#880E4F">one entry per predicted fetch block</text>
+  <text x="1300" y="391" text-anchor="middle" class="tiny">startPC / endPC / fallthrough</text>
+  <text x="1300" y="426" text-anchor="middle" class="tiny">pred target / CFI lane / CFI type</text>
+  <text x="1300" y="461" text-anchor="middle" class="tiny">BTB/TAGE/ITTAGE provider and update metadata</text>
+  <text x="1300" y="496" text-anchor="middle" class="tiny">GHR / PHR / RAS before-update snapshots</text>
+
+  <use href="#dffSmall" x="980" y="380"/>
+  <text x="1026" y="455" text-anchor="middle" class="tiny">tail ptr</text>
+  <use href="#dffSmall" x="1530" y="380"/>
+  <text x="1576" y="455" text-anchor="middle" class="tiny">head ptr</text>
+  <path d="M 1072 409 L 1120 409" class="ftq"/>
+  <path d="M 1480 409 L 1530 409" class="ftq"/>
+
+  <rect x="980" y="625" width="300" height="132" fill="#F8F9FA" stroke="#AD1457" stroke-width="1.5" rx="5"/>
+  <text x="1130" y="654" text-anchor="middle" class="compTitle" fill="#880E4F">fetch head peek</text>
+  <text x="1130" y="681" text-anchor="middle" class="tiny">head valid + ftq_id</text>
+  <text x="1130" y="699" text-anchor="middle" class="tiny">startPC drives fetch PC select</text>
+  <text x="1130" y="717" text-anchor="middle" class="tiny">head may advance after fetch consume</text>
+  <text x="1130" y="735" text-anchor="middle" class="tiny">entry remains for update/recovery</text>
+
+  <rect x="1320" y="625" width="300" height="132" fill="#F8F9FA" stroke="#AD1457" stroke-width="1.5" rx="5"/>
+  <text x="1470" y="654" text-anchor="middle" class="compTitle" fill="#880E4F">ID carried by instructions</text>
+  <text x="1470" y="681" text-anchor="middle" class="tiny">ftq_id + slot metadata</text>
+  <text x="1470" y="699" text-anchor="middle" class="tiny">decode/execute can reference prediction</text>
+  <text x="1470" y="717" text-anchor="middle" class="tiny">commit finds update metadata</text>
+  <text x="1470" y="735" text-anchor="middle" class="tiny">wrong-path entries invalidated</text>
+
+  <rect x="980" y="835" width="300" height="132" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="1130" y="864" text-anchor="middle" class="compTitle" fill="#B71C1C">recovery snapshot</text>
+  <text x="1130" y="891" text-anchor="middle" class="tiny">restore GHR / PHR / RAS</text>
+  <text x="1130" y="909" text-anchor="middle" class="tiny">redirect fetch PC</text>
+  <text x="1130" y="927" text-anchor="middle" class="tiny">invalidate younger FTQ entries</text>
+  <text x="1130" y="945" text-anchor="middle" class="tiny">precise exception uses same lifetime</text>
+
+  <rect x="1320" y="835" width="300" height="132" fill="#FFF3E0" stroke="#E65100" stroke-width="1.5" rx="5"/>
+  <text x="1470" y="864" text-anchor="middle" class="compTitle" fill="#BF360C">commit update</text>
+  <text x="1470" y="891" text-anchor="middle" class="tiny">train predictors precisely</text>
+  <text x="1470" y="909" text-anchor="middle" class="tiny">advance architectural history</text>
+  <text x="1470" y="927" text-anchor="middle" class="tiny">free old snapshots</text>
+  <text x="1470" y="945" text-anchor="middle" class="tiny">pop safe FTQ entries</text>
+
+  <rect x="980" y="1060" width="640" height="92" fill="#FAFAFA" stroke="#B0BEC5" stroke-width="1.2" rx="5"/>
+  <text x="1300" y="1088" text-anchor="middle" class="compTitle" fill="#37474F">FTQ does not store instruction bytes</text>
+  <text x="1300" y="1115" text-anchor="middle" class="small">Bytes live in I-cache / fetch return / instruction buffer.</text>
+  <text x="1300" y="1136" text-anchor="middle" class="small">FTQ stores prediction metadata, lifecycle metadata, and rollback snapshots.</text>
+
+  <path d="M 735 1166 C 800 1130 870 430 1120 420" class="ftq"/>
+  <path d="M 1280 690 C 1490 675 1690 285 1825 282" class="ftq"/>
+  <path d="M 1470 757 C 1580 1060 1880 1440 2115 1458" class="ftq"/>
+  <path d="M 1130 835 C 940 1285 610 1455 390 1515" class="redir"/>
+  <path d="M 1320 900 C 1070 1125 840 1485 775 1515" class="update"/>
+
+  <!-- ================= RIGHT: FETCH PIPELINE ================= -->
+  <rect x="1775" y="150" width="770" height="285" class="stageBoxFetch"/>
+  <text x="1802" y="182" class="stageTitle" fill="#1B5E20">IF0: fetch PC selection and I-cache request</text>
+  <text x="1802" y="204" class="small">Consumes FTQ head; redirect has priority over queued prediction.</text>
+
+  <text x="1802" y="250" class="small" fill="#C62828">redirect / trap PC</text>
+  <text x="1802" y="277" class="small" fill="#AD1457">FTQ head startPC</text>
+  <text x="1802" y="304" class="small">stalled replay PC</text>
+  <text x="1802" y="331" class="small">sequential fallback</text>
+  <use href="#muxWide" x="1990" y="225"/>
+  <text x="2045" y="380" text-anchor="middle" class="tiny">fetch PC MUX</text>
+  <path d="M 1960 246 L 1990 246" class="redir"/>
+  <path d="M 1960 273 L 1990 273" class="ftq"/>
+  <path d="M 1960 300 L 1990 300" class="fetch"/>
+  <path d="M 1960 327 L 1990 327" class="line"/>
+
+  <rect x="2160" y="250" width="140" height="78" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+  <text x="2230" y="276" text-anchor="middle" class="compTitle" fill="#1B5E20">fetch PC</text>
+  <text x="2230" y="300" text-anchor="middle" class="tiny">logical address</text>
+  <path d="M 2100 294 L 2160 289" class="fetch"/>
+
+  <rect x="2350" y="240" width="160" height="95" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+  <text x="2430" y="267" text-anchor="middle" class="compTitle" fill="#1B5E20">VA index</text>
+  <text x="2430" y="292" text-anchor="middle" class="tiny">page offset bits</text>
+  <text x="2430" y="310" text-anchor="middle" class="tiny">fetch start mask</text>
+  <path d="M 2300 289 L 2350 288" class="fetch"/>
+
+  <use href="#pipeReg" x="1810" y="455"/>
+  <text x="2170" y="483" text-anchor="middle" class="compTitle" fill="#BF360C">IF0 -> IF1 pipeline register: if_pc, ftq_id, start offset, cache index</text>
+  <path d="M 2230 328 C 2215 385 2190 430 2170 455" class="fetch"/>
+
+  <rect x="1775" y="525" width="770" height="340" class="stageBoxFetch"/>
+  <text x="1802" y="557" class="stageTitle" fill="#1B5E20">IF1: I-TLB and I-cache tag/data arrays</text>
+  <text x="1802" y="579" class="small">VIPT-style overlap: VA index/data access while translation returns PA tag.</text>
+
+  <use href="#sram" x="1815" y="625"/>
+  <text x="1898" y="663" text-anchor="middle" class="compTitle" fill="#4527A0">I-TLB</text>
+  <text x="1898" y="686" text-anchor="middle" class="tiny">VPN -> PPN</text>
+  <text x="1898" y="703" text-anchor="middle" class="tiny">perm/fault metadata</text>
+
+  <use href="#sram" x="2025" y="625"/>
+  <text x="2108" y="663" text-anchor="middle" class="compTitle" fill="#4527A0">I-cache tag</text>
+  <text x="2108" y="686" text-anchor="middle" class="tiny">PA tag compare</text>
+  <text x="2108" y="703" text-anchor="middle" class="tiny">way/bank select</text>
+  <path d="M 1981 673 L 2025 673" class="fetch"/>
+
+  <use href="#sram" x="2240" y="625"/>
+  <text x="2323" y="663" text-anchor="middle" class="compTitle" fill="#4527A0">I-cache data</text>
+  <text x="2323" y="686" text-anchor="middle" class="tiny">64B line array</text>
+  <text x="2323" y="703" text-anchor="middle" class="tiny">select 16B fetch slice</text>
+  <path d="M 2430 335 C 2450 470 2388 565 2323 625" class="fetch"/>
+
+  <use href="#eq" x="2078" y="760"/>
+  <text x="2106" y="828" text-anchor="middle" class="tiny">hit?</text>
+  <path d="M 2108 719 L 2106 760" class="fetch"/>
+
+  <rect x="2268" y="760" width="150" height="76" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
+  <text x="2343" y="787" text-anchor="middle" class="compTitle" fill="#B71C1C">I-MSHR</text>
+  <text x="2343" y="812" text-anchor="middle" class="tiny">miss/refill</text>
+  <text x="2343" y="829" text-anchor="middle" class="tiny">fetch replay</text>
+  <path d="M 2134 788 L 2268 798" class="redir"/>
+
+  <use href="#pipeReg" x="1810" y="885"/>
+  <text x="2170" y="913" text-anchor="middle" class="compTitle" fill="#BF360C">IF1 -> IF2 pipeline register: line bytes, hit/fault, ftq_id, fetch_pc</text>
+  <path d="M 2323 719 C 2300 805 2240 860 2170 885" class="fetch"/>
+
+  <rect x="1775" y="955" width="770" height="360" class="stageBoxFetch"/>
+  <text x="1802" y="987" class="stageTitle" fill="#1B5E20">IF2: align, RVC predecode, CFI predecode, instruction buffer</text>
+  <text x="1802" y="1009" class="small">Converts bytes into instruction entries for decode while preserving FTQ metadata.</text>
+
+  <rect x="1815" y="1055" width="205" height="108" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
+  <text x="1917" y="1082" text-anchor="middle" class="compTitle" fill="#1B5E20">fetch aligner</text>
+  <text x="1917" y="1107" text-anchor="middle" class="tiny">select 16B from 64B</text>
+  <text x="1917" y="1125" text-anchor="middle" class="tiny">mask before start PC</text>
+  <text x="1917" y="1143" text-anchor="middle" class="tiny">line/page split support</text>
+  <path d="M 2170 933 C 2080 1000 1990 1030 1917 1055" class="fetch"/>
+
+  <rect x="2055" y="1038" width="240" height="140" fill="#E0F7FA" stroke="#00838F" stroke-width="1.5" rx="5"/>
+  <text x="2175" y="1065" text-anchor="middle" class="compTitle" fill="#006064">RVC length predecode</text>
+  <text x="2175" y="1090" text-anchor="middle" class="tiny">slice into 16b halfwords</text>
+  <text x="2175" y="1108" text-anchor="middle" class="tiny">is16 = inst[1:0] != 2'b11</text>
+  <text x="2175" y="1126" text-anchor="middle" class="tiny">prefix network -> start_mask</text>
+  <text x="2175" y="1144" text-anchor="middle" class="tiny">32b consumes two lanes</text>
+  <text x="2175" y="1162" text-anchor="middle" class="tiny">middle halfword masked</text>
+  <path d="M 2020 1109 L 2055 1109" class="fetch"/>
+
+  <rect x="2330" y="1046" width="175" height="128" fill="#FFFDE7" stroke="#F9A825" stroke-width="1.5" rx="5"/>
+  <text x="2418" y="1073" text-anchor="middle" class="compTitle" fill="#F57F17">CFI predecode</text>
+  <text x="2418" y="1098" text-anchor="middle" class="tiny">branch/jump/call/ret</text>
+  <text x="2418" y="1116" text-anchor="middle" class="tiny">cfi_mask, cfi_idx</text>
+  <text x="2418" y="1134" text-anchor="middle" class="tiny">BTB repair metadata</text>
+  <text x="2418" y="1152" text-anchor="middle" class="tiny">direct target check</text>
+  <path d="M 2295 1109 L 2330 1110" class="fetch"/>
+
+  <rect x="1910" y="1210" width="260" height="92" fill="#E3F2FD" stroke="#1565C0" stroke-width="1.5" rx="5"/>
+  <text x="2040" y="1237" text-anchor="middle" class="compTitle" fill="#0D47A1">instruction packetizer</text>
+  <text x="2040" y="1262" text-anchor="middle" class="tiny">PC, canonical 32b inst, is_rvc</text>
+  <text x="2040" y="1280" text-anchor="middle" class="tiny">exception, ftq_id, slot metadata</text>
+  <path d="M 2175 1178 C 2155 1200 2100 1210 2040 1210" class="fetch"/>
+  <path d="M 2418 1174 C 2350 1210 2250 1230 2170 1250" class="fetch"/>
+
+  <rect x="2240" y="1205" width="250" height="102" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.7" rx="5"/>
+  <text x="2365" y="1232" text-anchor="middle" class="compTitle" fill="#880E4F">Instruction Buffer</text>
+  <text x="2365" y="1257" text-anchor="middle" class="tiny">decouples fetch and decode</text>
+  <text x="2365" y="1275" text-anchor="middle" class="tiny">entry: PC, inst, valid, is_rvc</text>
+  <text x="2365" y="1293" text-anchor="middle" class="tiny">exception + predicted CFI info</text>
+  <path d="M 2170 1256 L 2240 1256" class="fetch"/>
+
+  <use href="#pipeReg" x="1810" y="1340"/>
+  <text x="2170" y="1368" text-anchor="middle" class="compTitle" fill="#BF360C">IF2 -> Decode pipeline register / instruction buffer read side</text>
+  <path d="M 2365 1307 C 2340 1330 2250 1340 2170 1340" class="fetch"/>
+
+  <rect x="1945" y="1425" width="300" height="85" fill="#ECEFF1" stroke="#455A64" stroke-width="1.4" rx="5"/>
+  <text x="2095" y="1454" text-anchor="middle" class="compTitle" fill="#37474F">Decode / Rename</text>
+  <text x="2095" y="1480" text-anchor="middle" class="tiny">instruction entries carry ftq_id + slot</text>
+  <path d="M 2170 1388 L 2095 1425" class="fetch"/>
+  <path d="M 2095 1510 C 1820 1560 1540 810 1470 757" class="ftq"/>
+
+  <!-- Bottom notes -->
+  <rect x="75" y="1680" width="720" height="230" class="note"/>
+  <text x="105" y="1710" class="stageTitle" fill="#37474F">Timing paths to reason about</text>
+  <text x="110" y="1745" class="small">1. BP0 PC MUX -> uBTB/RAS -> fast target -> next fetch PC</text>
+  <text x="110" y="1770" class="small">2. BP2 main BTB/TAGE tag match -> redirect correction</text>
+  <text x="110" y="1795" class="small">3. IF1 I-TLB + I-cache tag/data -> IF2 aligner</text>
+  <text x="110" y="1820" class="small">4. IF2 RVC prefix network + CFI predecode</text>
+  <text x="110" y="1845" class="small">5. FTQ snapshot restore -> predictor history/RAS repair</text>
+
+  <rect x="940" y="1680" width="720" height="230" class="note"/>
+  <text x="970" y="1710" class="stageTitle" fill="#37474F">RVC 16/32 boundary logic</text>
+  <text x="975" y="1745" class="small">Halfword lanes are length-classified in parallel.</text>
+  <text x="975" y="1770" class="small">start_mask is generated by combinational prefix/mask logic.</text>
+  <text x="975" y="1795" class="small">A 32b instruction consumes two halfwords; the second halfword is not a start.</text>
+  <text x="975" y="1820" class="small">Cross-line/page instructions need saved first half and precise fault metadata.</text>
+  <text x="975" y="1845" class="small">Instruction-buffer entries carry PC, canonical inst, is_rvc, exception, ftq_id.</text>
+
+  <rect x="1805" y="1680" width="720" height="230" class="note"/>
+  <text x="1835" y="1710" class="stageTitle" fill="#37474F">Prediction priority</text>
+  <text x="1840" y="1745" class="small">1. Precise redirect / exception / interrupt wins.</text>
+  <text x="1840" y="1770" class="small">2. Main BTB/TAGE correction overrides fast uBTB if needed.</text>
+  <text x="1840" y="1795" class="small">3. Return uses RAS top when CFI type says return.</text>
+  <text x="1840" y="1820" class="small">4. Indirect jump target can come from ITTAGE.</text>
+  <text x="1840" y="1845" class="small">5. Otherwise direct BTB target or fetch fallthrough is used.</text>
+
+  <rect x="315" y="1960" width="1970" height="62" fill="#F5F7FA" stroke="#90A4AE" stroke-width="1.3" rx="8"/>
+  <text x="1300" y="1998" text-anchor="middle" class="small">Use this diagram for implementation/timing discussion. It is a modern reference sketch, not a claim that every core implements every optional block exactly this way.</text>
+</svg>
