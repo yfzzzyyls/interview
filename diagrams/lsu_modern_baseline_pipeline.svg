@@ -115,13 +115,13 @@
       <text x="150" y="82" text-anchor="middle" class="tiny">bank1</text>
       <text x="250" y="82" text-anchor="middle" class="tiny">bank2</text>
       <text x="350" y="82" text-anchor="middle" class="tiny">bank3</text>
-      <text x="200" y="125" text-anchor="middle" class="tiny">tag/data arrays, ECC, byte masks</text>
+      <text x="200" y="125" text-anchor="middle" class="tiny">2R tag/data banks, 1W refill/store path</text>
     </g>
   </defs>
 
-  <text x="1350" y="42" text-anchor="middle" class="title">Modern OoO LSU + L1D Baseline Pipeline</text>
-  <text x="1350" y="68" text-anchor="middle" class="subtitle">Generic RISC-V-friendly baseline for interview reasoning. Queues are storage; rectangular boxes are pipeline stages.</text>
-  <text x="1350" y="94" text-anchor="middle" class="subtitle">Fast L1D-hit timing: C0 issue -> C1 AGU/DTLB/index -> C2 tag/data + SQ check -> C3 align/wakeup -> C4 dependent use. Dispatch and commit are outside load-to-use.</text>
+  <text x="1350" y="42" text-anchor="middle" class="title">Modern 2-Path OoO LSU + L1D Baseline Pipeline</text>
+  <text x="1350" y="68" text-anchor="middle" class="subtitle">RISC-V-friendly 2-issue LSU baseline. Queues are storage; rectangular boxes are pipeline stages.</text>
+  <text x="1350" y="94" text-anchor="middle" class="subtitle">Fast L1D hit: C0 issue -> C1 AGU + DTLB/tag/data array start -> C2 hit/way + SQ forwarding -> C3 byte slice/merge + wakeup -> C4 dependent use.</text>
 
   <text x="380" y="118" text-anchor="middle" class="colTitle" fill="#880E4F">Ordering / Replay State</text>
   <text x="1350" y="118" text-anchor="middle" class="colTitle" fill="#263238">Load / Store Pipeline</text>
@@ -179,10 +179,10 @@
   <text x="2150" y="577" class="tiny">ownership request for stores</text>
 
   <rect x="2070" y="690" width="410" height="155" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7" rx="6"/>
-  <text x="2275" y="716" text-anchor="middle" class="compTitle" fill="#1B5E20">L1D PORT ARBITER</text>
-  <text x="2100" y="752" class="tiny">load read, committed store write</text>
+  <text x="2275" y="716" text-anchor="middle" class="compTitle" fill="#1B5E20">L1D PORT / BANK ARBITER</text>
+  <text x="2100" y="752" class="tiny">2 load reads, committed store write</text>
   <text x="2100" y="782" class="tiny">refill write, eviction/writeback</text>
-  <text x="2100" y="812" class="tiny">bank conflict and write-port conflict source</text>
+  <text x="2100" y="812" class="tiny">same-bank or write-port conflict source</text>
 
   <rect x="2070" y="955" width="410" height="135" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.7" rx="6"/>
   <text x="2275" y="981" text-anchor="middle" class="compTitle" fill="#1B5E20">COHERENCE / LOWER CACHE</text>
@@ -219,21 +219,23 @@
   <text x="1350" y="388" text-anchor="middle" class="compTitle" fill="#BF360C">dispatch -> C0 register: mem_uop, lq_idx/sq_idx, src tags, rob_idx, branch mask</text>
 
   <rect x="635" y="430" width="1430" height="225" class="stageBox"/>
-  <text x="665" y="463" class="stageTitle" fill="#263238">C0: memory issue, register read, and bypass</text>
-  <text x="665" y="485" class="small">Loads and store-address uops need base register. Store-data uops may arrive independently.</text>
+  <text x="665" y="463" class="stageTitle" fill="#263238">C0: 2-path memory issue, register read, and bypass</text>
+  <text x="665" y="485" class="small">Two load/store-address lanes can issue per cycle; store-data issue/capture is a separate operand path.</text>
 
-  <rect x="700" y="520" width="270" height="88" fill="#FFF8E1" stroke="#F9A825" stroke-width="1.5" rx="5"/>
-  <text x="835" y="548" text-anchor="middle" class="compTitle" fill="#F57F17">memory IQ / select</text>
-  <text x="835" y="573" text-anchor="middle" class="tiny">ready loads, store addr</text>
-  <text x="835" y="591" text-anchor="middle" class="tiny">store data issue if ready</text>
+  <rect x="680" y="510" width="315" height="108" fill="#FFF8E1" stroke="#F9A825" stroke-width="1.5" rx="5"/>
+  <line x1="680" y1="564" x2="995" y2="564" stroke="#F9A825" stroke-width="0.9"/>
+  <text x="837" y="538" text-anchor="middle" class="compTitle" fill="#F57F17">2-lane memory IQ / select</text>
+  <text x="837" y="555" text-anchor="middle" class="tiny">oldest-ready arbitration</text>
+  <text x="700" y="586" class="tiny">lane0: load or store-address</text>
+  <text x="700" y="604" class="tiny">lane1: load or store-address</text>
 
   <use href="#sram" x="1045" y="510"/>
   <text x="1134" y="548" text-anchor="middle" class="compTitle" fill="#4527A0">PRF read</text>
-  <text x="1134" y="573" text-anchor="middle" class="tiny">base / store data</text>
+  <text x="1134" y="573" text-anchor="middle" class="tiny">base0/base1 + store data</text>
   <text x="1134" y="591" text-anchor="middle" class="tiny">read-port pressure</text>
 
   <use href="#mux" x="1325" y="505"/>
-  <text x="1371" y="625" text-anchor="middle" class="tiny">bypass MUX</text>
+  <text x="1371" y="625" text-anchor="middle" class="tiny">2x bypass MUX</text>
   <text x="1310" y="485" class="tiny">WB/forwarding bus</text>
 
   <rect x="1535" y="510" width="270" height="96" fill="#E8F5E9" stroke="#2E7D32" stroke-width="1.5" rx="5"/>
@@ -242,26 +244,28 @@
   <text x="1670" y="581" text-anchor="middle" class="tiny">may be before/after store addr</text>
   <text x="1670" y="599" text-anchor="middle" class="tiny">actual bytes, not just pointer</text>
 
-  <path d="M 970 562 L 1045 560" class="pipe"/>
+  <path d="M 995 562 L 1045 560" class="pipe"/>
   <path d="M 1223 560 L 1325 556" class="pipe"/>
   <path d="M 1417 558 L 1535 558" class="st"/>
   <path d="M 1670 606 C 1460 675 630 575 500 555" class="st"/>
 
   <use href="#pipeReg" x="890" y="675"/>
-  <text x="1350" y="703" text-anchor="middle" class="compTitle" fill="#BF360C">C0 -> C1 register: base/data operands, lq/sq index, op size, sign/zero extend, memory ordering metadata</text>
+  <text x="1350" y="703" text-anchor="middle" class="compTitle" fill="#BF360C">C0 -> C1 register: 2 lane base operands, lq/sq indexes, op size, sign/zero extend, ordering metadata</text>
 
   <rect x="635" y="745" width="1430" height="245" class="stageBox"/>
-  <text x="665" y="778" class="stageTitle" fill="#263238">C1: AGU, DTLB, and L1D index/bank generation</text>
-  <text x="665" y="800" class="small">Generate virtual address, translate to physical address, and carry precise fault information with the uop.</text>
+  <text x="665" y="778" class="stageTitle" fill="#263238">C1: 2x AGU, 2R DTLB, and parallel L1D index/tag/data start</text>
+  <text x="665" y="800" class="small">VIPT-style timing: VA page-offset indexes L1D tag/data while DTLB translates VPN to PPN in parallel.</text>
 
-  <use href="#adder" x="735" y="850"/>
-  <text x="765" y="925" text-anchor="middle" class="tiny">base + imm</text>
-  <text x="700" y="840" class="tiny">base</text>
-  <text x="810" y="840" class="tiny">offset</text>
+  <use href="#adder" x="715" y="835"/>
+  <use href="#adder" x="805" y="835"/>
+  <text x="745" y="915" text-anchor="middle" class="tiny">AGU0</text>
+  <text x="835" y="915" text-anchor="middle" class="tiny">AGU1</text>
+  <text x="695" y="825" class="tiny">base0/1</text>
+  <text x="842" y="825" class="tiny">offset</text>
 
   <use href="#sram" x="960" y="820"/>
-  <text x="1049" y="858" text-anchor="middle" class="compTitle" fill="#4527A0">DTLB</text>
-  <text x="1049" y="881" text-anchor="middle" class="tiny">VA -> PA</text>
+  <text x="1049" y="858" text-anchor="middle" class="compTitle" fill="#4527A0">2R DTLB</text>
+  <text x="1049" y="881" text-anchor="middle" class="tiny">VPN -> PPN, two lanes</text>
   <text x="1049" y="898" text-anchor="middle" class="tiny">permission / page fault</text>
 
   <rect x="1225" y="820" width="260" height="100" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
@@ -270,28 +274,31 @@
   <text x="1355" y="891" text-anchor="middle" class="tiny">reported precisely at commit</text>
 
   <rect x="1605" y="815" width="310" height="112" class="loadBox"/>
-  <text x="1760" y="843" text-anchor="middle" class="compTitle" fill="#0D47A1">physical address bundle</text>
-  <text x="1760" y="868" text-anchor="middle" class="tiny">paddr, line offset, bank index</text>
+  <text x="1760" y="843" text-anchor="middle" class="compTitle" fill="#0D47A1">2 physical address bundles</text>
+  <text x="1760" y="868" text-anchor="middle" class="tiny">paddr0/1, line offset, bank index</text>
   <text x="1760" y="886" text-anchor="middle" class="tiny">byte mask, size, signedness</text>
   <text x="1760" y="904" text-anchor="middle" class="tiny">lq/sq index and age</text>
 
-  <path d="M 793 880 L 960 870" class="pipe"/>
+  <rect x="1345" y="930" width="330" height="42" fill="#E0F7FA" stroke="#006064" stroke-width="1.3" rx="5"/>
+  <text x="1510" y="956" text-anchor="middle" class="tiny" fill="#006064">VA page-offset also indexes L1D tag/data arrays this cycle</text>
+
+  <path d="M 883 865 L 960 870" class="pipe"/>
   <path d="M 1138 870 L 1225 870" class="pipe"/>
   <path d="M 1485 870 L 1605 871" class="pipe"/>
   <path d="M 1760 927 C 1570 1025 730 1020 500 488" class="update"/>
   <text x="840" y="1005" class="tiny" fill="#E65100">load/store address valid update</text>
 
   <use href="#pipeReg" x="890" y="1010"/>
-  <text x="1350" y="1038" text-anchor="middle" class="compTitle" fill="#BF360C">C1 -> C2 register: physical address, bank, byte mask, fault bits, LQ/SQ age metadata</text>
+  <text x="1350" y="1038" text-anchor="middle" class="compTitle" fill="#BF360C">C1 -> C2 register: lane0/1 physical address, bank, byte mask, fault bits, LQ/SQ age metadata</text>
 
   <rect x="635" y="1080" width="1430" height="285" class="stageBox"/>
-  <text x="665" y="1113" class="stageTitle" fill="#263238">C2: SQ ordering/forwarding check in parallel with L1D tag/data</text>
-  <text x="665" y="1135" class="small">The hardest LSU timing path is often address compare, age filtering, data select, and replay decision.</text>
+  <text x="665" y="1113" class="stageTitle" fill="#263238">C2: 2-lane SQ forwarding, tag compare, hit/way select, and bank arbitration</text>
+  <text x="665" y="1135" class="small">Optimized forwarding filters by age, partial address, byte mask, and then selects the youngest older matching store.</text>
 
   <use href="#cam" x="705" y="1192"/>
-  <text x="787" y="1230" text-anchor="middle" class="compTitle" fill="#880E4F">SQ CAM</text>
+  <text x="787" y="1230" text-anchor="middle" class="compTitle" fill="#880E4F">2x SQ CAM</text>
   <text x="787" y="1254" text-anchor="middle" class="tiny">older stores only</text>
-  <text x="787" y="1271" text-anchor="middle" class="tiny">addr + byte mask</text>
+  <text x="787" y="1271" text-anchor="middle" class="tiny">partial addr + byte mask</text>
 
   <rect x="955" y="1165" width="260" height="135" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
   <text x="1085" y="1193" text-anchor="middle" class="compTitle" fill="#B71C1C">unknown older store?</text>
@@ -301,14 +308,14 @@
   <text x="1085" y="1273" text-anchor="middle" class="tiny">store sets guide future loads</text>
 
   <rect x="1300" y="1165" width="290" height="135" class="storeBox"/>
-  <text x="1445" y="1193" text-anchor="middle" class="compTitle" fill="#1B5E20">forward candidate</text>
-  <text x="1445" y="1219" text-anchor="middle" class="tiny">full overlap: bypass cache data</text>
-  <text x="1445" y="1237" text-anchor="middle" class="tiny">partial overlap: merge bytes</text>
-  <text x="1445" y="1255" text-anchor="middle" class="tiny">data not ready: replay load</text>
-  <text x="1445" y="1273" text-anchor="middle" class="tiny">multiple matches: pick youngest older</text>
+  <text x="1445" y="1193" text-anchor="middle" class="compTitle" fill="#1B5E20">forward priority/select</text>
+  <text x="1445" y="1219" text-anchor="middle" class="tiny">youngest older matching store</text>
+  <text x="1445" y="1237" text-anchor="middle" class="tiny">full overlap: bypass D$ data</text>
+  <text x="1445" y="1255" text-anchor="middle" class="tiny">partial overlap: merge bytes</text>
+  <text x="1445" y="1273" text-anchor="middle" class="tiny">data not ready: replay load</text>
 
   <use href="#muxWide" x="1710" y="1158"/>
-  <text x="1773" y="1324" text-anchor="middle" class="tiny">data/replay MUX</text>
+  <text x="1773" y="1324" text-anchor="middle" class="tiny">2-lane merge/replay MUX</text>
   <text x="1690" y="1146" class="tiny">SQ data</text>
   <text x="1690" y="1305" class="tiny">D$ data later</text>
 
@@ -323,16 +330,18 @@
   <text x="540" y="1240" class="tiny" fill="#E65100">store addr resolves -> search LQ</text>
 
   <use href="#pipeReg" x="890" y="1385"/>
-  <text x="1350" y="1413" text-anchor="middle" class="compTitle" fill="#BF360C">C2 -> C3 register: forwarding decision, replay cause, paddr/bank, store-hit mask, selected store bytes</text>
+  <text x="1350" y="1413" text-anchor="middle" class="compTitle" fill="#BF360C">C2 -> C3 register: lane0/1 forwarding decision, replay cause, bank, store-hit mask, selected store bytes</text>
 
   <rect x="635" y="1455" width="1430" height="300" class="stageBox"/>
-  <text x="665" y="1488" class="stageTitle" fill="#263238">C2/C3: L1D banked access, MSHR, and miss handling</text>
-  <text x="665" y="1510" class="small">Loads access tag/data; committed stores and refills arbitrate for write/update resources.</text>
+  <text x="665" y="1488" class="stageTitle" fill="#263238">C2/C3: banked L1D data return, MSHR, and structural replay</text>
+  <text x="665" y="1510" class="small">Two load lanes arbitrate for banks; committed stores and refills share write/update resources.</text>
 
-  <rect x="700" y="1570" width="210" height="98" fill="#E0F7FA" stroke="#006064" stroke-width="1.5" rx="5"/>
-  <text x="805" y="1598" text-anchor="middle" class="compTitle" fill="#006064">bank select</text>
-  <text x="805" y="1623" text-anchor="middle" class="tiny">paddr bits / hash</text>
-  <text x="805" y="1641" text-anchor="middle" class="tiny">bank conflict detect</text>
+  <rect x="700" y="1560" width="230" height="118" fill="#E0F7FA" stroke="#006064" stroke-width="1.5" rx="5"/>
+  <line x1="700" y1="1595" x2="930" y2="1595" stroke="#006064" stroke-width="0.8"/>
+  <text x="815" y="1584" text-anchor="middle" class="compTitle" fill="#006064">request arbiter</text>
+  <text x="723" y="1620" class="tiny">lane0 bank req</text>
+  <text x="723" y="1640" class="tiny">lane1 bank req</text>
+  <text x="723" y="1660" class="tiny">same bank -> replay one lane</text>
 
   <use href="#bankedCache" x="1005" y="1535"/>
 
@@ -344,9 +353,9 @@
   <rect x="1770" y="1570" width="220" height="98" fill="#FFEBEE" stroke="#C62828" stroke-width="1.5" rx="5"/>
   <text x="1880" y="1598" text-anchor="middle" class="compTitle" fill="#B71C1C">miss/replay cause</text>
   <text x="1880" y="1623" text-anchor="middle" class="tiny">cache miss / TLB miss</text>
-  <text x="1880" y="1641" text-anchor="middle" class="tiny">MSHR full / bank conflict</text>
+  <text x="1880" y="1641" text-anchor="middle" class="tiny">MSHR full / bank or port conflict</text>
 
-  <path d="M 910 1619 L 1005 1616" class="ld"/>
+  <path d="M 930 1619 L 1005 1616" class="ld"/>
   <path d="M 1405 1616 L 1505 1617" class="ld"/>
   <path d="M 1670 1617 L 1770 1619" class="pipe"/>
   <path d="M 1587 1664 C 1815 1785 2140 565 2125 505" class="wake"/>
@@ -355,20 +364,20 @@
   <path d="M 2275 600 C 2220 950 2015 1350 1405 1616" class="wake"/>
 
   <use href="#pipeReg" x="890" y="1775"/>
-  <text x="1350" y="1803" text-anchor="middle" class="compTitle" fill="#BF360C">C3 -> C4 register: cache data, hit/miss, refill/forward bytes, replay status, exception bits</text>
+  <text x="1350" y="1803" text-anchor="middle" class="compTitle" fill="#BF360C">C3 -> C4 register: lane0/1 cache data, hit/miss, refill/forward bytes, replay status, exception bits</text>
 
   <rect x="635" y="1845" width="1430" height="240" class="stageBox"/>
   <text x="665" y="1878" class="stageTitle" fill="#263238">C3/C4: load data merge, bypass/wakeup, and commit/store drain</text>
   <text x="665" y="1900" class="small">Load result becomes architectural only when the ROB later commits; store visibility waits for commit.</text>
 
   <rect x="700" y="1940" width="295" height="100" class="loadBox"/>
-  <text x="848" y="1968" text-anchor="middle" class="compTitle" fill="#0D47A1">load-data merge</text>
+  <text x="848" y="1968" text-anchor="middle" class="compTitle" fill="#0D47A1">2x load-data merge</text>
   <text x="848" y="1993" text-anchor="middle" class="tiny">merged = SQ bytes | D$ bytes</text>
   <text x="848" y="2011" text-anchor="middle" class="tiny">byte mask, align, sign/zero extend</text>
 
   <rect x="1085" y="1940" width="250" height="100" fill="#F3E5F5" stroke="#6A1B9A" stroke-width="1.5" rx="5"/>
   <text x="1210" y="1968" text-anchor="middle" class="compTitle" fill="#4A148C">writeback arbiter</text>
-  <text x="1210" y="1993" text-anchor="middle" class="tiny">PRF write port conflict</text>
+  <text x="1210" y="1993" text-anchor="middle" class="tiny">2 load results vs PRF ports</text>
   <text x="1210" y="2011" text-anchor="middle" class="tiny">completion to ROB/LQ</text>
 
   <rect x="1415" y="1940" width="250" height="100" fill="#FCE4EC" stroke="#AD1457" stroke-width="1.5" rx="5"/>

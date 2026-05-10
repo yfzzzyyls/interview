@@ -36,7 +36,7 @@ Highest-priority map:
 | Decoupled frontend, FTQ, fetch bubbles | Public work points toward instruction fetch and branch/fetch-bundle behavior | [Part 2 — Decoupled Frontend Specification](#part-2--decoupled-frontend-specification), [Frontend Extra Topics to Review](#frontend-extra-topics-to-review) |
 | Branch prediction and predictor metadata | Fetch patents mention branch history and fetch groups; frontend work often tests direction/target/update/recovery reasoning | [Part 2 — Decoupled Frontend Specification](#part-2--decoupled-frontend-specification), [Branch Predictor Summary and Modeling Checklist](#8-branch-predictor-summary-and-modeling-checklist), [TAGE Predictor Review](#tage-predictor-review) |
 | Fetch beyond predicted-taken branch | Direct public patent theme; likely discussion around using fetch-bundle slots after a predicted-taken branch | Ajay-only notes below, plus [Decode Bandwidth and Frontend Bubbles](#decode-bandwidth-and-frontend-bubbles) |
-| Instruction TLB and ITLB prefetch | Public patent listing includes instruction TLB prefetching from retired-page history | [Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#7-tlb-and-virtual-memory-corner-cases) |
+| Instruction TLB and ITLB prefetch | Public patent listing includes instruction TLB prefetching from retired-page history | [Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#8-tlb-and-virtual-memory-corner-cases) |
 | Trace cache / trace processor | His older project explicitly mentions trace processor, trace cache, trace predictor, and checkpoint recovery | Ajay-only notes below, plus [Uop Cache / Decoded Instruction Cache](#uop-cache--decoded-instruction-cache) |
 | Memory dependence prediction and speculative load forwarding | His older project mentions Alpha 21264-inspired MDP and speculative load forwarding | [Memory Dependence Prediction](#141-memory-dependence-prediction), [OoO Load/Store Consistency](#142-ooo-loadstore-consistency), [Store Queue / Store Buffer Discussion](#121-store-queue--store-buffer-discussion) |
 | Cache and memory hierarchy modeling | His older project includes C++ cache hierarchy simulation and validation | [Part 6 — Cache, Coherence, and Memory System](#part-6--cache-coherence-and-memory-system), [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs) |
@@ -214,7 +214,7 @@ Highest-priority map:
 | Pointer / indirect prefetching | Public patent signal is strongest around pointer and indirect-memory prefetchers | [Part 11 — Prefetcher Microarchitecture](#part-11--prefetcher-microarchitecture), Sabine-only notes below |
 | Prefetch accuracy, coverage, timeliness, pollution | Pointer prefetchers can easily become late, wrong, or bandwidth-destructive | [Part 11 — Prefetcher Microarchitecture](#part-11--prefetcher-microarchitecture), [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks) |
 | MSHR pressure and non-stalling prefetch pipeline | Public patent signal includes non-stalling prefetch pipeline optimization | [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs), [Port Conflicts and Banking](#8-port-conflicts-and-banking), Sabine-only notes below |
-| TLB/page-crossing correctness for prefetch | Pointer/indirect prefetch often uses virtual addresses and can cross pages or contexts | [Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#7-tlb-and-virtual-memory-corner-cases) |
+| TLB/page-crossing correctness for prefetch | Pointer/indirect prefetch often uses virtual addresses and can cross pages or contexts | [Part 5 — TLB, MMU, and Page Table Walker](#part-5--tlb-mmu-and-page-table-walker), [TLB and Virtual Memory Corner Cases](#8-tlb-and-virtual-memory-corner-cases) |
 | Cache pollution and replacement side effects | Indirect prefetch can bring low-usefulness lines and evict useful demand lines | [Cache and Memory-System Corner Cases](#12-cache-and-memory-system-corner-cases), [Replacement Policy and MSHRs](#9-replacement-policy-and-mshrs) |
 | Performance model validation | She may ask how to prove a prefetcher helps and does not damage demand traffic | [Validation and Calibration](#22-validation-and-calibration), [Architecture Performance Evaluation Hooks](#21-architecture-performance-evaluation-hooks) |
 
@@ -582,9 +582,19 @@ Interview one-liner:
 
 #### Memory Consistency
 
-Memory consistency defines what order memory operations appear to happen in across multiple cores/threads. It is different from cache coherence:
-- **Coherence**: all cores agree on ordering of writes to the same address.
-- **Consistency**: rules for ordering memory operations across different addresses.
+Memory consistency defines the architecturally visible ordering and values of loads/stores across multiple cores or hardware threads.
+
+Use the terminology from `PrimerOnConsistency&Coherence.pdf`:
+- Program order `<p>`: the order of memory operations in one core/thread.
+- Global memory order `<m>`: one logical order containing memory operations from all cores.
+- A consistency model defines which program-order edges must be preserved in global memory order, and which store a load is allowed to read.
+
+Sequential consistency (SC):
+```text
+1. There is one global memory order.
+2. That order respects every core's program order.
+3. Every load reads the latest store to the same address before it in global memory order.
+```
 
 Why ordering matters:
 ```c
@@ -597,7 +607,13 @@ while (ready == 0) {}
 print(data);
 ```
 
-Programmer expects that seeing `ready == 1` means `data == 42` is visible. On a weak memory model, `ready` may become visible before `data` unless software uses fences or acquire/release synchronization.
+Programmer expects that seeing `ready == 1` means `data == 42` is visible. SC and TSO preserve enough ordering for this simple message-passing pattern. On a weak memory model such as RISC-V RVWMO, software should use fences or acquire/release synchronization.
+
+Important distinction for interviews:
+```text
+memory consistency = architectural ordering/value rules
+cache coherence    = mechanism/protocol for cached copies of a line
+```
 
 ##### TSO vs RVWMO
 
@@ -632,6 +648,31 @@ y = 1;
 r2 = x;
 ```
 
+Under SC, these outcomes are possible:
+```text
+(r1,r2) = (0,1), (1,0), (1,1)
+```
+
+Under SC, this outcome is impossible:
+```text
+(r1,r2) = (0,0)
+```
+
+Reason:
+```text
+r1 = 0 means L1 <m S2
+r2 = 0 means L2 <m S1
+
+program order requires:
+S1 <m L1
+S2 <m L2
+
+combine:
+S1 <m L1 <m S2 <m L2 <m S1
+```
+
+That is a cycle, so no valid SC global order exists.
+
 Under TSO, this result is allowed:
 ```text
 r1 = 0
@@ -650,7 +691,7 @@ RVWMO is weaker than TSO. It gives hardware more freedom to reorder independent 
 - same-address ordering rules
 
 Interview one-liner:
-> TSO mostly preserves program order except that a younger load may bypass an older store to a different address through the store buffer. RVWMO is weaker and allows more reorderings unless constrained by fences, acquire/release, atomics, dependencies, or same-address rules.
+> TSO mostly preserves program order except that a younger load may bypass an older store to a different address through the store buffer. RVWMO is weaker and allows more reorderings unless constrained by fences, acquire/release, atomics, dependencies, I/O rules, or overlapping-address rules.
 
 ---
 
@@ -8262,28 +8303,37 @@ RTL must not be written until this spec is frozen.
 
 #### Modern LSU Baseline Pipeline
 
-This is the clean interview baseline for a modern out-of-order LSU. It shows
-the main lifetime of a memory uop: dispatch allocation, memory issue, AGU/DTLB,
-store-to-load forwarding and ordering checks, L1D/MSHR handling, load replay,
-writeback/wakeup, and committed-store drain.
+This is the clean interview baseline for a modern 2-path out-of-order LSU, close
+to the style of the 2-issue LSU used in our RISC-V work. It shows the main
+lifetime of a memory uop: dispatch allocation, 2-lane memory issue, AGU/DTLB,
+store-to-load forwarding and ordering checks, L1D banking/MSHR handling, load
+replay, writeback/wakeup, and committed-store drain.
 
 The important interview point is that LQ/SQ, store buffer, replay queue, MSHRs,
 and dependence predictor are storage structures attached to the pipeline. They
 are not themselves pipeline stages.
 
 The load-to-use timing in the diagram should be read from **C0 issue**, not from
-rename/dispatch. A high-performance Oryon-like L1D hit path is roughly:
+rename/dispatch. A high-performance L1D hit path is roughly:
 
 ```text
 C0: load issues, base register read / bypass
-C1: AGU computes address, DTLB and L1D index/bank selection start
-C2: L1D tag/data access and SQ ordering/forwarding checks run in parallel
-C3: hit data is aligned/merged, bypass and wakeup are produced
+C1: AGU computes VA; DTLB translation and L1D tag/data array access start in parallel
+C2: physical tag is compared; hit/way, SQ forwarding, and bank conflict decisions resolve
+C3: selected data is byte-sliced, merged with store-forward bytes if needed, and wakeup/bypass is produced
 C4: dependent consumer can issue/use the value
 ```
 
 So the complete memory-uop lifetime may span more boxes, but common L1D
-load-to-use is still about 3-4 cycles on Apple/Oryon-class cores.
+load-to-use is still about 3-4 cycles on Apple/Oryon-class cores. The extra
+boxes are for allocation, replay, miss handling, writeback arbitration, and
+commit/store visibility, not necessarily extra cycles on the fast load-use path.
+
+For the 2-path LSU, the important structural hazards are:
+- both lanes request the same L1D bank in the same cycle;
+- a load conflicts with a committed store/refill write port;
+- both load results compete for PRF writeback/wakeup bandwidth;
+- both lanes need SQ CAM/forwarding bandwidth in the same cycle.
 
 ![Modern LSU baseline pipeline](diagrams/lsu_modern_baseline_pipeline.svg)
 
@@ -9404,6 +9454,48 @@ Before enabling Step 9 as the default path, confirm the TSMC16 tag macro wrapper
 
 RSD note: the inspected RSD tree does not appear to implement a real TLB, MMU, `satp`, or page-table walker. The cache paths use physical-address-style indexing/tagging and the verification environment uses a pretranslated memory map. Treat this section as external architecture review unless we later find a different RSD branch with MMU support.
 
+### 0. Interview Mental Model
+
+The TLB is a cache of **translations**, not a cache of the 4 KB data page.
+
+For a 4 KB page:
+
+```text
+VA[38:12] = virtual page number
+VA[11:0]  = page offset
+
+TLB entry:
+  VPN -> PPN
+  permissions
+  page size
+  ASID/VMID
+  memory attributes
+```
+
+A hit means:
+
+```text
+VA 0x0000_1234_5678
+VPN    = 0x12345
+offset = 0x678
+
+TLB says:
+VPN 0x12345 -> PPN 0xabcd0
+
+PA = 0xabcd0_678
+```
+
+So one 4 KB TLB entry covers all addresses in that virtual page, but the
+instruction/data bytes are still fetched by I-cache/D-cache in cache-line
+granularity, commonly 64B.
+
+Interview framing:
+
+```text
+The TLB answers "where does this page map?".
+The cache answers "do I have the actual bytes for this physical line?".
+```
+
 ### 1. Translation Pipeline
 
 Common high-performance path:
@@ -9414,6 +9506,28 @@ Common high-performance path:
 - On L1 TLB miss, the request probes L2 TLB / shared TLB.
 - On L2 TLB hit, refill L1 TLB.
 - On L2 TLB miss, page table walker reads PTEs from memory and then fills L2 TLB, usually followed by L1 refill.
+
+Classic L1D hit timing:
+
+```text
+C0: load issues; base register is read or bypassed
+C1: AGU computes VA
+    DTLB translates VPN -> PPN
+    L1D tag/data arrays start from VA page-offset index
+C2: physical tag compare determines hit/way
+    store-queue forwarding and bank-conflict checks resolve
+C3: selected data is byte-sliced/aligned and merged with store-forward bytes
+    wakeup/bypass is produced
+C4: dependent consumer can issue/use the value
+```
+
+The key trick is that for a 4 KB page:
+
+```text
+VA[11:0] == PA[11:0]
+```
+
+Therefore the cache can use page-offset bits before translation finishes.
 
 ### 2. L1 and L2 TLB Organization
 
@@ -9430,6 +9544,92 @@ Important policy questions:
 - Does the PTW fill L2 first and then L1, or fill both directly?
 - How are stale entries invalidated on `SFENCE.VMA` or context switch?
 
+Fully associative vs set associative:
+
+```text
+Small/simple TLB:
+  8-32 entries
+  often fully associative
+  compare VPN against every entry in parallel
+
+Large high-performance TLB:
+  128-256+ entries
+  often set associative
+  index selects one set, then compare only the ways in that set
+```
+
+Example:
+
+```text
+224-entry, 7-way L1 DTLB
+
+total entries = 224
+ways          = 7
+sets          = 224 / 7 = 32
+```
+
+This is not `224 * 7`; it is `32 sets * 7 ways`.
+
+Lookup:
+
+```text
+set_index = hash_or_bits(VPN)  // conceptually VPN[4:0] for 32 sets
+read 7 ways in that set
+compare VPN+ASID tags against those 7 entries
+```
+
+Why this helps timing:
+
+```text
+fully associative 224-entry TLB:
+  224 VPN comparators + large match/select network
+
+32-set 7-way TLB:
+  set decoder + 7 VPN comparators
+```
+
+Conflict miss example:
+
+```text
+32 sets, 7 ways
+
+8 hot VPNs all map to set 5:
+  VPN 0x005, 0x025, 0x045, 0x065,
+  VPN 0x085, 0x0a5, 0x0c5, 0x0e5
+
+working set = 8 pages
+total TLB capacity = 224 entries
+but set 5 holds only 7 entries
+```
+
+So a 7-way set-associative TLB can miss even when total capacity is much larger
+than the working set. That is a conflict miss.
+
+TLB inclusion policy is implementation-dependent:
+
+```text
+common/simple model:
+  L1 miss -> L2 TLB lookup
+  L2 hit fills L1
+  PTW fills L2 and L1
+
+possible real designs:
+  inclusive L2 TLB
+  non-inclusive L2 TLB
+  exclusive/victim-style behavior
+  shared L2 TLB with separate ITLB/DTLB fill policy
+```
+
+Apple M1 reverse-engineering provides a useful cautionary example: PACMAN
+reported behavior consistent with the L1 dTLB acting as a non-inclusive backing
+store for evicted L1 iTLB entries. That is not a universal rule, but it shows
+that real TLB hierarchies are not always textbook-inclusive structures.
+
+Interview-safe answer:
+
+> I would model L1 miss -> L2 TLB -> PTW as the baseline, but I would not assume
+> strict inclusion unless RTL or measurement confirms it.
+
 ### 3. RISC-V Page Sizes
 
 Sv32:
@@ -9442,6 +9642,45 @@ Sv39:
 - 4 KB base pages.
 - 2 MB megapages.
 - 1 GB gigapages.
+
+Sv39 virtual address layout:
+
+```text
+VA[38:30] = VPN[2]    9 bits
+VA[29:21] = VPN[1]    9 bits
+VA[20:12] = VPN[0]    9 bits
+VA[11:0]  = page offset
+```
+
+Each page table has 512 entries:
+
+```text
+512 entries = 2^9
+each PTE    = 8 bytes
+table size  = 512 * 8 = 4096 bytes
+```
+
+SV39 4 KB page walk:
+
+```text
+level 2:
+  pte_addr = satp.ppn * 4096 + VPN[2] * 8
+  read PTE2
+
+level 1:
+  pte_addr = PTE2.ppn * 4096 + VPN[1] * 8
+  read PTE1
+
+level 0:
+  pte_addr = PTE1.ppn * 4096 + VPN[0] * 8
+  read PTE0
+
+leaf:
+  PA = {PTE0.ppn, VA[11:0]}
+```
+
+These are dependent memory reads: the level-1 address is not known until PTE2
+returns, and the level-0 address is not known until PTE1 returns.
 
 Sv48:
 - 4-level page table.
@@ -9472,6 +9711,24 @@ Why 4 KB pages remain important:
   map to two unrelated physical frames; a 2 MB page would waste most of the
   physical memory if the rest is unused.
 
+TLB reach:
+
+```text
+TLB reach = number_of_entries * page_size
+
+224-entry DTLB with 4 KB pages:
+  224 * 4 KB = 896 KB reach
+
+224-entry DTLB with 64 KB pages:
+  224 * 64 KB = 14 MB reach
+
+224-entry DTLB with 2 MB pages:
+  224 * 2 MB = 448 MB reach
+```
+
+This is why huge pages can dramatically reduce TLB misses, even when the cache
+working set is unchanged.
+
 ### 4. VIPT, Page Coloring, and Large L1 Caches
 
 A textbook VIPT L1 wants all set-index bits to come from the page offset so
@@ -9481,6 +9738,12 @@ Formula:
 
 ```text
 cache_size <= page_size * associativity
+```
+
+Equivalently:
+
+```text
+set index bits + cache-line offset bits <= page offset bits
 ```
 
 For 4 KB pages and 64B lines:
@@ -9495,6 +9758,10 @@ safe sets        = 64
 ```
 
 This is why 32 KB L1D is common on 4 KB-page systems.
+
+If the cache has more index bits than the page offset can provide, the cache is
+using virtual bits that may differ from the eventual physical address. That is
+where synonym/alias problems appear.
 
 Concrete synonym problem:
 
@@ -9601,6 +9868,7 @@ timing tradeoffs for the 96 KB L1D and translation/prefetch capacity.
 Source anchors for these public numbers and comparisons:
 
 - Apple Firestorm reverse-engineering notes: [Dougall Johnson, Apple M1/A14 P-core overview](https://dougallj.github.io/applecpu/firestorm.html)
+- Apple M1 reverse-engineered TLB behavior example: [PACMAN paper](https://pacmanattack.com/paper.pdf)
 - VIPT/page-size explanation for Apple Firestorm: [LWN, Cache sizes](https://lwn.net/Articles/996978/)
 - Oryon cache/TLB public summaries: [HWCooling Oryon architecture analysis](https://www.hwcooling.net/en/oryon-arm-core-in-snapdragon-x-cpus-architecture-analysis/), [Chips and Cheese Hot Chips 2024 Oryon coverage](https://chipsandcheese.com/p/hot-chips-2024-qualcomms-oryon-core), [ServeTheHome Hot Chips 2024 Oryon coverage](https://www.servethehome.com/snapdragon-x-elite-qualcomm-oryon-cpu-design-and-architecture-hot-chips-2024-arm/)
 
@@ -9686,16 +9954,233 @@ Fault cases:
 - Accessed/dirty bit handling fault if hardware does not update A/D bits.
 - Page-table memory access fault.
 
-### 6. Modeling Hooks
+The original load or fetch does not execute "through" the PTW. The normal path
+is:
+
+```text
+load issues through LSU
+AGU produces VA
+DTLB misses
+load is marked translation-wait / replay
+PTW request is allocated
+PTW performs PTE memory reads
+TLB is filled
+load wakes and retries through the LSU
+```
+
+PTW is a separate micro-engine, but its PTE reads still consume coherent memory
+hierarchy resources.
+
+Possible PTW access paths:
+
+```text
+PTW through L1D:
+  can hit on PTE cache lines in L1D
+  competes with normal load/store ports
+
+PTW to L2/lower cache:
+  avoids some L1D port pressure
+  must still remain coherent with modified PTE cache lines
+
+hybrid:
+  page-walk cache / PTE cache handles common upper-level hits
+  misses go to coherent memory hierarchy
+```
+
+If a PTW bypasses L1D, it still cannot ignore L1D correctness. PTE memory is
+ordinary coherent memory from the hardware perspective. If an exclusive cache
+hierarchy keeps a modified PTE line only in L1D, a lower-level PTW path must
+probe/snoop or otherwise obtain the coherent value after required OS ordering.
+
+#### Page Walk Cache / Intermediate Translation Cache
+
+The page-walk cache is different from an L2 TLB.
+
+```text
+L2 TLB:
+  caches final translation
+  full VPN -> final PPN
+
+page-walk cache:
+  caches intermediate page-table results
+  VPN[2]   -> level-1 table base
+  VPN[2:1] -> level-0 table base
+```
+
+Concrete SV39 example:
+
+```text
+VA A: VPN[2]=10, VPN[1]=20, VPN[0]=1
+VA B: VPN[2]=10, VPN[1]=20, VPN[0]=2
+VA C: VPN[2]=10, VPN[1]=20, VPN[0]=3
+```
+
+All three are different 4 KB pages, so they need different final TLB entries.
+But they share upper levels:
+
+```text
+VPN[2]=10       -> same level-1 table base
+VPN[2:1]=10,20  -> same level-0 table base
+```
+
+Without page-walk cache:
+
+```text
+A walk = 3 PTE reads
+B walk = 3 PTE reads
+C walk = 3 PTE reads
+total  = 9 reads
+```
+
+With intermediate caching:
+
+```text
+A walk = 3 reads
+B walk = 1 final-PTE read
+C walk = 1 final-PTE read
+total  = 5 reads
+```
+
+This reduces both latency and memory traffic when nearby pages miss in the final
+TLB.
+
+#### PTW Concurrency and Forward Progress
+
+Simple designs may have:
+
+```text
+one page walker
+one walk at a time
+```
+
+High-performance designs may support:
+
+```text
+multiple outstanding PTW requests
+or one PTW engine with multiple walk slots
+```
+
+Each walk slot is MSHR-like:
+
+```text
+valid
+source: ITLB / DTLB / load queue / fetch block
+VPN, ASID/VMID, access type
+current walk level
+intermediate PPN / next page-table base
+outstanding memory request ID
+fault state
+target TLB to fill
+replay/wakeup destination
+```
+
+Each individual walk is still mostly serial, but multiple walks can overlap.
+
+PTW must not starve behind normal loads. Bad arbitration such as:
+
+```text
+if normal_load_valid:
+  grant normal load
+else if ptw_valid:
+  grant PTW
+```
+
+can starve the PTW if normal loads keep arriving. Real designs need forward
+progress mechanisms:
+
+```text
+round-robin or age-based arbitration
+priority boost after PTW waits too long
+reserved MSHR / miss slot for PTW
+backpressure normal loads when PTW queue is near full
+separate PTW port/path to L2
+```
+
+Deadlock-like risk:
+
+```text
+DTLB misses block loads
+PTW needs an MSHR to fetch a PTE
+all MSHRs are occupied by other blocked requests
+PTW cannot allocate
+blocked loads cannot complete
+```
+
+Avoid by reserving resources or giving PTW priority when translation progress is
+needed.
+
+### 6. TLB Replacement and Page-Size Matching
+
+A TLB is a cache, so it needs replacement.
+
+Common policies:
+
+```text
+true LRU
+pseudo-LRU
+random
+round-robin
+NRU / used-bit based
+hashed replacement
+```
+
+For a small fully associative TLB, true-ish LRU is feasible. For a larger,
+high-frequency TLB, replacement metadata must be cheap enough not to disturb
+hit timing, so pseudo-LRU or random-like policies are attractive.
+
+Page-size matching:
+
+```text
+4 KB page:
+  VPN = VA >> 12
+
+2 MB page:
+  VPN = VA >> 21
+
+1 GB page:
+  VPN = VA >> 30
+```
+
+A huge-page TLB entry matches a wider address range. Real designs may use:
+
+```text
+one unified TLB with page-size field
+separate small-page and huge-page TLBs
+small fully associative CAM for superpages
+L2 TLB supporting multiple page sizes
+```
+
+Reason: huge pages have high value and different matching/alignment logic, so
+mixing them naively with 4 KB entries can complicate timing and replacement.
+
+### 7. Modeling Hooks
 
 - ITLB miss rate, DTLB miss rate, L2 TLB hit rate.
+- L1 ITLB/DTLB hit latency and port conflicts.
+- L2 TLB hit latency and miss rate.
+- PTW request count.
 - PTW latency distribution and cache hit/miss behavior of page-table reads.
 - Number of outstanding PTW walks.
 - PTW contention with normal D$ or memory traffic.
+- PTW queue full cycles.
+- PTW MSHR/cache-port blocked cycles.
+- Page-walk cache hit rate.
 - Page size mix.
+- TLB replacement evictions.
+- Translation-related load replay cycles.
+- Frontend cycles blocked on ITLB miss.
+- Wrong-path or canceled walks, if modeled.
 - TLB shootdown and `SFENCE.VMA` overhead.
 
-### 7. TLB and Virtual Memory Corner Cases
+Performance-modeling rule:
+
+```text
+TLB miss count alone is not enough.
+Need walk latency, page-walk cache locality, memory hierarchy hit level,
+PTW concurrency, and overlap with OoO execution.
+```
+
+### 8. TLB and Virtual Memory Corner Cases
 
 Synonyms and homonyms:
 - Synonym: two different virtual addresses map to the same physical address. This can create VIPT cache aliasing if both VAs can occupy different L1 sets.
@@ -9712,10 +10197,67 @@ TLB invalidation:
 - Multiprocessor systems need TLB shootdown so other cores stop using stale translations.
 - Shootdowns are expensive because they involve inter-processor coordination and serialization.
 
+ASID example:
+
+```text
+Process A, ASID=3:
+  VA 0x4000 -> PA 0x1000
+
+Process B, ASID=7:
+  VA 0x4000 -> PA 0x9000
+
+TLB tags:
+  (ASID=3, VPN=0x4) -> PPN=0x1
+  (ASID=7, VPN=0x4) -> PPN=0x9
+```
+
+Without ASID, the core would need to flush on every context switch to avoid
+homonym hits.
+
+RISC-V `SFENCE.VMA` operand intuition:
+
+```text
+sfence.vma x0, x0
+  order/invalidate all translations for all ASIDs
+
+sfence.vma va, x0
+  target one virtual address for all ASIDs
+
+sfence.vma x0, asid
+  target one ASID
+
+sfence.vma va, asid
+  target one virtual address in one ASID
+```
+
+Shootdown example:
+
+```text
+Core 0 OS changes PTE:
+  VA 0x4000 used to map PA 0x1000
+  now maps PA 0x9000
+
+Core 1 may still have stale TLB:
+  VA 0x4000 -> PA 0x1000
+
+OS sends IPI to Core 1
+Core 1 executes SFENCE.VMA for that VA/ASID
+Core 1 acknowledges
+```
+
+If the design caches intermediate PTEs, shootdown/fence handling must also make
+page-walk caches and paging-structure caches safe, not only the final L1 TLB.
+
 Page fault vs TLB miss:
 - TLB miss: translation is not cached; PTW may find a valid PTE and refill the TLB.
 - Page fault: translation or permission is invalid architecturally; OS must handle it.
 - Access fault: page-table memory access or physical memory access failed for a reason other than normal page permission.
+
+Precise exception behavior:
+- A speculative fetch/load can discover a page fault early.
+- The fault is carried as metadata with the instruction/fetch packet.
+- The trap is architecturally taken only when the faulting instruction becomes
+  the oldest instruction to commit, unless it is squashed first.
 
 Superpage corner cases:
 - Superpages improve TLB reach, but leaf PTEs at upper levels require physical-address alignment.
@@ -9734,7 +10276,7 @@ Memory attributes:
 - TLB/PTE result may carry cacheability, ordering, executable, user/supervisor, dirty/accessed, and device-memory attributes.
 - MMIO/device mappings are usually non-cacheable and strongly ordered relative to normal cacheable memory.
 
-### 8. Review Questions
+### 9. Review Questions
 
 - Why is L1 TLB often fully associative while L2 TLB is set associative?
 - What is the difference between a page fault and an access fault?
@@ -9744,6 +10286,9 @@ Memory attributes:
 - What is the difference between a synonym and a homonym?
 - Why do ASIDs reduce context-switch overhead?
 - Why are TLB shootdowns expensive?
+- Why can a set-associative TLB have conflict misses even when total capacity is enough?
+- Why does a page-walk cache help even when the final L2 TLB misses?
+- Why must a PTW have fair access to MSHRs/cache ports?
 
 ## Part 6 — Cache, Coherence, and Memory System
 
@@ -9787,39 +10332,1345 @@ Things to model:
 - Ordering rules for fences, atomics, uncached MMIO, and release/acquire operations.
 - Deadlock avoidance when write buffer competes with refill traffic.
 
+### 2.5 Memory Consistency Models
+
+Source anchor: this subsection follows the terminology in
+`PrimerOnConsistency&Coherence.pdf`, especially the chapters on sequential
+consistency, total store order, and relaxed consistency.
+
+#### 2.5.1 Consistency Model Mental Model
+
+Memory consistency answers:
+
+```text
+What order are loads/stores allowed to appear in?
+Which store is each load allowed to read?
+```
+
+Use these two order symbols:
+
+```text
+program order <p:
+  order of instructions inside one core/thread
+
+global memory order <m:
+  one logical order containing memory operations from all cores
+```
+
+Sequential consistency (SC) requires:
+
+```text
+1. One global memory order exists.
+2. The global memory order respects every core's program order.
+3. Each load reads the latest store to the same address before it in global memory order.
+```
+
+Concrete store-buffering example:
+
+```text
+Initial:
+x = 0
+y = 0
+
+Core 0:
+S1: x = 1
+L1: r1 = y
+
+Core 1:
+S2: y = 1
+L2: r2 = x
+```
+
+SC allows:
+
+```text
+(r1,r2) = (0,1), (1,0), (1,1)
+```
+
+SC forbids:
+
+```text
+(r1,r2) = (0,0)
+```
+
+Reason:
+
+```text
+r1 = 0 means L1 <m S2
+r2 = 0 means L2 <m S1
+
+program order requires:
+S1 <m L1
+S2 <m L2
+
+combine:
+S1 <m L1 <m S2 <m L2 <m S1
+```
+
+That is a cycle, so no valid SC global order exists.
+
+Important distinction:
+
+```text
+memory consistency = architectural ordering/value rules for loads/stores
+cache coherence    = mechanism/protocol for cached copies of a cache line
+```
+
+The two are related in implementation, but they are not the same question.
+
+#### 2.5.2 Serialization Point
+
+A serialization point is the logical point where a memory operation gets its
+position in the global memory order.
+
+It is not necessarily:
+
+```text
+instruction execute stage
+instruction commit stage
+DRAM write
+a literal pointer stored in hardware
+```
+
+For a store:
+
+```text
+store computes address/data
+store enters store queue/store buffer
+store later drains / obtains coherence permission / updates coherent cache state
+store reaches global visibility
+```
+
+The serialization point is around the global-visibility point, not when the
+store first executes locally.
+
+For a load, the serialization point is the point where the model can place the
+load in global memory order and assign the value it reads.
+
+Interview wording:
+
+```text
+A serialization point is where an operation becomes globally ordered, so all
+cores must observe behavior consistent with that order. It is a logical
+ordering concept, not necessarily a concrete hardware pointer.
+```
+
+#### 2.5.3 TSO: Strong Model Plus FIFO Store Buffer
+
+TSO preserves:
+
+```text
+Load  -> Load
+Load  -> Store
+Store -> Store
+```
+
+TSO relaxes:
+
+```text
+Store -> Load
+```
+
+Hardware intuition:
+
+```text
+store enters per-core FIFO store buffer
+younger load to a different address can execute before the store drains
+store drains later in FIFO order
+```
+
+The FIFO property is why TSO still preserves Store -> Store:
+
+```text
+Core 0:
+S1: data = 1
+S2: flag = 1
+
+store buffer:
+[S1: data=1] [S2: flag=1]
+
+drain order:
+S1 before S2
+```
+
+If another core observes `flag = 1`, it must be able to observe `data = 1`
+for normal cacheable memory.
+
+Same-address store-load case:
+
+```text
+Core 0:
+S1: x = 1
+L1: r1 = x
+```
+
+Even under TSO, `r1` must read `1`. The load forwards from the core's own
+older store buffer / store queue entry.
+
+Store-buffering under TSO:
+
+```text
+Initial: x = 0, y = 0
+
+Core 0:
+S1: x = 1
+L1: r1 = y
+
+Core 1:
+S2: y = 1
+L2: r2 = x
+```
+
+TSO allows:
+
+```text
+(r1,r2) = (0,0)
+```
+
+because both stores can be sitting in local store buffers while the younger
+loads read old values for different addresses.
+
+x86 framing:
+
+```text
+x86 normal cacheable memory is commonly modeled as TSO.
+TSO is strong enough for much legacy software and still allows the critical
+store-buffer optimization.
+```
+
+#### 2.5.4 RVWMO: RISC-V Weak Memory Ordering
+
+RISC-V default memory model is RVWMO.
+
+High-level comparison:
+
+```text
+Program-order edge      SC      TSO      RVWMO default
+Load  -> Load           yes     yes      not always
+Load  -> Store          yes     yes      not always
+Store -> Store          yes     yes      not always
+Store -> Load           yes     no       not always
+```
+
+RVWMO gives hardware more freedom, but not arbitrary freedom. Ordering can be
+required by:
+
+```text
+same/overlapping address rules
+load-value rules
+address/data/control dependencies
+fence
+acquire/release
+atomics / LR-SC / AMO
+I/O and device-memory ordering
+```
+
+Important correction for LSU discussions:
+
+```text
+RVWMO greatly relaxes different-address load-load ordering.
+RVWMO does not mean all same-address load-load behavior is free.
+```
+
+Same-address intuition:
+
+```text
+Core 1:
+L1: r1 = x
+L2: r2 = x
+
+Allowed intuition:
+r1 = 0, r2 = 0   OK
+r1 = 0, r2 = 1   OK
+r1 = 1, r2 = 1   OK
+r1 = 1, r2 = 0   not OK; value goes backward
+```
+
+For a RISC-V LSU, this means:
+
+```text
+different-address Load -> Load:
+  often no replay needed under RVWMO if no fence/acquire/dependency/I/O constraint
+
+same/overlapping-address Load -> Load:
+  still requires correct final behavior
+```
+
+#### 2.5.5 Release, Acquire, and Fences
+
+Release/acquire create synchronization edges.
+
+```text
+release:
+  order earlier operations before this synchronization operation
+
+acquire:
+  order later operations after this synchronization operation
+```
+
+Producer-consumer:
+
+```text
+Core 0:
+data = 42
+store_release(ready, 1)
+
+Core 1:
+while (load_acquire(ready) == 0) {}
+r = data
+```
+
+If the acquire load reads the value from the release store, then:
+
+```text
+Core 0's earlier data write happens-before Core 1's later data read.
+```
+
+Release does not mean a store cannot enter the store buffer. It means:
+
+```text
+older memory operations must become ordered before the release store is observed
+```
+
+The release store does not need to reach DRAM. It needs to reach its coherent
+visibility / serialization point.
+
+RISC-V fence format:
+
+```asm
+fence pred, succ
+```
+
+Meaning:
+
+```text
+earlier operations in pred set
+must be ordered before
+later operations in succ set
+```
+
+Normal-memory sets:
+
+```text
+r = reads / loads
+w = writes / stores
+```
+
+Examples:
+
+```asm
+fence rw, rw    # full normal-memory fence
+fence w, r      # earlier stores before later loads
+fence rw, w     # release-like fence before a store
+fence r, rw     # acquire-like fence after a load
+```
+
+RISC-V without standalone load-acquire/store-release can express them as:
+
+```asm
+# load-acquire style
+lw      t0, 0(ready_addr)
+fence   r, rw
+
+# store-release style
+fence   rw, w
+sw      one, 0(ready_addr)
+```
+
+Atomics and LR/SC can carry `.aq`, `.rl`, and `.aqrl` bits:
+
+```asm
+lr.w.aq        t0, (a0)
+sc.w.rl        t1, t2, (a0)
+amoswap.w.aq   t0, t1, (a0)
+amoswap.w.rl   x0, x0, (a0)
+amoadd.w.aqrl  t0, t1, (a0)
+```
+
+Newer standalone acquire/release load/store extensions add forms such as:
+
+```asm
+lw.aq   rd, (rs1)
+ld.aq   rd, (rs1)
+sw.rl   rs2, (rs1)
+sd.rl   rs2, (rs1)
+```
+
+Keep the concepts separate:
+
+```text
+LR/SC = atomic update mechanism
+.aq/.rl = ordering semantics attached to an instruction
+```
+
+#### 2.5.6 Litmus Tests to Remember
+
+Store buffering:
+
+```text
+Initial: x = 0, y = 0
+
+Core 0:        Core 1:
+x = 1          y = 1
+r1 = y         r2 = x
+```
+
+Outcome table:
+
+```text
+Outcome        SC        TSO       RVWMO raw loads/stores
+(0,0)          no        yes       yes
+(0,1)          yes       yes       yes
+(1,0)          yes       yes       yes
+(1,1)          yes       yes       yes
+```
+
+RISC-V fence to forbid `(0,0)`:
+
+```asm
+# Core 0
+sw      one, 0(x_addr)
+fence   w, r
+lw      r1, 0(y_addr)
+
+# Core 1
+sw      one, 0(y_addr)
+fence   w, r
+lw      r2, 0(x_addr)
+```
+
+Message passing:
+
+```text
+Initial: data = 0, ready = 0
+
+Core 0:
+data = 42
+ready = 1
+
+Core 1:
+r1 = ready
+r2 = data
+```
+
+Question:
+
+```text
+Can r1 = 1 and r2 = 0?
+```
+
+Answer:
+
+```text
+SC:    no
+TSO:   no, because Store->Store and Load->Load are preserved
+RVWMO: yes for raw loads/stores unless ordered
+```
+
+RISC-V safe version:
+
+```text
+Core 0:
+data = 42
+store_release(ready, 1)
+
+Core 1:
+if (load_acquire(ready) == 1)
+    r2 = data
+```
+
+Store-store ordering test:
+
+```text
+Core 0:
+x = 1
+y = 1
+
+Core 1:
+r1 = y
+r2 = x
+```
+
+Outcome:
+
+```text
+r1 = 1, r2 = 0
+```
+
+This is forbidden by SC and TSO, but weak models need explicit ordering if `y`
+is meant to publish `x`.
+
+#### 2.5.7 LSU and Performance-Modeling Implications
+
+Memory model affects what the LSU must stall, validate, or replay.
+
+Common LSU speculation:
+
+```text
+younger load bypasses older load
+younger load bypasses older store if predicted independent
+```
+
+Less common / more constrained:
+
+```text
+younger store becomes globally visible before older load
+younger store becomes globally visible before older store
+```
+
+Reason stores are different:
+
+```text
+stores can compute address/data early
+but usually become globally visible after retirement through SQ/store buffer
+```
+
+For TSO:
+
+```text
+FIFO store buffer
+same-address store-to-load forwarding
+Store->Load bypass allowed for different addresses
+Load->Load must be preserved architecturally
+Store->Store drain is FIFO
+```
+
+For RVWMO:
+
+```text
+different-address load-load reorder often needs no replay
+store-load speculation still needs same-address forwarding/replay
+fences/acquire/release/atomics/I/O create ordering points
+same/overlapping-address cases still require correct final behavior
+```
+
+Counters to model:
+
+```text
+store_buffer_full_stall
+store_buffer_drain_cycles
+fence_wait_cycles
+acquire_blocks_younger_mem_cycles
+release_wait_older_mem_cycles
+store_to_load_forward_hit
+store_to_load_forward_fail
+memory_order_replay
+same_address_load_replay
+atomic_serialization_cycles
+```
+
+Interview framing:
+
+```text
+The ISA memory model is not just a formal spec. In a CPU performance model, it
+turns into LSU issue freedom, store-buffer ordering, fence drain behavior,
+load-queue validation, forwarding, and replay counters.
+```
+
 ### 3. MESI and MOESI
 
-MESI states:
-- Modified: only this cache has the line, dirty.
-- Exclusive: only this cache has the line, clean.
-- Shared: multiple caches may have the line, clean.
-- Invalid: line is not valid.
+Coherence is a line-granular permission and ownership protocol.
+
+It answers:
+
+```text
+Can this core read the line?
+Can this core write the line?
+Does another cache have the dirty latest copy?
+Who must be invalidated?
+Who must supply data?
+```
+
+MESI stable states:
+
+```text
+M = Modified
+  This cache has the only valid copy, and it is dirty.
+  Memory/lower cache may be stale.
+
+E = Exclusive
+  This cache has the only valid copy, and it is clean.
+  Memory/lower cache is up to date.
+
+S = Shared
+  Multiple caches may have clean copies.
+  Memory/lower cache is up to date.
+
+I = Invalid
+  This cache does not have a valid copy.
+```
 
 MOESI adds:
-- Owned: dirty data may be shared; owner supplies data and eventually writes back.
 
-Common transitions:
-- Read miss: get line in Exclusive or Shared depending on other sharers.
-- Write to Shared: invalidate other sharers, move to Modified.
-- Read by another core while Modified: supply data, downgrade to Shared/Owned depending on protocol.
-- Evict Modified/Owned: write back or transfer ownership.
+```text
+O = Owned
+  This cache has the dirty latest copy, but other caches may also have S copies.
+  Memory/lower cache may be stale.
+  The owner is responsible for supplying data or eventually writing back.
+```
+
+#### 3.1 Why the E State Exists
+
+`E` is mainly the state for a clean private line.
+
+Example:
+
+```text
+Initial:
+Core0: I
+Core1: I
+memory[x] = 0
+
+Core0 loads x.
+No other cache has x.
+Core0 receives x in E.
+```
+
+Later:
+
+```text
+Core0 stores x = 1.
+Core0 silently transitions E -> M.
+No invalidate transaction is needed.
+```
+
+Without `E`, the line would likely be in `S` after the load. A later store
+would need an upgrade transaction even if no other cache actually had the line.
+
+Benefit:
+
+```text
+lower store latency
+less coherence traffic
+less snoop power
+less interconnect contention
+```
+
+This is valuable because many lines are private:
+
+```text
+stack data
+thread-local data
+private heap objects
+temporary arrays
+```
+
+#### 3.2 MESI Load Walkthrough
+
+For a load:
+
+```text
+M/E/S/O are readable hit states.
+I is a miss.
+```
+
+Cases:
+
+```text
+M + local load:
+  read local dirty latest data; stay M
+
+E + local load:
+  read local clean private data; stay E
+
+S + local load:
+  read local clean shared data; stay S
+
+I + local load:
+  send GetS / ReadShared
+```
+
+On an `I` miss:
+
+```text
+LLC/memory has clean latest data:
+  return data
+  requester gets E if no other sharer exists
+  requester gets S if other sharers exist
+
+another cache has M:
+  dirty owner supplies latest data
+  owner downgrades M -> S or M -> O depending protocol
+  requester gets S
+
+another cache has O:
+  owner supplies latest data
+  owner usually stays O
+  requester gets S
+```
+
+Interview sentence:
+
+```text
+For a load, M/E/S/O are readable. If the local state is I, the core sends a
+shared read. The requester gets E if it is the only cached copy, otherwise S.
+If another cache has M/O, that owner must supply the latest data.
+```
+
+#### 3.3 MESI Store Walkthrough
+
+For a store:
+
+```text
+M is writable.
+E can silently become M.
+S has data but lacks write permission.
+O has dirty latest data but may have sharers, so it is not silently writable.
+I lacks both data and permission.
+```
+
+Cases:
+
+```text
+M + local store:
+  write hit; stay M
+
+E + local store:
+  silent E -> M; write data
+
+S + local store:
+  send Upgrade / GetM
+  invalidate other sharers
+  wait for acks
+  S -> M
+  write data
+
+O + local store:
+  owner already has latest data
+  invalidate S sharers
+  wait for acks
+  O -> M
+  write data
+
+I + local store:
+  send GetM / ReadExclusive
+  get data and exclusive ownership
+  invalidate sharers or get data from dirty owner if needed
+  I -> M
+  write data
+```
+
+Important performance distinction:
+
+```text
+store to I = data miss + ownership request
+store to S = permission / upgrade miss
+store to E = silent hit
+store to M = normal hit
+store to O = ownership upgrade, data already local
+```
+
+#### 3.4 Store Queue, Store Buffer, and Coherence Visibility
+
+In an OoO core:
+
+```text
+stores may compute address/data speculatively
+but stores normally cannot become globally visible before commit
+```
+
+Reason:
+
+```text
+wrong-path stores are not recoverable once another core can observe them
+```
+
+Typical flow:
+
+```text
+1. Store address/data execute.
+2. Store waits in Store Queue while speculative.
+3. Store reaches commit/retirement.
+4. Committed store enters Store Buffer / drain path.
+5. Store obtains write permission if needed.
+6. Store updates coherent cache state.
+```
+
+The store buffer decouples:
+
+```text
+ROB commit
+from
+slow cache/coherence permission acquisition
+```
+
+But it can still create stalls:
+
+```text
+store buffer full
+fence waits for store buffer ordering/drain
+release store waits for older memory operations
+atomic/locked op needs stronger serialization
+```
+
+#### 3.5 MOESI Owned State
+
+`O` mainly optimizes dirty read sharing.
+
+Without `O`, in MESI:
+
+```text
+Core0: M, x=1
+Core1 reads x
+
+Core0 must supply x=1.
+Core0 downgrades M -> S.
+Dirty data must be made clean relative to memory/lower cache.
+```
+
+With `O`, in MOESI:
+
+```text
+Core0: M, x=1
+Core1 reads x
+
+Core0 supplies x=1.
+Core0 becomes O.
+Core1 becomes S.
+Memory/lower cache may remain stale.
+```
+
+`O` is not just another `S` copy. It means responsibility:
+
+```text
+S sharer:
+  can read
+  can drop silently
+  does not need to write back
+
+O owner:
+  has dirty latest data responsibility
+  must supply future readers or ensure data is written back
+  cannot drop silently
+  must participate in ownership transfer
+```
+
+Common `O` transitions:
+
+```text
+O + another core reads:
+  owner supplies data
+  owner stays O
+  requester gets S
+
+O + owner writes:
+  invalidate S sharers
+  wait for acks
+  O -> M
+
+O + another core requests M:
+  owner supplies or hands off latest data
+  owner invalidates O -> I
+  requester gets M
+
+O eviction:
+  write back latest data to home/lower level
+  or transfer ownership to another sharer if protocol supports it
+```
+
+On common `O` eviction:
+
+```text
+Core0: O, x=1
+Core1: S, x=1
+Core2: S, x=1
+LLC/memory: stale x=0
+
+Core0 evicts:
+  Core0 writes back x=1
+  Core0 -> I
+  Core1 and Core2 may remain S
+  LLC/memory now has clean latest x=1
+```
+
+#### 3.6 Eviction and Writeback Rules
+
+Eviction action depends on state:
+
+```text
+I:
+  no valid line, nothing to do
+
+S:
+  clean shared copy, can drop
+  directory/snoop filter metadata may need update
+
+E:
+  clean private copy, can drop
+  directory/snoop filter metadata may need update
+
+M:
+  dirty private copy, must write back or transfer latest data
+
+O:
+  dirty shared owner, must write back or transfer ownership
+```
+
+Rule:
+
+```text
+Dirty data cannot be lost.
+When dirty ownership is downgraded, invalidated, or evicted, the cache must
+supply, write back, or transfer the latest data.
+```
+
+Clean eviction metadata tradeoff:
+
+```text
+exact directory:
+  clean eviction clears sharer bit, more update traffic
+
+conservative snoop filter:
+  may keep stale positive bit, fewer updates but extra future snoops
+```
+
+Safety rule:
+
+```text
+false positive sharer = safe, extra snoop
+false negative sharer = unsafe, missed invalidation
+```
+
+#### 3.7 Line Granularity and False Sharing
+
+Coherence state is per cache line, not per byte or word.
+
+```text
+64B line:
+  byte 0..63 share one MESI/MOESI state
+```
+
+A store to one byte still needs write ownership of the whole line:
+
+```text
+store byte at X+3
+requires M permission for line X[63:0]
+invalidates other copies of the full line
+```
+
+False sharing:
+
+```text
+Core0 writes field a
+Core1 writes field b
+a and b are different variables but share the same cache line
+```
+
+Hardware sees:
+
+```text
+same cache line
+writers conflict
+M ownership ping-pongs
+```
+
+Software fix:
+
+```text
+padding
+alignment
+per-thread/per-core data
+local accumulation then reduction
+separate mutable fields from read-mostly fields
+```
+
+Important C++ layout point:
+
+```cpp
+struct alignas(64) Counter {
+    std::atomic<int> value;
+    char pad[64 - sizeof(std::atomic<int>)];
+};
+```
+
+Alignment places the object at a line boundary. Padding/size ensures adjacent
+objects in an array do not share the same line.
+
+#### 3.8 Coherence Miss Types
+
+Do not classify all misses as generic cache misses.
+
+Useful categories:
+
+```text
+read miss, clean data from LLC
+read miss, dirty data from another cache
+store miss, fetch line + get ownership
+store upgrade miss, line present but only S permission
+invalidation-induced miss, line was invalidated by another core
+dirty intervention / HITM, another cache has M/O
+ownership ping-pong
+```
+
+Example upgrade miss:
+
+```text
+Core0 has X in S.
+Core0 stores X.
+Data is present, but write permission is missing.
+Core0 must request M and invalidate sharers.
+```
+
+Example invalidation miss:
+
+```text
+Core0 had X in S.
+Core1 writes X and invalidates Core0.
+Core0 later loads X and misses.
+```
+
+This miss was caused by coherence, not capacity or replacement.
+
+#### 3.9 Snoop/Probe Interaction With OoO Loads
+
+A coherence probe can arrive while a core has in-flight memory operations.
+
+Completed speculative loads may be tracked in the Load Queue:
+
+```text
+valid
+physical address / line address
+byte mask
+age / ROB index
+completed bit
+ordering attributes
+```
+
+When an invalidation/probe arrives:
+
+```text
+compare probe line against completed in-flight loads
+if ordering/value rules require repair, replay or flush younger work
+```
+
+Important nuance:
+
+```text
+Later invalidation of a line does not automatically make an already executed
+load wrong.
+```
+
+It requires replay only if the memory model or the implementation's speculation
+rules say that the load could not legally be ordered before the invalidating
+store.
+
+For RVWMO:
+
+```text
+different-address ordinary Load->Load early execution often needs no replay
+same/overlapping address, fence, acquire, atomic, dependency, and I/O cases
+still require correct final behavior
+```
 
 ### 4. Snooping vs Directory Coherence
 
-Snooping bus:
-- All coherent caches observe transactions on a shared bus.
-- A core broadcasts read, read-exclusive, upgrade, or invalidate requests.
-- Other caches snoop the address and respond if they have the line.
-- Simple and fast for small core counts, but bus bandwidth and electrical scaling limit it.
+Snooping and directory coherence implement the same permission idea differently.
 
-Directory:
-- A directory tracks which cores may have each cache line.
-- Requests go to the directory/home agent, which sends targeted invalidations or forwards.
-- Scales better to many cores or chiplets, but adds directory storage and indirection latency.
+#### 4.1 Snooping Bus
 
-Interview contrast:
-- Snooping = broadcast and observe.
-- Directory = lookup sharer set and send targeted messages.
+A snooping system broadcasts coherence transactions.
+
+The bus carries transactions, not the state of every cache line:
+
+```text
+valid
+command: BusRd / BusRdX / Upgrade / Invalidate
+address
+source ID
+response / ack
+optional data
+```
+
+Example:
+
+```text
+Core0 wants M for line X.
+Core0 wins bus arbitration.
+Bus broadcasts {GetM, addr=X, src=Core0}.
+All other caches snoop address X.
+Each cache checks its tag/state array.
+Sharers invalidate and ack.
+Dirty owner supplies data if needed.
+Core0 receives permission/data and enters M.
+```
+
+Benefits:
+
+```text
+simple
+natural broadcast
+shared bus creates a natural serialization order
+easy to reason about for small core counts
+```
+
+Costs:
+
+```text
+broadcast traffic
+all caches spend power snooping irrelevant requests
+bus bandwidth bottleneck
+poor scaling to many cores/chiplets
+```
+
+Snooping still has transient states:
+
+```text
+IS: requested S, waiting for data
+IM: requested M, waiting for data/permission
+SM: had S, requested M, waiting for invalidation acks
+MS: had M, servicing remote read and downgrading
+MI: had M, servicing remote write request and invalidating
+```
+
+The difference is that bus arbitration often serializes conflicting requests
+more simply than a distributed directory/NoC protocol.
+
+#### 4.2 Directory Coherence
+
+A directory tracks owner/sharer metadata.
+
+Example directory entry:
+
+```text
+tag
+valid
+state summary
+owner ID
+sharer vector: Core0/Core1/Core2/...
+dirty/clean information
+transient-state bits
+```
+
+Not every L1 access goes to the directory:
+
+```text
+L1 load hit in S/E/M/O:
+  local, no directory access
+
+L1 store hit in M:
+  local, no directory access
+
+L1 store hit in E:
+  silent E -> M, no directory access in many protocols
+
+L1 miss or permission miss:
+  request goes to home agent / directory
+```
+
+Common flow:
+
+```text
+Core0 wants GetM for X.
+Request goes to home/directory for X.
+Directory sees sharers = {Core1, Core2}.
+Directory sends targeted invalidates to Core1/Core2.
+Directory waits for acks.
+Directory grants M to Core0.
+```
+
+Benefits:
+
+```text
+avoids all-core broadcast
+targets only known/potential sharers
+lower snoop power
+scales better to many cores, clusters, and chiplets
+```
+
+Costs:
+
+```text
+directory storage
+home-agent lookup latency
+directory queues and transient states
+NoC traffic to home node
+ack tracking
+more protocol complexity
+```
+
+#### 4.3 Where the Directory Lives
+
+Directory/home-agent metadata is often distributed across LLC/system-cache
+slices by physical address:
+
+```text
+addr X -> home slice 3
+addr Y -> home slice 7
+addr Z -> home slice 1
+```
+
+This avoids one central bottleneck.
+
+Possible organizations:
+
+```text
+inclusive LLC:
+  LLC data entry carries sharer/owner metadata.
+  If a line exists in any private cache, it also exists in LLC.
+
+non-inclusive LLC:
+  LLC data array is not guaranteed to contain every private-cache line.
+  Separate directory/snoop-filter metadata tracks private-cache residency.
+
+exclusive hierarchy:
+  line usually lives in private cache or LLC, not both.
+  Directory metadata is needed because LLC data is not a superset.
+```
+
+Do not assume the LLC is inclusive in modern CPUs. Strict inclusion simplifies
+coherence but wastes effective capacity and can force back-invalidations:
+
+```text
+L1 has hot line A.
+Inclusive LLC evicts A.
+LLC must invalidate L1's hot A.
+```
+
+Many modern systems use non-inclusive or mostly-non-inclusive LLCs plus
+directory/snoop-filter metadata.
+
+#### 4.4 Snoop Filter
+
+A snoop filter tracks which private caches may contain a line so the fabric can
+avoid unnecessary snoops.
+
+Without snoop filter:
+
+```text
+Core0 wants GetM for X.
+Broadcast snoop to all cores.
+```
+
+With snoop filter:
+
+```text
+snoop filter says possible sharers = {Core2, Core5}
+send invalidates only to Core2/Core5
+```
+
+Snoop filter metadata may include:
+
+```text
+tag / address
+valid bit
+possible sharer vector
+owner ID
+state summary
+```
+
+It can be exact or conservative.
+
+```text
+false positive:
+  filter says Core2 may have X, but Core2 does not.
+  Safe, extra snoop.
+
+false negative:
+  filter says Core2 does not have X, but Core2 actually has X.
+  Unsafe unless protocol has a safe fallback.
+```
+
+Bloom-filter-like implementations are possible:
+
+```text
+answer "definitely no" or "maybe"
+false positives are allowed
+false negatives must be avoided
+```
+
+#### 4.5 Duplicate Tag Directory
+
+A duplicate tag directory keeps a copy of private-cache tag/state metadata near
+the coherence manager.
+
+```text
+Private cache:
+  tag array + state bits + data array
+
+Duplicate tag directory:
+  copied tag/state metadata
+  no data
+```
+
+Benefit:
+
+```text
+exact presence information
+avoid probing private tag arrays unnecessarily
+avoid broadcast snoops
+```
+
+Cost:
+
+```text
+extra tag SRAM storage
+must update duplicate tags on fills, evictions, and state changes
+update traffic and synchronization complexity
+```
+
+Directory metadata is not just a passive table. It participates in a protocol.
+
+Unsafe update example:
+
+```text
+directory marks Core0 as no longer owning X
+but Core0 has not actually invalidated/written back X yet
+Core1 sees directory says free and starts writing X
+```
+
+This would break coherence. Real protocols use:
+
+```text
+transient states
+transaction IDs
+pending request table / MSHR-like coherence entries
+ack counting
+retry / nack
+ordered home-agent queues
+credits and backpressure
+```
+
+#### 4.6 Transient State Example
+
+Directory flow:
+
+```text
+Core0 has X in M.
+Core1 requests GetM X.
+```
+
+The directory cannot immediately grant M to Core1.
+
+It must do:
+
+```text
+1. Directory receives Core1 GetM.
+2. Directory sees owner = Core0.
+3. Directory enters transient state:
+     X: owner=Core0, requester=Core1, waiting_for_owner_data
+4. Directory sends intervention/invalidate to Core0.
+5. Core0 supplies dirty data and invalidates.
+6. Directory receives data/ack.
+7. Directory grants M to Core1.
+```
+
+If another request arrives while X is transient:
+
+```text
+queue it
+retry it
+nack it
+or serialize behind the current owner transfer
+```
+
+Interview summary:
+
+```text
+Snooping = broadcast and observe.
+Directory = lookup owner/sharers and target messages.
+Snooping is simpler but does not scale; directory scales but needs metadata,
+transient state, ack tracking, and NoC flow control.
+```
 
 ### 5. Interconnect Types
 
@@ -9828,16 +11679,19 @@ Shared bus:
 - Simple arbitration.
 - Natural fit for snooping.
 - Poor bandwidth scaling.
+- Carries transactions such as `{cmd, address, source, data/response}`.
 
 Crossbar:
 - Multiple masters can connect to multiple slaves simultaneously when paths do not conflict.
 - Needs arbitration per target.
 - Higher area/wiring cost than a bus.
+- Good for moderate endpoint counts, but wiring and arbitration scale poorly.
 
 Ring:
 - Packets circulate around a ring.
 - Moderate scalability and regular layout.
 - Latency depends on hop count and congestion.
+- Useful when a regular floorplan matters and endpoint count is moderate.
 
 Mesh / NoC:
 - Packet network with routers and links.
@@ -9847,6 +11701,258 @@ Mesh / NoC:
 Point-to-point coherent fabric:
 - Used in many modern SoCs.
 - Often combines request, response, snoop, and data channels with credits or valid/ready handshakes.
+
+#### 5.1 Mesh NoC Basics
+
+Mesh NoC topology:
+
+```text
+R00 -- R01 -- R02 -- R03
+ |      |      |      |
+R10 -- R11 -- R12 -- R13
+ |      |      |      |
+R20 -- R21 -- R22 -- R23
+```
+
+Each router connects to a local agent:
+
+```text
+core tile
+LLC slice / home agent
+memory controller
+GPU/NPU/DMA agent
+I/O block
+```
+
+Packet example:
+
+```text
+source ID
+destination ID
+transaction ID
+address
+command
+QoS / ordering bits
+data or data pointer
+```
+
+Flit:
+
+```text
+flow-control unit, a piece of a packet
+```
+
+Example:
+
+```text
+64B cache-line data response
+16B NoC link
+packet = 4 flits
+```
+
+#### 5.2 Routing
+
+Deterministic XY routing:
+
+```text
+route in X direction first, then Y direction
+```
+
+Benefits:
+
+```text
+simple
+predictable
+easier deadlock avoidance and ordering reasoning
+```
+
+Costs:
+
+```text
+cannot route around congestion
+hot links can bottleneck
+```
+
+Adaptive routing:
+
+```text
+choose path based on congestion
+```
+
+Benefits:
+
+```text
+better load balance
+can avoid hot spots
+```
+
+Costs:
+
+```text
+harder ordering
+harder deadlock freedom
+more verification complexity
+```
+
+#### 5.3 Credit-Based Flow Control
+
+Credits prevent buffer overflow.
+
+Example:
+
+```text
+Router A -> Router B
+B has 8 input buffer slots.
+A starts with credit = 8.
+```
+
+When A sends one flit:
+
+```text
+A credit decreases by 1
+B buffer occupancy increases by 1
+```
+
+When B frees a slot:
+
+```text
+B returns one credit
+A credit increases by 1
+```
+
+Rule:
+
+```text
+credit > 0  -> sender may send
+credit == 0 -> sender must stall
+```
+
+Back-of-envelope:
+
+```text
+If credit round-trip latency is 6 cycles and the link should send 1 flit/cycle,
+at least 6 credits are needed just to avoid credit bubbles.
+```
+
+#### 5.4 NoC Deadlock and Virtual Channels
+
+Deadlock pattern:
+
+```text
+packet A holds buffer 1, waits for buffer 2
+packet B holds buffer 2, waits for buffer 3
+packet C holds buffer 3, waits for buffer 1
+```
+
+Coherence makes this more dangerous because messages depend on other messages:
+
+```text
+request waits for snoop
+snoop waits for snoop response
+grant waits for data
+data waits for buffer credit
+```
+
+Coherent NoCs often separate traffic classes:
+
+```text
+request
+snoop
+response
+data
+```
+
+This can be implemented as:
+
+```text
+separate physical networks
+or virtual channels sharing physical links
+```
+
+Virtual channels give each traffic class separate buffering/arbitration so
+responses/data are not permanently blocked behind requests that need those
+responses/data to complete.
+
+#### 5.5 QoS
+
+QoS controls bandwidth and latency priority.
+
+Examples:
+
+```text
+CPU demand load miss should beat low-priority prefetch
+display traffic may have real-time deadline
+GPU bulk traffic should not starve CPU
+writebacks must not deadlock behind reads forever
+```
+
+Mechanisms:
+
+```text
+priority bits in packet header
+weighted round-robin arbitration
+traffic class queues
+age-based priority
+bandwidth reservation
+prefetch/GPU throttling
+```
+
+Modeling counters:
+
+```text
+NoC queue occupancy by class
+credit stalls
+average hop count
+tail latency
+CPU demand blocked by prefetch/GPU
+QoS priority inversions
+```
+
+#### 5.6 Clock Domains
+
+Typical clock-domain intuition:
+
+```text
+core pipeline + L1I/L1D:
+  almost always same clock domain, latency critical
+
+private L2:
+  can be same core/cluster domain or near a boundary, design-dependent
+
+LLC / system cache / NoC / memory controller:
+  often separate clock or voltage domains
+
+DRAM:
+  definitely separate external timing domain
+```
+
+LLC is still a cache, but it is shared, physically large, often farther away,
+and not on the 1-cycle core/L1 hit path.
+
+#### 5.7 Typical Cache Hierarchy Pattern
+
+Safe modern summary:
+
+```text
+L1I/L1D:
+  almost always private per core
+
+L2:
+  private per core or shared by a small cluster
+
+L3 / LLC / system cache:
+  shared more broadly across cores, clusters, accelerators, or fabric agents
+```
+
+Do not assume one universal hierarchy:
+
+```text
+desktop/server style:
+  often private L2 per core + shared LLC
+
+mobile/Arm-style cluster:
+  often private L1s + cluster-level shared cache + system cache
+```
 
 ### 6. ACE / CHI Coherent Interconnect Basics
 
@@ -9887,6 +11993,9 @@ Modeling hooks:
 - Directory/snoop-filter hit rate.
 - Coherence-induced invalidations and ownership transfers.
 - Latency split between request path, snoop path, and data response path.
+- QoS class stalls and priority inversions.
+- Retry/nack count caused by transient directory state.
+- Snoop ack wait cycles and dirty-owner response latency.
 
 Interview framing:
 - Snooping bus is conceptually broadcast-and-observe.
@@ -9916,6 +12025,9 @@ Port conflict examples:
 - Demand miss refill vs dirty victim read/writeback.
 - I$ demand fetch vs I$ prefetch probe.
 - PTW memory request vs normal load/store miss.
+- Snoop tag lookup vs core load/store tag lookup.
+- Dirty owner data response vs core data-array read.
+- Store upgrade/invalidation response vs store-buffer drain.
 
 Banking examples:
 - Bank by cache set index.
@@ -9926,18 +12038,362 @@ Banking examples:
 Performance-modeling hook:
 - Track cache misses separately from structural access conflicts. They can have very different fixes.
 
+#### 8.1 Coherence Port and Probe Costs
+
+Snoops/probes need tag/state lookup:
+
+```text
+Do I have this line?
+What state is it in?
+Do I need to invalidate, downgrade, or supply data?
+```
+
+Implementation choices:
+
+```text
+multiported tag array:
+  core access and snoop can proceed together
+  higher area/power/timing cost
+
+arbitrated tag port:
+  cheaper
+  snoop or core access may stall
+
+duplicate snoop tags:
+  snoop lookup does not steal core tag port
+  extra storage and update traffic
+```
+
+Dirty data response can also consume data-array and NoC bandwidth:
+
+```text
+remote GetS hits local M/O
+local cache must read data and respond
+this can conflict with normal load/store data access
+```
+
+#### 8.2 Coherence Performance-Modeling Counters
+
+Track coherence events separately from generic MPKI:
+
+```text
+coh_read_miss_clean_llc
+coh_read_miss_remote_dirty_owner
+coh_store_GetM_miss
+coh_store_upgrade_S_to_M
+coh_O_to_M_upgrade
+coh_invalidation_sent
+coh_invalidation_received
+coh_invalidation_ack_wait_cycles
+coh_dirty_intervention
+coh_cache_to_cache_transfer
+coh_ownership_migration
+coh_snoop_filter_lookup
+coh_snoop_filter_false_positive
+coh_directory_busy_cycles
+coh_retry_or_nack
+coh_probe_tag_port_conflict
+coh_dirty_victim_writeback
+coh_line_invalidated_before_reuse
+```
+
+Why separation matters:
+
+```text
+capacity miss:
+  cache size, replacement, prefetch
+
+upgrade miss:
+  reduce sharing, padding, per-thread data
+
+dirty intervention:
+  improve producer/consumer locality
+
+directory busy:
+  home distribution, NoC QoS, throttling
+
+false sharing:
+  software data layout
+```
+
 ### 9. Replacement Policy and MSHRs
 
-Replacement policy:
+#### 9.1 Replacement Policy
+
+Replacement policy chooses which way to evict when a miss fills a set that is
+already full.
+
+Example:
+
+```text
+4-way set 10 currently holds:
+  way0 = A
+  way1 = B
+  way2 = C
+  way3 = D
+
+New line E maps to set 10 and misses.
+Which line should be evicted?
+```
+
+Common policies:
+
 - True LRU: tracks exact recency, simple for 2-way, expensive for high associativity.
 - Pseudo-LRU: cheaper approximation commonly used for larger associative caches.
 - NRU/second-chance: low-cost valid/reference-bit style policy.
 - Random: simple and sometimes competitive, but harder to reason about for deterministic debugging.
 - RRIP/DRRIP-style ideas: predict re-reference distance to protect high-reuse lines and reduce pollution.
 
+Replacement mostly affects:
+
+```text
+capacity misses
+conflict misses
+prefetch pollution
+dirty writeback traffic
+```
+
+It cannot avoid compulsory misses.
+
+#### 9.2 True LRU
+
+LRU evicts the least-recently-used line.
+
+Example recency order:
+
+```text
+most recent -> least recent
+D, B, A, C
+```
+
+On a miss, LRU evicts `C`.
+
+True LRU is intuitive, but it has hardware cost:
+
+```text
+more ways -> more recency metadata
+more hit-update logic
+more mux/select activity on replacement
+```
+
+For a 2-way cache it is trivial. For high associativity, tree-PLRU or other
+approximations are usually preferred.
+
+#### 9.3 Pseudo-LRU
+
+Tree-PLRU approximates LRU with fewer bits.
+
+For 4 ways:
+
+```text
+        root
+       /    \
+   ways0-1  ways2-3
+```
+
+Only 3 bits can choose a victim subtree and way. On a hit, the tree bits are
+updated to point away from the accessed way.
+
+Interview summary:
+
+```text
+Pseudo-LRU trades a small miss-rate loss for much cheaper hit-update and victim
+selection logic.
+```
+
+#### 9.4 RRIP / Re-Reference Interval Prediction
+
+RRIP predicts how soon a line will be reused.
+
+With a 2-bit RRPV counter:
+
+```text
+RRPV = 0  likely reused very soon
+RRPV = 1  likely reused soon
+RRPV = 2  likely reused later
+RRPV = 3  unlikely reused soon; good victim
+```
+
+Replacement chooses a line with `RRPV = 3`.
+
+On a hit:
+
+```text
+RRPV = 0
+```
+
+On insertion, the policy chooses a starting value:
+
+```text
+normal demand fill:      often RRPV = 2
+scan/prefetch candidate: often RRPV = 3
+```
+
+The key idea is that a newly inserted line is not automatically treated as the
+most valuable line. This helps avoid scan pollution.
+
+#### 9.5 Concrete Trace: LRU vs RRIP on a 4-Way Set
+
+Assume one set has three hot lines and one dead line:
+
+```text
+hot lines: A, B, C
+dead line: X
+incoming stream: S1, S2, S3
+all map to the same set
+```
+
+Initial LRU state:
+
+```text
+MRU -> LRU:
+C, B, A, X
+```
+
+Initial RRIP state:
+
+```text
+A: RRPV=0   hot
+B: RRPV=0   hot
+C: RRPV=0   hot
+X: RRPV=3   dead, good victim
+```
+
+Access stream lines:
+
+```text
+S1, S2, S3
+```
+
+LRU behavior:
+
+```text
+S1 miss:
+  evict X
+  set = S1, C, B, A
+
+S2 miss:
+  S1 was just inserted as MRU
+  A is now LRU
+  evict A
+  set = S2, S1, C, B
+
+S3 miss:
+  evict B
+  set = S3, S2, S1, C
+
+Later A/B/C:
+  A miss
+  B miss
+  C hit
+```
+
+LRU polluted the set because one-time stream lines became most-recently-used.
+
+Scan-resistant RRIP-style behavior:
+
+```text
+S1 miss:
+  evict X because X has RRPV=3
+  insert S1 with RRPV=3
+  A/B/C remain protected at RRPV=0
+
+S2 miss:
+  evict S1 because S1 was inserted as low-reuse
+  insert S2 with RRPV=3
+
+S3 miss:
+  evict S2
+  insert S3 with RRPV=3
+
+Later A/B/C:
+  A hit
+  B hit
+  C hit
+```
+
+This is the main benefit: RRIP-like insertion can keep one-time-use stream lines
+from evicting high-reuse demand lines.
+
+Important caveat:
+
+```text
+If all 4 ways are truly hot and a 5th hot line maps to the same set, no
+replacement policy can make 5 lines fit in 4 ways. The policy can only choose
+which misses are more likely.
+```
+
+#### 9.6 Adaptive Insertion: DIP / DRRIP Intuition
+
+Different workloads want different insertion policies:
+
+```text
+reuse-heavy workload:
+  new demand lines may deserve high priority
+
+streaming workload:
+  new lines may be one-time-use and should enter with low priority
+```
+
+Adaptive policies use sample/leader sets:
+
+```text
+some sets force LRU-like insertion
+some sets force scan-resistant insertion
+global selector chooses the better policy for follower sets
+```
+
+Interview-safe answer:
+
+```text
+Adaptive insertion tries to learn whether the current workload benefits from
+protecting old lines or from giving new lines normal priority.
+```
+
+#### 9.7 Replacement, Dirty Lines, and Prefetching
+
+Evicting a clean line:
+
+```text
+drop it
+```
+
+Evicting a dirty line:
+
+```text
+write back to lower cache/memory
+consume writeback buffer / MSHR / data bandwidth
+```
+
+Replacement can prefer clean victims, but always preferring clean can be wrong
+if the clean line has high reuse and the dirty line is dead.
+
+Prefetch interaction:
+
+```text
+demand fill:
+  program actually requested the line
+
+prefetch fill:
+  prediction may be wrong
+```
+
+Common policy:
+
+```text
+insert prefetch lines with lower priority
+promote only when demand later uses them
+drop/throttle prefetches under cache or MSHR pressure
+```
+
+This is why replacement policy, prefetch accuracy, pollution, and MSHR pressure
+must be studied together.
+
 RSD anchor:
 - Current RSD D$ fills use a tree-LRU style replacement path.
 - With a tiny 2-way L1D, replacement policy is less important than port conflicts, MSHR count, line size, and miss latency, but it is still part of any cache-performance explanation.
+
+#### 9.8 MSHRs
 
 MSHR responsibilities:
 - Track outstanding cache misses: address, target way, request type, waiting loads/stores, refill state, and writeback/victim metadata.
@@ -9948,6 +12404,9 @@ MSHR responsibilities:
 
 Performance-modeling hooks:
 - Count primary misses, secondary misses, MSHR merges, MSHR-full stalls, refill-port conflicts, and dirty-victim writebacks separately.
+- Track replacement victims by clean/dirty, demand/prefetch, and later reuse if possible.
+- Track prefetch lines evicted unused and demand lines evicted by prefetches.
+- Track RRIP/policy state when evaluating adaptive replacement.
 - Model MSHR occupancy and service time, not only average miss latency, because a design can be limited by memory-level parallelism rather than raw cache hit rate.
 
 ### 10. Power, Timing, and Area Tradeoffs
