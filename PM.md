@@ -1584,6 +1584,14 @@ This is not primarily a LeetCode interview. For a CPU performance modeling role,
 
 The job description emphasizes C/C++, CPU architecture blocks, writing and maintaining CPU architectural performance model features, workload bottleneck analysis, and self-guided design-alternative studies. The interviewer background we have prepared for is LSU/performance-modeling heavy, so C++ basics should be practiced through microarchitecture examples whenever possible.
 
+Current prep strategy:
+
+- Keep the existing C++ sequence: basics first, then a short fluency bridge, then microarchitecture coding.
+- Do not add generic LeetCode-style practice unless a specific weakness appears.
+- After each coding block, add a short oral drill that connects the code to CPU performance modeling.
+- The oral drill should answer: what state is modeled, what API updates it, what invariant must hold, what timing assumption is being made, what counters would validate it, and what corner case could break it.
+- This keeps C++ practice useful for Qualcomm-style simulator and architecture interviews rather than becoming generic syntax practice.
+
 #### Part 1 — C++ Basics Refresh, 45-60 Min
 
 Goal: answer these crisply, then connect them to performance-modeling code.
@@ -3215,10 +3223,38 @@ Coding blocks, in order:
 7. `07_stl_container_basics.cpp`
    - Practice: `vector`, `deque`, `queue`, `stack`, `unordered_map`, `map`, `set`, `priority_queue`.
    - Done when: can state the operation complexity and one correct use case for each container.
+   - Review notes:
+     - `std::vector` is a contiguous dynamic array; use it for traces, latency samples, cache lines, ROB entries, and SRAM-like indexed tables.
+     - `std::deque` supports efficient push/pop at both ends; use it for simple pipeline queues where entries enter at the back and leave from the front.
+     - `std::queue` is a FIFO adapter; it exposes `push`, `front`, `back`, `pop`, `empty`, and `size`, but no indexing or iteration.
+     - `std::stack` is a LIFO adapter; it exposes `push`, `top`, `pop`, `empty`, and `size`, but is not enough to model a circular bounded RAS without extra custom logic.
+     - `std::unordered_map` is a hash table; use it for fast PC/address/ID-to-state lookup, not as a precise model of CAM hardware.
+     - `std::map` is sorted by key; use it when deterministic key order matters, such as cycle-to-op or cycle-to-event traversal.
+     - `std::set` stores unique sorted values; it has no `operator[]` because it stores values, not key-value pairs.
+     - `std::priority_queue` is heap-backed; default is max-heap, and `std::greater<T>` makes a min-heap for earliest-cycle event processing.
+     - `find()` returns an iterator, so use `it->first` and `it->second` after checking `it != container.end()`.
+     - Range-for with `const auto& pair : map` gives a reference to the actual key-value pair, so use `pair.first` and `pair.second`.
+     - For `std::map` and `std::unordered_map`, `operator[]` performs key lookup and may insert a default value if the key is absent.
+     - For `std::set`, use range-for or iterators; there is no integer-index loop with `set[i]`.
+     - Hardware-model mapping: CAM-like behavior is usually a `std::vector<Entry>` scan over valid entries, SRAM-like behavior is `std::vector` or `std::array` indexed access, and comparator logic is a function/lambda/functor.
+     - `std::array<T, N>` is a fixed-size contiguous array wrapper with `.size()` and range-for support; use it when table size is known at compile time.
 
 8. `08_iterators_and_invalidations.cpp`
    - Practice: iterators, references, `erase`, `push_back`, `reserve`, `resize`, invalidation examples.
    - Done when: can explain why a saved pointer/iterator becomes invalid after vector growth or erase.
+   - Review notes:
+     - `reserve(n)` changes capacity only; it allocates room for future elements but does not create active elements.
+     - `resize(n)` changes size; growing a `std::vector<int>` creates new active `int` elements initialized to `0`.
+     - `resize(smaller)` truncates from the back and destroys/removes elements beyond the new size.
+     - `push_back()` after `resize()` appends after the resized elements; it does not replace zero-initialized entries created by `resize()`.
+     - Saving a raw pointer, reference, or iterator to a vector element is unsafe across operations that may reallocate the vector.
+     - A saved index can remain usable after reallocation, as long as the logical element still exists and ordering has not changed in a way that changes meaning.
+     - Do not dereference an old pointer or iterator after vector growth beyond capacity; it may point to old/freed storage.
+     - Iterator loops should usually use pre-increment `++it`; post-increment `it++` creates old-value semantics and can be less efficient for iterator objects.
+     - `erase()` is a function and returns the next valid iterator; safe erase-while-iterating uses `it = vec.erase(it)`.
+     - After `vector::erase`, the erased element and all elements after it have invalidated iterators/references because elements shift left.
+     - `std::vector<T>::iterator` is the explicit iterator type; `auto it = vec.begin()` is usually preferred for readability.
+     - Simulator framing: vector reallocation is usually simulator storage behavior, not modeled hardware timing. Validate by printing size/capacity and old/new base addresses.
 
 9. `09_bit_manipulation_address_decode.cpp`
    - Practice: masks, shifts, alignment, power-of-two checks, cache offset/index/tag extraction.
@@ -3233,6 +3269,7 @@ Practice rule:
 - Keep each block under 20-30 minutes.
 - Compile every file with `g++ -std=c++17 -Wall -Wextra -pedantic`.
 - After each block, write a three-line review: one syntax issue, one edge case, one interview sentence.
+- After each block, also do the oral microarchitecture drill: state, API, invariant, timing assumption, validation counters, and corner case.
 
 Interview framing:
 
