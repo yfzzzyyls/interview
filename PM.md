@@ -3259,10 +3259,55 @@ Coding blocks, in order:
 9. `09_bit_manipulation_address_decode.cpp`
    - Practice: masks, shifts, alignment, power-of-two checks, cache offset/index/tag extraction.
    - Done when: can decode an address for configurable line size and set count using unsigned types.
+   - Review notes:
+     - Use unsigned integer types such as `uint64_t` for address math so masks, shifts, and wraparound behavior are well-defined.
+     - Power-of-two check: `x != 0 && ((x & (x - 1)) == 0)`. Parentheses are required because comparison operators and bitwise operators have different precedence.
+     - A low-bit mask is `(1ULL << bits) - 1`; use `1ULL` for 64-bit unsigned shifts.
+     - Avoid shifting by 64; for a 64-bit full mask, use `~0ULL`.
+     - Cache offset is `addr & (lineSize - 1)` when line size is a power of two.
+     - Cache line base address is `addr & ~(lineSize - 1)`; cache line number is `addr / lineSize` or `addr >> offsetBits`.
+     - `log2PowerOfTwo(64)` should return `6`, because it counts shifts until the value reaches `1`, not `0`.
+     - Direct-mapped decode: `offset = addr & makeMask(offsetBits)`, `index = (addr >> offsetBits) & makeMask(indexBits)`, and `tag = addr >> (offsetBits + indexBits)`.
+     - For `addr = 0x1234`, `lineSize = 64`, and `numSets = 16`, the expected decode is `offset=0x34`, `index=0x8`, `tag=0x4`.
+     - Signed integers are dangerous for address decode because negative values, overflow, and signed right shifts can produce unwanted or implementation-defined behavior.
 
 10. `10_small_test_harness.cpp`
     - Practice: `assert`, simple table-driven tests, expected vs actual output, edge-case checklist.
     - Done when: every basics file has at least a tiny self-checking `main()`.
+    - Review notes:
+      - `assert()` is useful for deterministic self-checking tests where failure should stop the program immediately.
+      - Direct asserts are good for a few obvious cases; table-driven tests scale better when many inputs share the same structure.
+      - A test case struct should match expected value type: boolean expected results use `bool`, address expected results use `uint64_t`.
+      - Printing expected and actual values before asserting makes debugging easier when a case fails.
+      - `getLineBase(addr, lineSize)` uses `addr & ~(lineSize - 1)` and requires power-of-two `lineSize`.
+      - A test counter gives a quick sanity check that the intended number of cases actually ran.
+      - Simulator tests should cover edge cases because helper mistakes in address math or state transitions can silently corrupt long performance runs.
+      - Deterministic test harnesses prevent regressions when refactoring cache, TLB, predictor, queue, or event-scheduler helpers.
+
+11. `11_inheritance_polymorphism.cpp`
+    - Practice: base/derived classes, `virtual`, `override`, virtual destructor, base pointers/references, and `std::unique_ptr<Base>`.
+    - Done when: can explain parent/child class construction, dynamic dispatch, and why polymorphic base classes need virtual destructors.
+    - Review notes:
+      - Use inheritance when different derived types share a common interface, such as simulator events, instruction kinds, or pipeline units.
+      - A base-class pointer/reference can point to a derived object; virtual functions dispatch to the derived implementation at runtime.
+      - Mark derived overrides with `override` so the compiler catches signature mismatches.
+      - A polymorphic base class should have a `virtual ~Base() = default;` destructor so deleting through `Base*` or `std::unique_ptr<Base>` destroys the derived object correctly.
+      - With a virtual base destructor, deleting a derived object through a base pointer calls the derived destructor first, then the base destructor.
+      - Derived classes do not directly access private base members; they pass values to the base constructor, and the base constructor initializes its own private state.
+      - Use public or protected accessors when derived classes need to observe shared base state such as event id or ready cycle.
+      - Prefer `std::unique_ptr<Base>` for owning heterogeneous objects in containers, such as a vector of different event types.
+      - `std::unique_ptr<Base> p = std::make_unique<Derived>(...)` combines RAII ownership with polymorphism; RAII controls lifetime, while the base pointer provides one interface for different derived types.
+      - `unique_ptr` cannot be copied; move ownership into containers with `std::move(ptr)` or construct directly with `push_back(std::make_unique<Derived>(...))`.
+      - Object slicing happens when a derived object is copied into a base object by value; preserve polymorphism with references, pointers, or smart pointers.
+      - Pure virtual functions use `= 0` and have no body in the class declaration; derived functions should use `const override` in that order for read-only overrides.
+      - `class Derived : public Base` is required for normal is-a polymorphism; plain `class Derived : Base` is private inheritance by default.
+      - Derived classes can add new virtual functions, and child classes inherit the nearest override unless they override again.
+      - Avoid inheritance when a simple `struct`, enum, or composition is enough; simulator state tables are often value objects, not class hierarchies.
+
+Part 2 add-on focus:
+
+- Parent/child class syntax is important for simulator infrastructure, especially event interfaces, unit interfaces, and instruction/event polymorphism.
+- Practice it as a C++ mechanics block first, then reuse the pattern only where it improves the model contract.
 
 Practice rule:
 
@@ -3483,6 +3528,13 @@ Key interview points:
   - `unordered_map` gives key lookup; `list` maintains recency order.
   - Store `key -> list iterator` so promotion to MRU is O(1).
   - `unordered_map::operator[]` can insert accidentally; use `find()` for read-only lookup.
+  - `recency_.front()` is most-recently-used and `recency_.back()` is least-recently-used.
+  - `values_` stores `key -> value`; `positions_` stores `key -> iterator into recency_`.
+  - On hit, `get()` returns the value and calls `touch(key)` to promote that key to MRU.
+  - `touch()` uses `std::list::splice` to move an existing node to the front in O(1), without scanning or reallocating.
+  - On inserting a new key when full, evict `recency_.back()` from all structures: `recency_`, `values_`, and `positions_`.
+  - Updating an existing key must not grow the cache; update the value and promote the key to MRU.
+  - Interview sentence: model LRU with a list for recency order and a hash map from key to list iterator, so lookup, promotion, and eviction are O(1).
 
 - Direct-mapped cache:
   - `line_addr = addr / line_size`.
