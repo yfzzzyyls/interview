@@ -12515,58 +12515,636 @@ RSD note: the inspected RSD source does not show a full RISC-V Vector extension 
 
 ### 1. SIMD vs RISC-V Vector
 
+Scalar instruction:
+
+```text
+one operation on one data element
+```
+
 Fixed-width SIMD:
-- Programmer/compiler targets a fixed register width such as 128/256/512 bits.
-- Code may need separate versions for different widths.
+
+```text
+one instruction operates on multiple packed elements
+register width is visible/fixed for the targeted ISA
+```
+
+Examples:
+
+```text
+SSE:     128-bit
+AVX2:    256-bit
+AVX-512: 512-bit
+NEON:    commonly 128-bit
+```
+
+Example 128-bit SIMD add with 32-bit elements:
+
+```text
+a = [a0, a1, a2, a3]
+b = [b0, b1, b2, b3]
+c = [a0+b0, a1+b1, a2+b2, a3+b3]
+```
 
 RISC-V Vector:
-- Vector length is implementation-defined through `VLEN`.
-- Software uses `vsetvl` / `vsetvli` to choose `vl` based on remaining elements.
-- Same binary can scale across different vector lengths.
 
-Key RVV terms:
-- `VLEN`: hardware vector register length in bits.
-- `SEW`: selected element width.
-- `LMUL`: register grouping multiplier.
-- `vl`: active element count for current loop strip.
-- `vtype`: encodes SEW, LMUL, tail policy, mask policy.
-- Mask register: controls per-element predication.
-- Tail policy: what happens to inactive tail elements.
+```text
+vector length is implementation-defined through VLEN
+software uses vsetvl/vsetvli to choose vl based on remaining elements
+same binary can scale across different vector lengths
+```
 
-### 2. Vector Memory Operations
+Core distinction:
 
-Patterns:
-- Unit-stride load/store: best bandwidth and simplest coalescing.
-- Strided load/store: useful for regular non-contiguous layout.
-- Indexed/gather/scatter: flexible but expensive, stresses memory ordering and cache/TLB.
-- Segment loads/stores: useful for AoS-style structures.
-- Fault-only-first loads: help vectorize loops with uncertain termination.
+```text
+fixed SIMD:
+  software targets a specific width
 
-Performance questions:
-- Are accesses aligned?
-- Are they cache-line friendly?
-- Do they cross pages often?
-- Do they create bank conflicts?
-- Is the bottleneck memory bandwidth, vector ALU throughput, or scalar loop overhead?
+RVV/SVE-style vector:
+  software asks hardware how many elements can be processed this iteration
+```
 
-### 3. Chaining, Convoys, and Chimes
+Performance-modeling implication:
+
+```text
+Do not model one vector instruction as one scalar operation.
+Model active elements, element width, vector lanes, memory bytes, and pipeline throughput.
+```
+
+### 2. RVV Core Concepts: `VLEN`, `SEW`, `LMUL`, `vl`, `vtype`
+
+`VLEN`:
+
+```text
+hardware vector register width in bits
+```
+
+Examples:
+
+```text
+VLEN = 128, 256, 512, ...
+```
+
+`SEW`:
+
+```text
+selected element width
+e8, e16, e32, e64
+```
+
+Elements per vector register:
+
+```text
+elements_per_register = VLEN / SEW
+```
+
+Example:
+
+```text
+VLEN = 256
+SEW  = 32
+elements = 256 / 32 = 8
+```
+
+`LMUL`:
+
+```text
+register grouping multiplier
+effective vector bits = VLEN * LMUL
+elements = VLEN * LMUL / SEW
+```
+
+Example:
+
+```text
+VLEN = 128
+SEW  = 32
+LMUL = 4
+
+elements = 128 * 4 / 32 = 16
+```
+
+Cost of larger `LMUL`:
+
+```text
+fewer logical vector register groups
+more architectural register pressure
+more register-file bandwidth/occupancy pressure
+more compiler allocation constraints
+```
+
+Architectural vector registers:
+
+```text
+v0, v1, ..., v31
+```
+
+If:
+
+```text
+LMUL = 4
+```
+
+then one logical vector group consumes four architectural registers:
+
+```text
+v8-v11
+```
+
+Legal group bases are aligned:
+
+```text
+LMUL=4 groups can start at v0, v4, v8, ...
+```
+
+`vl`:
+
+```text
+actual active element count for current vector instruction strip
+```
+
+`vtype`:
+
+```text
+current vector configuration:
+  SEW
+  LMUL
+  tail policy
+  mask policy
+```
+
+### 3. Strip Mining
+
+Strip mining means breaking a long loop into vector-sized chunks.
+
+Scalar loop:
+
+```cpp
+for (int i = 0; i < N; i++) {
+    C[i] = A[i] + B[i];
+}
+```
+
+If hardware can process at most 4 elements per vector iteration and `N = 10`:
+
+```text
+strip 0: elements 0 1 2 3      vl = 4
+strip 1: elements 4 5 6 7      vl = 4
+strip 2: elements 8 9          vl = 2
+```
+
+RVV-style loop:
+
+```asm
+loop:
+    vsetvli t0, n, e32, m1   # t0 = chosen vl
+    vle32.v v1, (a0)
+    vle32.v v2, (a1)
+    vadd.vv v3, v1, v2
+    vse32.v v3, (a2)
+    sub n, n, t0
+    add a0, a0, t0*4
+    add a1, a1, t0*4
+    add a2, a2, t0*4
+    bnez n, loop
+```
+
+Why this matters:
+
+```text
+fixed SIMD often needs special scalar/masked tail handling
+RVV uses vsetvli so the last strip naturally uses smaller vl
+same binary works across different VLEN implementations
+```
+
+### 4. Vector Lanes and Execution Throughput
+
+Separate these two concepts:
+
+```text
+VLEN  = how many bits one vector register holds
+lanes = how many elements/chunks hardware processes per cycle
+```
+
+Example:
+
+```text
+VLEN = 256 bits
+SEW  = 32 bits
+vl   = 8 elements
+lanes = 2 elements/cycle
+```
+
+Then one vector add takes element work over multiple cycles:
+
+```text
+cycle 0: lane0 does e0, lane1 does e1
+cycle 1: lane0 does e2, lane1 does e3
+cycle 2: lane0 does e4, lane1 does e5
+cycle 3: lane0 does e6, lane1 does e7
+```
+
+Simple throughput estimate:
+
+```text
+element_cycles = ceil(vl / elements_per_cycle)
+```
+
+With pipeline startup latency:
+
+```text
+cycles ~= startup_latency + ceil(vl / elements_per_cycle) - 1
+```
+
+Where:
+
+```text
+elements_per_cycle = vector_datapath_width_bits / SEW
+```
+
+Performance model should track:
+
+```text
+VLEN
+SEW
+LMUL
+vl
+lane/datapath width
+functional-unit latency
+functional-unit throughput
+issue bandwidth
+register-file bandwidth
+```
+
+### 5. Masks, Predication, and Tail Policy
+
+Vector masks are per-element predicates.
+
+Example:
+
+```cpp
+for (int i = 0; i < N; i++) {
+    if (A[i] > 0) {
+        B[i] = A[i] + 1;
+    }
+}
+```
+
+Vector form:
+
+```text
+mask[i] = A[i] > 0
+only elements with mask[i] = 1 update
+```
+
+Hardware view:
+
+```text
+new_value[i] ----\
+                  MUX ---- dest[i]
+old_dest[i] -----/
+                 ^
+                 |
+              mask[i]
+```
+
+RVV commonly uses `v0` as the mask register:
+
+```asm
+vmsgt.vx v0, v1, x0      # v0[i] = v1[i] > 0
+vadd.vx  v2, v1, x1, v0.t
+```
+
+Tail case:
+
+```text
+physical vector capacity = 4 elements
+vl = 2
+
+elements 0-1 active
+elements 2-3 tail/inactive
+```
+
+Tail/mask policies:
+
+```text
+tail undisturbed:
+  inactive tail elements keep old value
+
+tail agnostic:
+  inactive tail elements can become arbitrary
+
+mask undisturbed:
+  masked-off elements keep old destination value
+
+mask agnostic:
+  masked-off elements can become arbitrary
+```
+
+Why agnostic can be faster:
+
+```text
+keeping old destination requires reading old dest
+reading old dest costs register-file bandwidth, dependency tracking, muxing, and power
+```
+
+Predication helps when:
+
+```text
+branch is unpredictable
+work per branch path is small
+masked work is cheap
+```
+
+Predication hurts when:
+
+```text
+most lanes are inactive
+masked operation still consumes bandwidth/power
+branch would skip expensive work
+```
+
+### 6. Vector Memory Operations
+
+Main types:
+
+```text
+unit-stride
+strided
+indexed / gather-scatter
+segment loads/stores
+fault-only-first loads
+```
+
+Unit-stride:
+
+```asm
+vle32.v v1, (a0)
+vse32.v v1, (a0)
+```
+
+Addresses for 32-bit elements:
+
+```text
+A+0, A+4, A+8, A+12, ...
+```
+
+This is the fast path:
+
+```text
+contiguous memory
+cache-line friendly
+easy coalescing
+good DRAM burst behavior
+few TLB/cache requests per element
+```
+
+Strided:
+
+```asm
+vlse32.v v1, (a0), stride
+vsse32.v v1, (a0), stride
+```
+
+Addresses:
+
+```text
+A + 0*stride
+A + 1*stride
+A + 2*stride
+...
+```
+
+Useful for:
+
+```text
+matrix columns
+struct field access
+interleaved data
+```
+
+Indexed/gather:
+
+```asm
+vluxei32.v v1, (base), vindex
+```
+
+Scatter:
+
+```asm
+vsuxei32.v v1, (base), vindex
+```
+
+Why gather/scatter is hard:
+
+```text
+each element may touch a different cache line
+each element may touch a different page
+each element may need separate TLB/cache lookup
+stores may alias or conflict
+faults can occur on individual elements
+ordering and precise restart are more complex
+```
+
+Coalescing:
+
+```text
+group elements that touch the same cache line into fewer cache requests
+```
+
+Example:
+
+```text
+elem0 -> line A
+elem1 -> line B
+elem2 -> line A
+elem3 -> line C
+
+requests after coalescing:
+  line A serves elem0 and elem2
+  line B serves elem1
+  line C serves elem3
+```
+
+Performance model should estimate:
+
+```text
+bytes accessed = vl * SEW/8
+unique cache lines touched
+unique pages touched
+bank conflicts
+MSHR pressure
+TLB pressure
+load/store queue occupancy
+coalescing efficiency
+```
+
+Unit-stride approximation:
+
+```text
+requests ~= cache_lines_touched
+```
+
+Gather/scatter approximation:
+
+```text
+requests ~= unique cache lines touched
+plus bank/conflict/replay effects
+```
+
+### 7. Chaining, Convoys, and Chimes
 
 Chaining:
-- A dependent vector instruction can start consuming elements as soon as the producer creates the first elements.
-- It avoids waiting for an entire vector instruction to finish.
-- Example: vector load produces element group 0, vector multiply consumes it, vector add follows, all overlapped as a pipeline.
+
+```text
+dependent vector instruction starts consuming elements as soon as producer creates early elements
+```
+
+Without chaining:
+
+```text
+vadd must finish entire vector before vmul starts
+```
+
+With chaining:
+
+```text
+vadd produces c0
+vmul consumes c0 soon after
+vadd produces c1
+vmul consumes c1 soon after
+```
+
+Visualization:
+
+```text
+vadd:  c0 c1 c2 c3 c4 c5 c6 c7
+vmul:     d0 d1 d2 d3 d4 d5 d6 d7
+```
+
+Hardware view:
+
+```text
+vector add lane output
+  -> chain / bypass network
+  -> vector multiply lane input
+```
 
 Convoy:
-- A group of vector instructions that can execute together without structural hazards.
+
+```text
+group of vector instructions that can execute together without structural hazards
+```
 
 Chime:
-- Roughly one vector-length time step for a convoy.
-- Old vector-performance models estimate runtime as number of chimes times vector length plus startup costs.
 
-Modern modeling note:
-- Real cores also need startup latency, memory latency, bank conflicts, issue bandwidth, mask overhead, and tail effects.
+```text
+roughly the time for one convoy
+```
 
-### 4. Kernel Optimization Topics
+Example:
+
+```text
+vload A
+vload B
+vadd C = A + B
+vstore C
+```
+
+If memory system supports two loads:
+
+```text
+Convoy 1: vload A, vload B
+Convoy 2: vadd
+Convoy 3: vstore
+```
+
+If only one memory pipe:
+
+```text
+Convoy 1: vload A
+Convoy 2: vload B
+Convoy 3: vadd
+Convoy 4: vstore
+```
+
+Modern models still need:
+
+```text
+startup latency
+memory latency
+bank conflicts
+issue bandwidth
+mask overhead
+tail effects
+register-file ports
+```
+
+But convoy/chime thinking gives useful first-order intuition.
+
+### 8. Vector Precise Exceptions and `vstart`
+
+Vector instructions can partially complete element work before an exception.
+
+Example:
+
+```asm
+vle32.v v1, (a0)     # vl = 8
+```
+
+If element 3 causes a page fault:
+
+```text
+element 0: success
+element 1: success
+element 2: success
+element 3: fault
+element 4-7: not architecturally completed
+```
+
+RISC-V Vector uses `vstart`:
+
+```text
+vstart = index of element where restart should begin
+```
+
+Fault example:
+
+```text
+fault at element 3
+vstart = 3
+trap to OS
+handler resolves fault
+restart same vector instruction
+hardware resumes at element 3
+```
+
+Masked-off and tail elements:
+
+```text
+should not perform memory access
+should not cause page faults
+```
+
+Why this is hard:
+
+```text
+elements may miss independently
+elements may return out of order
+gather/scatter can touch many pages
+hardware must report the first architectural fault
+restart must not corrupt already-completed elements
+```
+
+Most performance models do not deeply model vector page-fault restart unless focusing on OS/exception behavior, but they should model:
+
+```text
+pages touched
+TLB pressure
+cache lines touched
+rare fault/restart path separately
+```
+
+### 9. Kernel Optimization Topics
 
 Min/max:
 - Use vector reductions when possible.
@@ -12596,7 +13174,7 @@ Library names to verify later:
 - RISC-V RVV intrinsic kernels and vendor math/DSP libraries.
 - Qualcomm ecosystem names may include QNN / SNPE / Hexagon-oriented libraries, but we should verify which one matches your project before using it in interview answers.
 
-### 5. Compiler, Intrinsics, and Scheduling Notes
+### 10. Compiler, Intrinsics, and Scheduling Notes
 
 Personal experience anchor:
 - I optimized kernels such as BKFIR using compiler intrinsics rather than relying only on the auto-vectorizer.
@@ -12630,12 +13208,84 @@ Microarchitecture connection:
 - Intrinsics are a contract with both compiler and hardware. Good intrinsic code exposes ILP, avoids alias ambiguity, controls register pressure, and creates memory access patterns that the cache/TLB/vector unit can actually sustain.
 - When discussing a kernel speedup, separate algorithmic improvement, compiler/codegen improvement, and microarchitecture effect.
 
-### 6. Review Questions
+### 11. Performance-Modeling Checklist
+
+For each vector loop, ask:
+
+```text
+What is VLEN?
+What SEW and LMUL are used?
+What vl values occur across strips?
+How many lanes/elements per cycle exist?
+How many vector functional units exist?
+Is the bottleneck vector ALU, vector memory, scalar loop overhead, or register pressure?
+```
+
+For vector memory:
+
+```text
+unit-stride, strided, or gather/scatter?
+how many cache lines touched per vector instruction?
+how many pages touched?
+how much coalescing is possible?
+are there bank conflicts?
+does the operation consume many MSHRs/TLB accesses?
+```
+
+For masks/tails:
+
+```text
+lane utilization = active elements / vl
+tail/mask undisturbed may require old-dest reads
+mask sparsity can waste lane work
+```
+
+For register pressure:
+
+```text
+logical vector regs consumed = live vector values * LMUL
+large LMUL can reduce loop trips but increase spills/pressure
+```
+
+Useful counters:
+
+```text
+vector_instructions
+vector_elements_executed
+vector_active_elements
+vector_masked_off_elements
+vector_tail_elements
+vector_lmul_distribution
+vector_memory_bytes
+vector_cache_lines_touched
+vector_pages_touched
+vector_gather_scatter_count
+vector_lane_utilization
+vector_pipeline_busy_cycles
+vector_memory_stall_cycles
+```
+
+### 12. Interview Summary
+
+Strong answer:
+
+```text
+Fixed SIMD exposes a fixed register width, while RVV is vector-length agnostic: vsetvli chooses vl based on remaining work and hardware capacity. Performance depends on VLEN, SEW, LMUL, lanes, masks, memory access pattern, and register pressure. Unit-stride vector memory is the fast path; gather/scatter stresses TLBs, MSHRs, coalescing, bank conflicts, and precise exceptions. A performance model should count elements, bytes, cache lines, pages, lane utilization, and vector pipeline occupancy, not just vector instruction count.
+```
+
+### 13. Review Questions
 
 - Why does RVV use strip mining?
+- What is the difference between VLEN and lanes?
+- What is the difference between SEW, LMUL, vl, and vtype?
 - How does `LMUL` trade register capacity against wider operations?
+- Why can larger LMUL increase register pressure?
+- What does a mask do at the hardware datapath level?
+- Why can tail/mask agnostic policy be faster than undisturbed policy?
 - Why are gather/scatter operations harder to optimize than unit-stride loads?
 - What is vector chaining and why does it help?
+- What are convoys and chimes?
+- What is `vstart`, and why does RVV need it?
 - How would you model a vectorized FIR kernel bottleneck?
 - When should I use intrinsics instead of trusting auto-vectorization?
 - How can source code structure help the compiler emit fused instructions?
@@ -12769,6 +13419,40 @@ Performance-modeling hooks:
 - Measure cycles younger loads/stores are blocked behind the fence.
 - Separate lightweight ordering fences from heavyweight device/MMIO fences.
 
+#### Conservative RSD-Style Implementation
+
+The simple implementation we discussed is:
+
+```text
+decode/dispatch sees FENCE
+  -> stall younger dispatch
+  -> wait for older load/store instructions to drain from backend
+  -> wait for store buffer / memory side to be safe
+  -> mark FENCE complete at the precise commit boundary
+  -> resume younger dispatch
+```
+
+This is stronger than the minimum required for some `pred/succ` masks, but it gives a clean correctness story:
+
+```text
+No younger memory operation can enter and pass the fence.
+All older relevant memory operations complete before the fence commits.
+Therefore the fence enforces ordering.
+```
+
+Tradeoff:
+
+```text
+simple correctness
+but high performance cost because it serializes more than necessary
+```
+
+More optimized cores may:
+- allow younger non-memory uops to execute,
+- enforce only the exact `pred/succ` direction,
+- avoid draining unrelated stores when the memory model and address checks allow it,
+- use LSU age checks instead of a full backend drain.
+
 ### 4. `FENCE.I`
 
 `FENCE.I` solves a different problem from `FENCE`.
@@ -12806,6 +13490,64 @@ Interview phrasing:
 FENCE orders memory operations.
 FENCE.I orders the data-side creation of instruction bytes with later instruction fetch.
 That is why FENCE.I usually needs frontend invalidation/refetch behavior, not just LSU ordering.
+```
+
+#### Conservative RSD-Style Implementation
+
+The simple implementation we discussed is:
+
+```text
+decode/dispatch sees FENCE.I
+  -> stall younger dispatch
+  -> drain older stores from backend / store buffer
+  -> ensure modified instruction bytes reach the coherent point visible to I-fetch
+  -> flush L1 I-cache
+  -> flush entire frontend
+  -> mark FENCE.I complete
+  -> refetch from the correct next PC
+```
+
+This is conservative and correct if the lower cache hierarchy is unified/coherent.
+
+Important nuance:
+
+```text
+FENCE.I usually targets stale instruction-side state:
+  frontend buffers
+  fetch queues / FTQ contents
+  predecode/uop-cache state if present
+  private L1I
+
+It does not normally require flushing L2/LLC.
+```
+
+Reason:
+
+```text
+The store path updates the coherent memory hierarchy.
+After L1I/frontend stale state is invalidated, refetch should miss in L1I and obtain updated bytes from the coherent lower cache.
+```
+
+Do not describe this as:
+
+```text
+L1I directly snoops L1D.
+```
+
+Better wording:
+
+```text
+FENCE.I ensures older stores to instruction memory are visible to the instruction-fetch path, then invalidates stale I-side state and refetches through the coherent memory hierarchy.
+```
+
+If the newest data is still dirty in L1D, the implementation must either:
+- drain/write it to the coherent lower level before `FENCE.I` completes, or
+- rely on the coherent hierarchy to obtain/forward the dirty line from L1D when I-fetch refills.
+
+The clean conservative project story is:
+
+```text
+We drain stores enough that modified instruction bytes reach the coherent point visible to I-fetch, then flush L1I/frontend and refetch.
 ```
 
 ### 5. CSR, `ecall`, `ebreak`, `mret`, and `sret`
@@ -12848,7 +13590,7 @@ Concrete flow for `mret`:
 
 ### 6. AMO: Atomic Read-Modify-Write
 
-AMO instructions perform a load and store as one atomic memory operation.
+AMO instructions perform a read-modify-write as one atomic memory operation.
 
 Example:
 
@@ -12860,93 +13602,420 @@ Meaning:
 
 ```text
 old = memory[x10]
-memory[x10] = old + x6
+new = old + x6
+memory[x10] = new
 x5 = old
 ```
 
-But the load and store cannot be observed as two independent operations by other cores.
+So AMO has two results:
 
-Implementation requirements:
-- Address translation and permission check.
-- Alignment check.
-- Coherence permission for the cache line, often exclusive/modified ownership.
-- Atomic update in the L1/L2/coherence pipeline.
-- Correct interaction with older stores and younger loads.
-- Correct exception behavior: no partial architectural side effect on fault.
+```text
+old memory value -> written back to rd
+new memory value -> written back to memory/cache line
+```
 
-Common implementation paths:
+It is not equivalent to a normal load followed by a normal store, because other cores must not observe an interleaving between the read and write portions.
 
-1. Execute AMO in the LSU after it reaches the memory pipeline.
-2. Lock or reserve the cache line internally while performing the read-modify-write.
-3. Send a coherence request if the line is not in the required state.
-4. Return the old value to the destination register.
-5. Commit in program order like other instructions.
+#### AMO Datapath
 
-Acquire/release bits:
-- RISC-V AMOs can carry `aq` and `rl` bits.
-- `aq` constrains later memory operations from moving before the AMO.
-- `rl` constrains earlier memory operations from moving after the AMO.
-- `aqrl` makes the AMO a stronger synchronization point.
+Conceptual L1-hit flow:
 
-Performance-modeling hooks:
-- AMO latency on L1 hit, L2 hit, and coherence miss.
-- Cycles waiting for exclusive ownership.
-- Retry/replay count.
-- Whether AMO blocks younger memory operations.
-- Whether AMO forces store-buffer drain for a given memory model.
+```text
+AMO issue
+  -> compute address
+  -> translate/check permission/alignment
+  -> check L1D tag and coherence state
+  -> if not writable, get exclusive/M permission
+  -> read old word/dword from cache line
+  -> AMO datapath computes new = old op rs2
+  -> merge new value into cache line
+  -> write cache data array
+  -> write old value to rd
+  -> mark ROB entry complete
+  -> commit later in program order
+```
+
+The AMO operation is usually performed in or near the LSU/L1D pipeline, not by emitting a normal load uop, sending the value through the integer ALU, and later emitting a normal store uop. The exact placement can vary:
+
+```text
+small AMO ALU near L1D data path
+atomic unit inside LSU
+cache-controller atomic datapath
+lower-cache/interconnect atomic operation for some systems
+```
+
+#### Coherence Permission
+
+An AMO writes the line, so it needs exclusive write permission:
+
+```text
+I -> send read-for-ownership / GetM
+S -> send upgrade / invalidate sharers
+E -> silently upgrade to M
+M -> already writable
+```
+
+If the line is in `S`, the AMO cannot simply update the local copy. It must first invalidate other sharers and wait for the required acknowledgments.
+
+#### Dispatch and Ordering
+
+AMO can dispatch through the normal frontend/backend:
+
+```text
+fetch -> decode -> rename -> dispatch -> issue to LSU
+```
+
+At rename:
+
+```text
+sources: rs1 address base, rs2 AMO operand
+dest:    rd old memory value, unless rd = x0
+```
+
+In the LSU, it is a special atomic memory operation. A conservative implementation can serialize it:
+
+```text
+AMO waits until it is oldest enough
+older stores drain as required
+younger memory ops are blocked
+AMO gets exclusive line
+AMO performs read-modify-write
+AMO writes old value to rd
+younger memory ops resume
+```
+
+This is correct and simple. It is stronger than strictly necessary for all addresses and all memory models, but AMOs are often rare enough that a conservative implementation is defensible.
+
+A more aggressive OoO core may let independent younger work proceed if it can prove:
+
+```text
+addresses do not conflict
+memory model and aq/rl bits allow the reordering
+older stores are handled correctly
+replay/recovery can fix wrong speculation
+AMO side effect cannot survive on a wrong path
+```
+
+#### Acquire / Release Bits
+
+RISC-V AMOs can carry:
+
+```text
+aq = acquire
+rl = release
+```
+
+Meaning:
+
+```text
+aq:
+  later memory operations must not become ordered before the AMO
+
+rl:
+  earlier memory operations must not become ordered after the AMO
+
+aqrl:
+  stronger ordering point around the AMO
+```
+
+Conservative model:
+
+```text
+atomic.aqrl:
+  drain older relevant memory ops
+  block younger memory ops until atomic completes
+
+atomic.rl:
+  ensure older memory ops are ordered before the atomic
+
+atomic.aq:
+  prevent younger memory ops from becoming ordered before the atomic
+```
+
+#### AMO vs Store Buffer
+
+A normal store can commit into a store buffer and drain later:
+
+```text
+normal store:
+  commit -> store buffer -> cache/coherence later
+```
+
+An AMO cannot be treated as a simple fire-and-forget store because:
+
+```text
+it returns the old value to rd
+it must atomically update the target location
+it needs coherence permission
+it may carry aq/rl ordering
+it must not become globally visible on the wrong path
+```
+
+For a conservative performance model:
+
+```text
+AMO may wait for older store-buffer entries to drain.
+AMO may block younger memory operations while in flight.
+```
 
 ### 7. LR/SC: Reservation-Based Atomic Sequence
 
-LR/SC splits atomic update into two instructions:
+LR/SC implements atomics using a reservation:
 
 ```asm
-lr.w    x5, (x10)        # load and create reservation
-add     x5, x5, x6       # compute new value
-sc.w    x7, x5, (x10)    # store only if reservation still valid
+retry:
+    lr.w    t0, (a0)        # load and create reservation
+    addi    t1, t0, 1       # compute new value
+    sc.w    t2, t1, (a0)    # store only if reservation still valid
+    bnez    t2, retry       # retry on failure
 ```
 
 If `sc.w` succeeds:
 
 ```text
-memory[x10] = x5
-x7 = 0
+memory[a0] = t1
+t2 = 0
 ```
 
 If `sc.w` fails:
 
 ```text
 memory is unchanged
-x7 = nonzero
+t2 = nonzero
 ```
 
-What the reservation tracks:
-- Usually an address granule, often at cache-line granularity or an implementation-defined reservation set.
-- The hart remembers that it has a valid reservation from a prior LR.
-
-Common SC failure conditions:
-- Another hart writes the reservation granule.
-- A coherence invalidation arrives for the reserved line.
-- This hart performs an intervening store that clears the reservation, depending on implementation/spec rule.
-- The SC address does not match the LR reservation.
-- The line is evicted or reservation times out.
-- Exception, context switch, or explicit OS action clears the reservation.
-- Misalignment or permission fault.
-
-Important interview point:
+Important:
 
 ```text
-LR/SC is not "guaranteed success after LR."
-It is a conditional store. Software loops until it succeeds, and hardware must provide the architectural forward-progress rules required by the ISA.
+SC always writes a status result to rd.
+SC success: rd = 0.
+SC failure: rd != 0 and memory is not modified.
 ```
 
-Performance-modeling hooks:
-- LR/SC success rate.
-- Reservation loss due to coherence traffic.
-- Reservation loss due to interrupts/context switches.
-- Retry loop cycles.
-- Cache miss and ownership latency.
+#### Reservation State
 
-### 8. Store Buffer, Coherence, and Wrong-Path Safety
+The core usually has small per-hart reservation state near the LSU/L1D/coherence interface:
+
+```text
++------------------------------------------------+
+| valid | physical line address | size/context?  |
++------------------------------------------------+
+```
+
+This is microarchitectural state, not an architectural integer register. Software cannot read it directly.
+
+Possible RTL mental model:
+
+```systemverilog
+logic reservation_valid;
+logic [PAW-1:LINE_BITS] reservation_line;
+
+always_ff @(posedge clk) begin
+  if (reset || flush || sc_attempt) begin
+    reservation_valid <= 1'b0;
+  end else if (lr_complete) begin
+    reservation_valid <= 1'b1;
+    reservation_line <= lr_paddr[PAW-1:LINE_BITS];
+  end else if (snoop_invalidate_valid &&
+               snoop_line == reservation_line) begin
+    reservation_valid <= 1'b0;
+  end else if (reserved_line_evicted) begin
+    reservation_valid <= 1'b0;
+  end
+end
+```
+
+SC check:
+
+```systemverilog
+sc_success =
+    reservation_valid &&
+    (sc_paddr[PAW-1:LINE_BITS] == reservation_line);
+```
+
+Real designs add size checks, permission checks, ordering checks, miss/replay handling, and context-switch rules.
+
+#### LR Pipeline
+
+LR is essentially a normal load plus reservation setup:
+
+```text
+decode/rename:
+  source: rs1 address
+  dest:   rd loaded value
+  allocate load-queue entry
+  carry is_lr metadata
+
+issue:
+  wait for address source
+
+LSU:
+  compute address
+  translate/check load permission
+  access L1D or miss/refill
+
+complete:
+  write loaded value to rd
+  set reservation_valid
+  set reservation_line = PA line
+  mark LR complete
+```
+
+LR normally needs only read permission. It may bring the line in `S` or `E`.
+
+#### SC Pipeline
+
+SC is store-like but conditional and register-producing:
+
+```text
+decode/rename:
+  sources: rs1 address, rs2 store data
+  dest:    rd success/failure status
+  allocate store/atomic LSU entry
+  carry is_sc metadata
+
+issue:
+  wait for address and store data
+
+LSU:
+  compute address
+  translate/check store permission
+  check reservation state
+```
+
+If reservation fails:
+
+```text
+do not write memory
+rd = nonzero failure code
+clear reservation
+mark SC complete
+```
+
+If reservation passes:
+
+```text
+obtain writable/exclusive cache-line permission
+write rs2 data into cache line
+rd = 0 success
+clear reservation
+mark SC complete
+```
+
+SC is not a normal store-buffered store before success. The core cannot blindly put it into the store buffer because it may fail and write nothing. Some implementations may use store-buffer-like internal paths after success, but conceptually:
+
+```text
+SC = conditional store + reservation check + rd status writeback
+```
+
+#### What Breaks Reservation?
+
+Common reservation loss conditions:
+
+```text
+another hart writes the reserved line
+coherence invalidation/probe hits the reserved line
+reserved line is evicted from L1D
+reservation timeout
+interrupt/trap/context switch, depending on implementation
+pipeline flush, depending on implementation
+new LR replaces old reservation
+SC attempt clears reservation after success or failure
+```
+
+If the reserved line is evicted from L1D, simple implementations clear the reservation. Therefore:
+
+```text
+reserved line absent from L1D -> reservation likely lost -> SC fails
+```
+
+This is legal because RISC-V permits SC to fail for implementation reasons, subject to the ISA forward-progress requirements for constrained LR/SC loops.
+
+#### One Reservation vs Multiple In-Flight LR/SC
+
+An OoO core may have multiple LR and SC instructions in the backend at once, but the architectural model should behave like one active reservation per hart:
+
+```asm
+lr.w t0, (a0)      # reservation = line A
+lr.w t1, (a1)      # reservation = line B, replaces A
+sc.w t2, t3, (a0) # compares A against B -> fail
+```
+
+The SC does not search the load queue for an arbitrary older LR. It checks the current reservation state created by the most recent valid LR in program order. Simple implementations often serialize LR/SC issue to avoid hard out-of-order reservation cases.
+
+#### LR/SC Ordering Policy
+
+Conservative implementation:
+
+```text
+LR behaves like a load but may wait for older stores to be safe.
+SC drains older stores as required.
+SC blocks younger memory operations while it checks/resolves.
+```
+
+Optimized implementation:
+
+```text
+LR can use normal memory-dependence prediction and store-to-load forwarding.
+SC can avoid full serialization when addresses and memory-ordering bits allow it.
+Replay/order logic handles speculation.
+```
+
+For a baseline performance model, the conservative policy is reasonable and easy to validate.
+
+### 8. AMO vs LR/SC vs CAS
+
+AMO:
+
+```text
+one instruction
+fixed operation defined by ISA
+good for add/swap/and/or/xor/min/max
+```
+
+LR/SC:
+
+```text
+two-instruction reservation sequence
+software computes arbitrary new value
+SC may fail and retry
+```
+
+CAS:
+
+```text
+compare memory against expected value
+if equal, write desired value
+return old value or success status
+```
+
+CAS is common in many ISAs and programming models, but it needs more operands:
+
+```text
+address
+expected value
+new value
+destination/status
+```
+
+LR/SC fits a simpler RISC encoding and avoids some ABA cases. ABA example:
+
+```text
+memory starts A
+other thread changes A -> B -> A
+CAS sees A and may think nothing changed
+LR/SC reservation is broken by the intervening write
+```
+
+Interview summary:
+
+```text
+AMO is efficient for fixed atomic operations.
+LR/SC is more general and uses a reservation plus retry loop.
+CAS compares values but can suffer ABA and needs more operand encoding.
+```
+
+### 9. Store Buffer, Coherence, and Wrong-Path Safety
 
 Store buffer interaction:
 - Normal stores can sit in the store buffer after commit before reaching L1/coherence.
@@ -12972,7 +14041,88 @@ younger AMO is fetched and maybe decoded
 the core must not let the AMO modify coherent memory until it is known to be on the correct path
 ```
 
-### 9. How To Explain This In An Interview
+### 10. Performance Modeling of Locks and Atomics
+
+Atomic latency is not just ALU latency. It can include:
+
+```text
+L1D access
+store-buffer drain
+exclusive ownership request
+invalidation ack latency
+coherence round trip
+LR/SC retry loop
+pipeline serialization
+false sharing
+lock contention
+```
+
+Uncontended lock:
+
+```text
+lock line already in L1D M/E state
+AMO/LR-SC succeeds locally
+small latency
+```
+
+Contended lock:
+
+```text
+multiple cores repeatedly request exclusive ownership
+lock line bounces between cores
+coherence fabric and invalidation latency dominate
+```
+
+Bad spinlock:
+
+```cpp
+while (atomic_exchange(&lock, 1) == 1) {
+}
+```
+
+This repeatedly issues write-intent atomics and can bounce the line constantly.
+
+Better test-and-test-and-set:
+
+```cpp
+while (true) {
+    while (load(lock) == 1) {
+        // spin on shared read
+    }
+
+    if (atomic_exchange(&lock, 1) == 0) {
+        break;
+    }
+}
+```
+
+While the lock is held, many cores can spin on shared reads in `S` state. Only when the lock appears free do they attempt an exclusive atomic operation.
+
+Useful counters:
+
+```text
+amo_count
+lr_count
+sc_count
+sc_success
+sc_fail
+sc_fail_invalidation
+sc_fail_eviction
+average_sc_retries_per_success
+atomic_wait_getm_cycles
+atomic_store_buffer_drain_cycles
+atomic_block_young_mem_cycles
+atomic_line_bounce_count
+lock_spin_cycles
+```
+
+Performance-modeling sentence:
+
+```text
+The cost of atomics is mostly memory-system and coherence cost, not ALU cost. Uncontended atomics can be close to L1 latency, but contended atomics can be dominated by ownership transfer, invalidation acknowledgments, store-buffer drains, serialization, and LR/SC retries.
+```
+
+### 11. How To Explain This In An Interview
 
 Good answer shape:
 
@@ -12999,7 +14149,7 @@ For AMO, the LSU cannot treat it as an independent load plus store.
 It needs exclusive/coherent ownership of the line, performs the read-modify-write atomically, returns the old value, and only lets the architectural effect survive if the instruction is on the correct path.
 ```
 
-### 10. Review Questions
+### 12. Review Questions
 
 - Why is `FENCE` not the same as a cache flush?
 - Why does `FENCE.I` usually require frontend refetch or invalidation?
@@ -13009,6 +14159,13 @@ It needs exclusive/coherent ownership of the line, performs the read-modify-writ
 - Why is AMO not equivalent to a normal load followed by a normal store?
 - What coherence permission does an AMO usually need?
 - What conditions can make SC fail after a successful LR?
+- Where is LR/SC reservation state stored?
+- Why does a failed SC still write back to `rd`?
+- Why is SC not just a normal store-buffered store?
+- Why can a new LR replace an old reservation?
+- Why can eviction of the reserved line make SC fail?
+- How do `aq` and `rl` change ordering around an atomic?
+- Why can a contended lock be dominated by coherence line bouncing?
 - How can a store buffer be legal under a memory consistency model?
 - What predictor/cache pollution can wrong-path memory operations cause, and what side effects must be prevented?
 
@@ -13260,7 +14417,1078 @@ RTL code snippet
   -> how should a C++ performance model represent this limitation?
 ```
 
-#### 6.1 Why Ports Matter
+#### 6.1 STA, Innovus, and FO4 Timing Intuition
+
+A strong way to calibrate architecture timing intuition is to inspect a real post-route static timing path.
+
+There are two useful views:
+
+```text
+Verdi gate-level schematic:
+  structural view
+  good for counting logic depth between flops
+  shows muxes, comparators, encoders, gates, and high-level combinational shape
+
+Innovus / Tempus STA:
+  timing view
+  gives real cell delay, net delay, slew, fanout, setup, skew, uncertainty, and slack
+```
+
+The architect's flow is:
+
+```text
+RTL idea
+  -> estimate datapath structures and ports
+  -> inspect synthesized gate-level schematic
+  -> classify the logic depth
+  -> run STA after placement/routing
+  -> decide whether to pipeline, bank, duplicate, arbitrate, or simplify
+```
+
+Typical Innovus / Tempus-style workflow:
+
+```text
+1. Run STA with the real SDC, corners, and parasitics.
+2. Report worst max-delay paths.
+3. Open/highlight the worst path in the GUI.
+4. Inspect the startpoint flop, endpoint flop, cells, nets, and slack.
+5. Classify the logic: mux tree, comparator, CAM, priority encoder, SRAM macro, long wire, high fanout.
+6. Map the instance names back to RTL modules.
+7. Turn the observed path into architecture rules for the performance model.
+```
+
+What a timing report actually contains:
+
+```text
+startpoint flop clock-to-Q
+  + cell delays
+  + net RC delays
+  + slew/fanout effects
+  + endpoint setup time
+  + clock skew / uncertainty / margin
+  = total path delay
+```
+
+Important correction:
+
+```text
+Timing is not just "number of gates."
+Post-route paths can be dominated by wire delay, fanout, buffers, placement distance, SRAM macro timing, or wide reduction logic.
+```
+
+Before trusting a reported critical path, check constraints:
+
+```text
+false paths
+multicycle paths
+generated clocks
+async crossings
+mode constraints
+reset/test paths
+```
+
+An unconstrained or incorrectly constrained path can be misleading.
+
+##### Plain DC vs Topo DC
+
+Plain Design Compiler mainly does logical synthesis and early STA.
+
+Inputs:
+
+```text
+RTL
+.db timing library
+SDC constraints
+```
+
+`.db` is the Synopsys compiled standard-cell timing library. It comes from `.lib` and contains:
+
+```text
+cell timing arcs
+setup/hold tables
+delay vs slew/load tables
+input capacitance
+drive strength
+area
+often power data
+```
+
+Plain DC output:
+
+```text
+mapped gate-level netlist
+early timing reports
+area/QoR reports
+```
+
+Plain DC timing is mostly useful for logic depth and cell delay. Wire delay is weak or approximate.
+
+Topo DC / DC NXT topographical mode adds physical awareness.
+
+Additional inputs:
+
+```text
+.db timing library
+NDM or Milkyway physical library
+tech file
+wire RC data such as TLU+
+```
+
+The physical library tells the tool cell dimensions, pin locations, and blockages. In newer Synopsys flows this is usually NDM. Older flows used Milkyway.
+
+For the TSMC16 setup used in the tutorial experiment:
+
+```text
+Timing .db:
+N16ADFP_StdCelltt0p8v25c.db
+
+Physical NDM:
+N16ADFP_StdCell_physicalonly.ndm
+
+Synopsys tech file:
+N16ADFP_APR_ICC2_11M.10a.tf
+```
+
+The tech file describes routing layers and process rules:
+
+```text
+metal stack
+pitch
+width
+spacing
+vias
+routing tracks
+grid/site rules
+```
+
+Layer RC data describes wire resistance and capacitance for each metal layer. Synopsys commonly uses TLU+ files. Cadence Innovus commonly uses QRC tech files.
+
+Mental model:
+
+```text
+.db / .lib      -> how gates behave electrically and temporally
+LEF / NDM       -> what cells look like physically
+.tf / tech LEF  -> routing layers and design rules
+TLU+ / QRC      -> wire RC extraction models
+```
+
+Comparison:
+
+```text
+Plain DC:
+  RTL + .db + SDC
+  -> mapped gates
+  -> cell-delay dominated STA
+  -> good for early RTL/logic intuition
+
+Topo DC:
+  RTL + .db + physical library + tech/RC files + SDC
+  -> mapped gates with estimated placement/wire timing
+  -> better pre-layout timing prediction
+
+Innovus/ICC2:
+  gate netlist + physical libraries + tech/RC + floorplan/place/route
+  -> actual physical timing after placement/routing
+```
+
+For learning RTL-to-gates and `report_timing`, plain DC is enough. For realistic CPU timing closure, topo DC or post-place/post-route STA is much more meaningful.
+
+##### Hands-On DC / Verdi Timing Debug Loop
+
+The useful learning loop is:
+
+```text
+RTL simulation:
+  RTL + testbench -> Verilator/VCS
+  checks functional correctness
+  does not require DC synthesis
+  does not prove timing
+
+Synthesis + early STA:
+  RTL + .db + SDC -> DC/Genus
+  maps RTL to gates
+  reports early timing/area/QoR
+  catches latches, black boxes, bad constraints, and unexpected structures
+
+Gate-level schematic:
+  synthesized netlist -> Verdi
+  shows what hardware the RTL became
+  helps map report_timing cells back to RTL logic
+
+Optional gate-level simulation:
+  gate netlist + standard-cell models + SDF -> VCS/Questa/Xcelium
+  checks gate-level behavior with annotated delays
+  not the main timing-closure method
+
+Physical STA:
+  placed/routed design + extracted RC -> Innovus/Tempus/PrimeTime
+  gives realistic physical timing
+```
+
+`SDF` means Standard Delay Format. It is a delay annotation file generated by a tool for a particular netlist/corner/timing view:
+
+```text
+cell delays
+net delays
+clock-to-Q delays
+setup/hold checks
+interconnect delay
+```
+
+The PDK/library provides `.lib`/`.db` timing models. DC uses those timing models directly for STA and can write SDF afterward. SDF is mainly consumed by gate-level simulation.
+
+The practical debug process:
+
+```text
+1. Run synthesis and report_timing.
+2. Check constraints first: clocks, false paths, multicycle paths, reset/test/debug paths.
+3. Pick one real critical max-delay path.
+4. Identify startpoint flop, endpoint flop, slack, arrival time, required time.
+5. Read the per-row incremental delay.
+6. Separate cell delay from net delay.
+7. Check slew/transition, fanout, and load.
+8. Open the gate-level cone in Verdi.
+9. Group cells into RTL functions: mux, compare, adder, priority, decode, CAM, reduction.
+10. Decide whether the architecture needs pipelining, banking, duplication, arbitration, replay, or simplification.
+```
+
+Timing report rows usually show:
+
+```text
+Point / cell instance      incremental delay      cumulative path delay
+```
+
+The important skill is not only finding the largest cell. It is grouping adjacent cells into a sub-function:
+
+```text
+decode/control logic
+adder carry/sum logic
+priority encoder
+final result mux
+reset/output gate
+```
+
+Then estimate which sub-function dominates the path.
+
+Example grouping table:
+
+```text
+Sub-block              Delay     Dominant cause
+------------------------------------------------
+op decode/control      50 ps     logic
+adder carry/sum        210 ps    logic depth
+final result mux       80 ps     mux/gating
+register overhead      60 ps     clk-to-Q/setup
+```
+
+Setup and hold are separate checks:
+
+```text
+setup:
+  max-delay check to the next clock edge
+  path must not be too slow
+  determines one-cycle feasibility
+
+hold:
+  min-delay check against the same clock edge
+  path must not be too fast
+  not subtracted from the cycle-time setup budget
+```
+
+Setup intuition:
+
+```text
+clk_to_Q(max) + comb_delay(max) + setup + uncertainty <= clock_period +/- skew
+```
+
+Hold intuition:
+
+```text
+clk_to_Q(min) + comb_delay(min) >= hold + uncertainty +/- skew
+```
+
+Hold time is not a universal technology-node constant. It is characterized per sequential standard cell and corner in `.lib`/`.db`.
+
+Slew is the transition time of a signal edge:
+
+```text
+rising slew:
+  time from low threshold to high threshold, often 20%-80% or 10%-90% VDD
+
+falling slew:
+  time from high threshold to low threshold
+```
+
+Bad slew means a slow edge. It increases downstream cell delay and can propagate through the path. Common causes:
+
+```text
+weak driver
+large output load
+high fanout
+long wire
+too much input capacitance on the next stage
+```
+
+For DC/Verdi mapping, gate names in `report_timing` are gate-level netlist objects:
+
+```text
+u_int_alu/adder/U250
+u_int_alu/U290
+result_q_reg[26]
+```
+
+Mapping method:
+
+```text
+1. Use hierarchy and register names first.
+2. Search the instance/signal in Verdi's hierarchy or object search.
+3. Select the actual design object, not just highlighted text in the source viewer.
+4. Open nSchema on that object.
+5. Trace fanin from endpoint D pin or trace fanout from startpoint Q pin.
+6. Map the cluster of gates back to an RTL operation.
+```
+
+If Verdi says:
+
+```text
+Please select signal [instance] to create a new nSchema window.
+```
+
+it usually means text was selected in the source window, not a real loaded signal/instance object. Use hierarchy search or object search to select the instance.
+
+Common standard-cell patterns:
+
+```text
+AOI = AND-OR-Invert
+  Y = ~((A & B) | (C & D))
+
+OAI = OR-AND-Invert
+  Y = ~((A | B) & (C | D))
+```
+
+AOI/OAI cells are common because CMOS often implements inverted compound logic efficiently. Synthesis uses them to reduce logic depth in adders, muxes, decoders, and control logic.
+
+Concrete tutorial example:
+
+```text
+Block:
+  RSD IntALU wrapped by IntALU_TimingTop
+
+Selected DC path:
+  Startpoint: aluCode_q_reg[0]
+  Endpoint:   result_q_reg[26]
+  Clock:      core_clk
+  Slack:      about +0.0009 ns at 0.40 ns
+
+Logic:
+  ALU op decode/control
+  -> operand/control logic
+  -> adder carry/sum chain
+  -> result mux / output gating
+  -> result register
+```
+
+Architectural interpretation:
+
+```text
+Even a "simple" one-cycle integer ALU is not a single abstract operation.
+The cycle must fit control decode, operand manipulation, adder carry/sum logic,
+final result selection, clk-to-Q, setup, uncertainty, and some wiring.
+```
+
+The Verdi schematic for the adder cone showed many standard cells, not one magic adder:
+
+```text
+XOR/XNOR-like cells for sum
+AOI/OAI/AND/OR cells for carry/control
+buffers/inverters for polarity and drive
+final gating before the destination flop
+```
+
+This is why architecture timing intuition must translate RTL operators into actual structures:
+
+```text
+RTL:
+  result = srcA + srcB
+
+Hardware:
+  decode/control + propagate/generate/carry + sum XOR + result mux + flop
+```
+
+The same method should be applied to more performance-modeling-critical paths:
+
+```text
+issue queue wakeup/select
+store queue forwarding
+load queue violation search
+register file/bypass mux
+TLB/cache hit path
+branch redirect path
+```
+
+Synthesis can improve timing through:
+
+```text
+cell upsizing
+buffer insertion
+logic duplication
+logic restructuring
+faster cell choices
+```
+
+But these cost:
+
+```text
+area
+dynamic power
+leakage
+input capacitance on previous stages
+possible hold/setup side effects
+```
+
+Good experiment:
+
+```text
+Run the same block at multiple clock periods.
+Track slack, area, cell count, buffer count, and whether the critical path changes.
+The "knee" where area rises sharply but slack barely improves often indicates
+that architecture, not just synthesis, must change.
+```
+
+##### FO4 as a Delay Ruler
+
+FO4 means:
+
+```text
+fanout-of-4 inverter delay
+```
+
+Equivalent views:
+
+```text
+one inverter drives four same-sized inverter inputs
+one inverter drives one inverter with 4x input capacitance
+```
+
+Example tapered chain:
+
+```text
+1x INV -> 4x INV -> 16x INV -> 64x INV
+```
+
+Each stage has effort:
+
+```text
+4x / 1x   = 4
+16x / 4x  = 4
+64x / 16x = 4
+```
+
+Architects use FO4 as a normalized delay unit:
+
+```text
+cycle_time / FO4_delay = cycle budget in FO4
+```
+
+Example:
+
+```text
+cycle time = 500 ps
+FO4 delay  = 20 ps
+
+cycle ~= 25 FO4
+```
+
+Not all 25 FO4 is useful logic. Some is spent on:
+
+```text
+flop clock-to-Q
+setup time
+clock uncertainty/skew
+wire/buffer/margin
+```
+
+So the usable combinational budget may be much smaller, for example:
+
+```text
+15-18 FO4 of useful logic
+```
+
+This is process, voltage, library, and design-style dependent. The point is not exact signoff timing. The point is early feasibility:
+
+```text
+If a proposed one-cycle path needs CAM search + priority select + mux + SRAM access,
+it probably needs pipelining, banking, speculation, or a simpler design.
+```
+
+##### Logical Effort Refresher
+
+Logical effort uses:
+
+```text
+delay ~= g * h + p
+```
+
+Where:
+
+```text
+g = logical effort: intrinsic gate complexity relative to inverter
+h = electrical effort: output_load / input_cap
+p = parasitic delay
+```
+
+Common intuition:
+
+```text
+inverter:      g = 1
+2-input NAND:  g ~= 4/3
+3-input NAND:  g ~= 5/3
+2-input NOR:   g ~= 5/3
+3-input NOR:   g ~= 7/3
+```
+
+CMOS intuition:
+
+```text
+NAND is usually cheaper/faster than NOR because NOR has series PMOS in the pull-up path.
+Wide gates are usually broken into trees.
+```
+
+Stage effort:
+
+```text
+stage effort = g * h
+```
+
+The theoretical optimum stage effort is near:
+
+```text
+e ~= 2.7
+```
+
+That `2.7` result assumes no parasitic delay. If each stage has non-trivial parasitic delay, adding too many stages also costs delay. A common inverter-chain model is:
+
+```text
+stage delay ~= f + gamma
+
+f      = stage effort
+gamma  = normalized parasitic delay
+```
+
+For a fixed total path effort, the optimum stage effort solves roughly:
+
+```text
+f * (ln f - 1) = gamma
+```
+
+So:
+
+```text
+gamma = 0  -> f ~= e ~= 2.7
+gamma = 1  -> f ~= 3.6, often rounded toward 4
+```
+
+This is why many slides say:
+
+```text
+best effective fanout is around 4
+```
+
+In practical CMOS with parasitics, useful stage effort is therefore often around:
+
+```text
+3 to 4
+```
+
+That is why FO4 is a useful reference. A stage effort much larger than that may indicate the path is under-buffered or constrained to too few stages. A much smaller stage effort may mean the design uses too many stages and pays too much parasitic delay.
+
+Harder to drive means:
+
+```text
+the next input has more capacitance,
+so the previous stage takes longer to charge/discharge it unless the driver is upsized or buffered.
+```
+
+Standard cells provide different drive strengths:
+
+```text
+INV_X1, INV_X2, INV_X4, INV_X8
+NAND2_X1, NAND2_X2, ...
+```
+
+A stronger cell drives faster, but increases:
+
+```text
+area
+power
+input capacitance seen by the previous stage
+possible hold/setup side effects
+```
+
+##### How To Convert Blocks To FO4 Estimates
+
+There is no universal formula from a block name to FO4. The practical method is:
+
+```text
+1. Decompose the block into logic patterns.
+2. Count critical logic levels.
+3. Account for width, fanout, and wire distance.
+4. Estimate FO4-equivalent delay.
+5. Calibrate with synthesis/STA.
+```
+
+Rough mental lookup table:
+
+```text
+local 2:1 mux:            ~2-4 FO4
+mux tree level:           ~2 FO4 per local level
+small decode:             ~2-4 FO4
+64-bit equality compare:  ~5-8 FO4
+32/64-bit priority enc:   ~5-10 FO4
+CAM compare + match:      expensive; width, entries, broadcast, and match logic dependent
+SRAM read:                use macro timing, not a gate-level FO4 estimate
+```
+
+These are calibrated intuition numbers, not laws.
+
+2:1 mux example:
+
+```text
+y = sel ? b : a
+```
+
+Static NAND implementation:
+
+```text
+n0 = NAND(a, ~sel)
+n1 = NAND(b,  sel)
+y  = NAND(n0, n1)
+```
+
+Critical data path:
+
+```text
+a -> NAND2 -> NAND2 -> y
+```
+
+Each NAND is heavier than an inverter, and load/sizing/wiring matter. Therefore a local 2:1 mux is often roughly:
+
+```text
+~2-4 FO4
+```
+
+For a mux tree:
+
+```text
+8:1 mux = 3 levels of 2:1 muxes
+rough estimate = 3 * ~2 FO4 = ~6 FO4
+plus select buffering / wire / load
+```
+
+64-bit equality comparator:
+
+```text
+match = (a == b)
+
+64 XNORs in parallel
+  -> AND reduction tree
+  -> match output
+```
+
+Rough estimate:
+
+```text
+XNOR layer:          ~2 FO4
+reduction tree:      ~3-5 FO4
+wire/output buffer:  extra
+total:               ~5-8 FO4
+```
+
+Priority encoder:
+
+```text
+ready[63:0] -> find first/oldest/highest-priority ready bit
+```
+
+Rough structure:
+
+```text
+OR reductions
+prefix / priority masking
+grant generation
+encoding / select control
+```
+
+Rough estimate:
+
+```text
+32/64 input priority select ~= ~5-10 FO4
+```
+
+Issue-queue CAM wakeup example:
+
+```text
+entries = 64
+source operands = 2
+wakeup ports = 4
+physical tag width = 7 bits
+
+comparators = 64 * 2 * 4 = 512 tag comparators
+```
+
+Timing path:
+
+```text
+wakeup tag broadcast
+  -> long wires to entries
+  -> 7-bit compare
+  -> OR across wakeup ports
+  -> ready-bit update
+```
+
+The compare is not large by itself, but the parallelism, broadcast, fanout, and following select logic make the path timing-sensitive.
+
+##### Architecture Use
+
+FO4 thinking is useful for early rejection of unrealistic one-cycle proposals.
+
+Example:
+
+```text
+flop
+  -> 64-bit compare
+  -> priority select
+  -> 4:1 mux
+  -> flop
+```
+
+Rough estimate:
+
+```text
+clk-to-Q:          ~2 FO4
+64-bit compare:    ~6 FO4
+priority select:   ~6 FO4
+4:1 mux:           ~4 FO4
+setup/wire/margin: ~5 FO4
+-------------------------
+total:             ~23 FO4
+```
+
+If the cycle budget is about 25 FO4, maybe feasible. If the budget is about 15 FO4, this likely needs a pipeline split or a different design.
+
+Interview-safe phrasing:
+
+```text
+I would estimate this as a mux/compare/reduction path on the order of X FO4, then verify with synthesis and post-route STA. The exact number is library and layout dependent, but the estimate tells me whether a one-cycle implementation is plausible.
+```
+
+##### Timing Fix Playbook
+
+When timing fails, first classify the failure:
+
+```text
+logic depth problem:
+  too many gates / mux levels / compare-reduce levels / priority logic levels
+
+fan-in problem:
+  too many inputs to one decision
+  wide OR/AND reduction
+  wide priority encoder
+  wide comparator/CAM
+
+fan-out / wire problem:
+  one signal drives too many loads
+  long global broadcast
+  large physical distance
+  bad slew from weak driver or heavy load
+
+macro / port problem:
+  SRAM/RF/cache/TLB port count too high
+  macro access too slow
+  too many structures contend for one port
+
+constraint problem:
+  reset/debug/test/CDC path incorrectly timed as a normal one-cycle path
+  real multicycle path missing a multicycle constraint
+  false path not marked
+```
+
+Then choose the fix class.
+
+1. Add time:
+
+```text
+pipeline the path
+retime registers
+make the operation multi-cycle
+split wakeup/select or tag/data decision across cycles
+```
+
+Performance-model implication:
+
+```text
+extra latency
+changed bypass timing
+larger queue occupancy
+possible throughput change
+```
+
+2. Reduce logic work:
+
+```text
+predecode control bits
+reduce mux inputs
+reduce priority encoder width
+simplify select policy
+move computation earlier
+```
+
+Performance-model implication:
+
+```text
+less ideal selection
+more constrained issue choice
+possible extra bubbles or lower peak throughput
+```
+
+3. Reduce fan-in:
+
+```text
+bank the structure
+split one large queue into smaller queues
+use local arbiters plus a second-level arbiter
+search fewer entries per cycle
+```
+
+Performance-model implication:
+
+```text
+bank conflicts
+local queue imbalance
+limited search/forwarding window
+```
+
+4. Reduce fan-out and wire load:
+
+```text
+duplicate control logic
+cluster backend units
+localize broadcasts
+insert pipeline registers on long global paths
+use buffer trees
+```
+
+Performance-model implication:
+
+```text
+cluster-to-cluster bypass latency
+non-uniform access latency
+localized resources
+```
+
+5. Balance stage effort:
+
+```text
+cell upsizing
+buffer insertion
+logic restructuring
+driver cloning
+lower-Vt faster cells
+```
+
+This is mostly synthesis/PD work, but the architectural equivalent is:
+
+```text
+avoid one tiny source driving a huge global structure
+avoid one global all-to-all network when local networks would work
+```
+
+Performance-model implication:
+
+```text
+if synthesis needs extreme upsizing/buffering to barely pass,
+the design may be too power/area expensive to model as scalable.
+```
+
+6. Use speculation and replay:
+
+```text
+predict the common fast case
+allow execution to proceed
+replay if the late/precise check fails
+```
+
+CPU examples:
+
+```text
+speculative load wakeup
+speculative cache hit
+store-set / memory dependence prediction
+way prediction
+selective store queue lookup
+```
+
+Performance-model implication:
+
+```text
+prediction accuracy
+replay penalty
+wrong-path resource occupancy
+queue pressure
+```
+
+Interview-safe summary:
+
+```text
+I first classify whether the path is failing because of logic depth, fan-in,
+fan-out/wire delay, macro timing, or incorrect constraints. If the structure is
+fundamentally too large, I would not expect synthesis alone to solve it; I would
+consider pipelining, banking, clustering, duplication, or speculation/replay,
+and then reflect that limitation in the performance model.
+```
+
+##### Case Study: Issue Queue Wakeup / Select
+
+A software model may write:
+
+```cpp
+for (auto& entry : issue_queue) {
+    if (entry.src0_tag == wakeup_tag) entry.src0_ready = true;
+    if (entry.src1_tag == wakeup_tag) entry.src1_ready = true;
+}
+
+ready = src0_ready && src1_ready;
+winner = pick_oldest_ready(ready_vector);
+```
+
+The hardware shape is:
+
+```text
+producer result tag
+  -> broadcast to many issue queue entries
+  -> tag comparators for each source operand
+  -> ready-bit update
+  -> ready vector generation
+  -> priority select / oldest-ready select
+  -> issue grant generation
+  -> functional-unit input mux / register read address mux
+```
+
+Back-of-envelope comparator count:
+
+```text
+entries = 64
+source operands per entry = 2
+wakeup ports = 4
+physical tag width = 7 bits
+
+tag comparators = 64 * 2 * 4 = 512 small equality comparators
+```
+
+The 7-bit comparator is not hard by itself. The hard part is the system shape:
+
+```text
+high-fanout wakeup tag broadcast
+many parallel comparators
+OR/reduction across wakeup ports
+ready vector generation
+wide priority select
+grant/bypass/control fanout
+```
+
+A risky one-cycle path would be:
+
+```text
+wakeup tag flop
+  -> broadcast
+  -> compare
+  -> ready update
+  -> ready vector
+  -> oldest-ready priority select
+  -> issue grant
+  -> issue mux / FU input
+  -> pipeline flop
+```
+
+If STA shows cell-delay dominated failure:
+
+```text
+compare + ready reduction + priority select + mux is too much logic
+```
+
+Possible fixes:
+
+```text
+split wakeup and select into different cycles
+use speculative wakeup
+precompute readiness
+reduce select width
+use distributed issue queues
+```
+
+If STA shows net-delay/fanout dominated failure:
+
+```text
+wakeup tag broadcast or grant broadcast is physically too global
+```
+
+Possible fixes:
+
+```text
+cluster backend
+partition issue queues
+duplicate wakeup drivers
+localize broadcast networks
+pipeline long cross-cluster bypasses
+```
+
+If the design uses speculative wakeup:
+
+```text
+cycle N:
+  producer is predicted to produce a result
+  dependent entries are woken up early
+
+cycle N+1:
+  dependent uops can be selected/issued
+
+if the producer misses/replays:
+  dependent uops are replayed or squashed from the replay path
+```
+
+Architecture consequence:
+
+```text
+wakeup/select timing is improved,
+but the model must include replay on load miss, port conflict, or producer failure.
+```
+
+Modeling checklist:
+
+```text
+issue queue size
+number of wakeup ports
+number of issue ports
+unified vs distributed queues
+wakeup latency
+select latency
+writeback/result-bus ports
+replay queue behavior
+cluster/bypass latency
+```
+
+Interview-safe explanation:
+
+```text
+The issue queue is a good example where C++ loops hide hardware cost. A wakeup
+loop becomes tag broadcasts and hundreds of small comparators; selection becomes
+a wide priority encoder. If that cannot close in one cycle, the architecture may
+split wakeup/select, distribute the queues, or wake speculatively and replay.
+Therefore a performance model should not treat wakeup/select as an unlimited,
+zero-latency operation.
+```
+
+#### 6.2 Why Ports Matter
 
 Port examples:
 - Register-file read port: one independent operand read in a cycle.
@@ -13291,7 +15519,7 @@ plus high-fanout wakeup_tag wires
 
 The performance model does not need transistor-level accuracy, but it must know that "add more wakeup ports" is not free.
 
-#### 6.2 Common Critical Timing Paths
+#### 6.3 Common Critical Timing Paths
 
 Frontend timing paths:
 - PC select mux -> predictor table read -> tag compare -> target select -> next PC.
@@ -13315,7 +15543,7 @@ LSU timing paths:
 - D-cache tag/data read -> way select -> data alignment -> writeback.
 - MSHR allocation/merge arbitration.
 
-#### 6.3 Back-of-Envelope Templates
+#### 6.4 Back-of-Envelope Templates
 
 Issue queue wakeup:
 
@@ -13374,7 +15602,7 @@ naive parallel way read:
 
 Hardware cost depends heavily on whether the design reads all ways, predicts a way, banks the cache, or pipelines the access.
 
-#### 6.4 RTL Snippet Review Format
+#### 6.5 RTL Snippet Review Format
 
 For every future RTL example, use this checklist.
 
@@ -13415,7 +15643,7 @@ For every future RTL example, use this checklist.
    - Model as replay probability.
    - Model as arbitration priority.
 
-#### 6.5 Structures To Analyze Later
+#### 6.6 Structures To Analyze Later
 
 Frontend:
 - PC select mux and redirect priority.
@@ -13477,7 +15705,7 @@ Important attitude:
 
 ## Part 11 — Prefetcher Microarchitecture
 
-This section is a dedicated placeholder for prefetcher design because prior interviewers asked heavily about it. Prefetching is a major performance-modeling topic: it can reduce miss latency, but it can also waste bandwidth, pollute caches, consume MSHRs, increase power, and interfere with demand requests.
+This section is dedicated to prefetcher design because prior interviewers asked heavily about it. Prefetching is a major performance-modeling topic: it can reduce miss latency, but it can also waste bandwidth, pollute caches, consume MSHRs, increase power, and interfere with demand requests.
 
 Core framing:
 
@@ -13525,81 +15753,2282 @@ For any prefetcher, answer:
 | How is it throttled? | bandwidth, MSHR occupancy, accuracy, pollution, page boundary |
 | How is usefulness measured? | prefetch hit, late prefetch, unused prefetch, evicted-before-use |
 
-### 3. Evaluation Metrics
+### 3. Baseline Example: Access-Triggered Next-Line Prefetcher With Stream Buffer
+
+This is the simplest useful design to reason about because it contains almost all of the real prefetcher integration problems: trigger point, duplicate filtering, TLB/page handling, MSHR arbitration, fill target, stream-buffer replacement, timeliness, and resource interference.
+
+Core idea:
+
+```text
+Demand access touches cache line A.
+Prefetcher predicts line A + 1.
+The predicted line is fetched early and placed into a stream buffer, not directly into L1D.
+If a later demand access needs A + 1, the stream buffer supplies it and may install it into L1D.
+```
+
+High-level datapath:
+
+```text
+Demand load/store access
+        |
+        v
++-------------------+
+| L1D access line A |
++-------------------+
+        |
+        | observe access stream
+        v
++---------------------------+
+| next-line candidate: A+64 |
++---------------------------+
+        |
+        v
++------------------------------------------------+
+| filters: L1 / MSHR / prefetch queue / stream   |
+| buffer / victim buffer / same-page / throttle  |
++------------------------------------------------+
+        |
+        v
++-------------------+     low priority      +-------------+
+| Prefetch Queue    | ---------------------> | DTLB / PTW  |
++-------------------+                        +-------------+
+        |                                            |
+        | demand has priority                         v
+        v                                      translated PA
++-------------------+
+| Prefetch MSHR     |
++-------------------+
+        |
+        v
++-------------------+       +----------------+
+| L2 / memory path  | ----> | Refill Buffer  |
++-------------------+       +----------------+
+                                      |
+                                      v
+                              +---------------+
+                              | Stream Buffer |
+                              +---------------+
+                                      |
+                                      v
+                        later demand miss can hit here
+```
+
+Storage in this baseline:
+
+| Structure | What an entry means |
+| --- | --- |
+| Candidate pipeline entry | A just-generated `A+64` candidate before full filtering |
+| Prefetch queue entry | A filtered request waiting for translation/MSHR/bandwidth |
+| Prefetch MSHR entry | An in-flight miss request for a prefetched line |
+| Refill buffer entry | A returned line waiting for its fill target |
+| Stream buffer entry | A prefetched 64B line held outside L1D |
+
+This simple next-line design does not require a large predictor table. The "table" of outstanding work is usually the combination of prefetch queue entries, MSHR entries, and stream-buffer entries. More advanced stride or correlation prefetchers add predictor tables indexed by load PC, address region, or recent delta history.
+
+#### Trigger Policy
+
+Two common trigger styles:
+
+| Trigger | Behavior | Tradeoff |
+| --- | --- | --- |
+| Miss-triggered | Only generate `A+1` after a demand miss on `A` | Low traffic, but often late |
+| Access-triggered | Generate candidates on hits and misses | More timely, but more bandwidth/pollution risk |
+
+For an access-triggered next-line prefetcher, the prefetcher watches the access stream after the L1D address is known. It should not be placed on the L1 hit critical path. A realistic implementation treats prefetch generation as a side pipeline:
+
+```text
+Cycle N:
+  demand access uses the normal L1D pipeline
+  prefetcher observes line A and computes candidate A+1
+
+Cycle N+1 or later:
+  prefetch queue performs duplicate/resource checks
+  optional low-priority TLB lookup happens
+  MSHR allocation is attempted only if resources are available
+```
+
+This is an important timing point. Do not model the prefetcher as if it can check every structure, access the TLB, allocate an MSHR, and send a request in the same cycle without ports or arbitration.
+
+#### Step-by-Step Flow
+
+1. Demand access reaches the L1D pipeline.
+
+   The access may be a load or store, and it may hit or miss. The prefetcher observes the cache-line address `A`.
+
+2. Candidate generation computes the next line.
+
+   With 64B lines:
+
+   ```text
+   candidate_line = A + 64
+   ```
+
+3. Fast filters reject obviously bad candidates.
+
+   Typical filters:
+
+   | Filter | Purpose |
+   | --- | --- |
+   | Already in L1D | Do not prefetch a line already present |
+   | Already in stream buffer | Avoid duplicate stream entries |
+   | Already in prefetch queue | Avoid duplicate queued work |
+   | Already in MSHR | Merge or drop duplicate in-flight requests |
+   | Already in victim buffer | Usually drop; demand can recover it cheaply from victim buffer |
+   | Same 4KB page | Avoid speculative page crossing unless translation support exists |
+   | MSHR pressure | Drop or throttle when demand misses need entries |
+   | Bandwidth pressure | Do not create a larger bottleneck downstream |
+   | Low confidence / low usefulness | Reduce wasted requests |
+
+4. Candidate enters the prefetch queue.
+
+   The queue decouples generation from issue. This avoids forcing all checks into the L1D hit cycle. It also gives demand requests priority.
+
+5. Translation is handled carefully.
+
+   If `A` and `A+64` are in the same 4KB page, the prefetcher can often derive the physical next-line address from the already translated demand address:
+
+   ```text
+   PA_next = PA_current + 64
+   ```
+
+   If the candidate crosses a page boundary, virtual contiguity does not imply physical contiguity. The design choices are:
+
+   | Page-crossing policy | Tradeoff |
+   | --- | --- |
+   | Drop at page boundary | Simple and safe, but loses coverage |
+   | Low-priority DTLB lookup | Better coverage, consumes TLB ports |
+   | PTW/page prefetch support | More aggressive, more complex |
+
+   A prefetch must not raise an architectural page fault. If translation fails, permission fails, or a page walk would be too expensive, the prefetch is normally dropped.
+
+6. Prefetch request arbitrates for an MSHR.
+
+   Demand misses normally win over prefetches. If the MSHR is full, the prefetcher can:
+
+   ```text
+   drop the prefetch
+   keep it queued for a few cycles
+   throttle future prefetch generation
+   reduce degree/distance
+   ```
+
+7. Refill returns into a refill buffer.
+
+   The returning prefetch line may conflict with demand refill bandwidth or cache write ports. Demand fills normally have higher priority. A prefetch fill can wait, be redirected, or be dropped depending on the design.
+
+8. Prefetch fill targets the stream buffer.
+
+   In this baseline design, prefetch data is not immediately installed into L1D. It is placed into a stream buffer:
+
+   ```text
+   StreamBufferEntry:
+     valid
+     physical_line_addr
+     64B data
+     age / replacement state
+     used bit
+     source / confidence metadata
+   ```
+
+   This reduces L1D pollution. A useless prefetch occupies stream-buffer capacity instead of evicting a useful L1D line.
+
+9. Later demand access checks the stream buffer.
+
+   Typical lookup order:
+
+   ```text
+   demand access
+      |
+      +-- L1D hit: use L1D data
+      |
+      +-- L1D miss:
+             |
+             +-- stream buffer hit:
+             |      supply data
+             |      optionally install line into L1D
+             |      mark prefetch useful
+             |
+             +-- stream buffer miss:
+                    allocate normal demand MSHR
+   ```
+
+   A stream-buffer hit is the success case: the prefetch arrived early enough and avoided a demand miss.
+
+#### Stream Buffer Full Policy
+
+If the stream buffer is full, the design should not blindly flush the whole buffer periodically. Better policies are entry-based:
+
+| Policy | Behavior |
+| --- | --- |
+| Drop new prefetch | Simple, protects existing prefetched lines |
+| Replace oldest unused entry | Good baseline policy |
+| Replace lowest-confidence stream | Better when confidence exists |
+| Timeout unused entries | Removes prefetched lines that were too early |
+| Throttle generation | Prevents repeated full-buffer drops |
 
 Useful counters:
-- Prefetch requests issued.
-- Prefetch requests dropped due to queue/MSHR/bandwidth pressure.
-- Prefetch hits.
-- Prefetch late hits: demand arrived before prefetch completed.
-- Prefetch accuracy: used prefetches / issued prefetches.
-- Prefetch coverage: misses eliminated / original misses.
-- Pollution: useful demand lines evicted by prefetches.
-- MSHR occupancy caused by prefetches.
-- Demand-request delay caused by prefetches.
-- Bandwidth overhead.
-- Energy/power proxy from prefetch accesses.
-
-Performance-modeling warning:
 
 ```text
-Prefetcher improves IPC only if the prefetch arrives early enough and does not create a larger bottleneck elsewhere.
+stream_buffer_hit
+stream_buffer_insert
+stream_buffer_full_drop
+stream_buffer_timeout_drop
+stream_buffer_unused_evict
 ```
 
-### 4. Hardware Integration Points
+#### Timeliness Design Choices
 
-Prefetcher needs to interact with:
-- Load/store pipeline.
-- I-cache/D-cache miss path.
-- MSHRs.
-- Fill buffers.
-- Cache replacement policy.
-- TLB/page boundary checks.
-- Coherence request path.
-- Demand-vs-prefetch arbitration.
-- Power/throttle logic.
+A prefetch is useful only if it arrives before the demand access needs the line.
 
-Important implementation questions:
-- Can prefetch requests allocate MSHRs?
-- Can they evict demand lines?
-- Are prefetch fills marked with lower replacement priority?
-- Are prefetches canceled on branch flush or context switch?
-- Does the prefetcher train on wrong-path/speculative accesses?
-- Does it cross 4KB page boundaries?
-- Does it need physical address, virtual address, or both?
-
-### 5. Concrete Examples To Fill Later
-
-RSD / project examples:
-- L1D next-line prefetcher from the LSU/L1D optimization section.
-- Interaction with D-cache MSHRs and demand load priority.
-- Whether prefetch requests are dropped, queued, or backpressured.
-
-Modern-core interview examples:
-- Why next-line prefetching helps instruction fetch streams.
-- Why stride prefetching helps arrays but not pointer chasing.
-- Why aggressive prefetching can hurt memory-level parallelism by filling MSHRs.
-- Why prefetch distance must scale with memory latency and loop body work.
-- Why prefetch degree must be throttled by bandwidth and accuracy.
-
-### 6. Interview Summary
-
-Strong answer shape:
+Miss-triggered next-line prefetching is often late:
 
 ```text
-I would evaluate a prefetcher by coverage, accuracy, timeliness, bandwidth cost, pollution, and interaction with scarce resources like MSHRs and cache ports.
-The performance model needs to represent not just miss reduction, but also the extra traffic and contention introduced by prefetch requests.
+miss on A -> prefetch A+1 starts now
+later demand reaches A+1 before prefetch returns
+result: late prefetch, little or no IPC benefit
 ```
 
-### 7. Review Questions
+Access-triggered prefetching improves timeliness:
+
+```text
+hit on A -> prefetch A+1 starts early
+later demand reaches A+1
+result: stream-buffer hit
+```
+
+Main knobs:
+
+| Knob | Effect | Risk |
+| --- | --- | --- |
+| Trigger on hits and misses | Earlier prefetch | More traffic |
+| Prefetch distance | Fetch farther ahead, e.g. `A+2`, `A+4` | Too early, more pollution |
+| Prefetch degree | Multiple lines per trigger | More MSHR/bandwidth pressure |
+| Continue on stream-buffer hit | Maintains sequential stream | Can run away on wrong stream |
+| Confidence threshold | Suppresses noisy streams | May reduce coverage |
+| Adaptive throttling | Reacts to accuracy/pressure | More state and tuning |
+
+Simple adaptive rule:
+
+```text
+if many late prefetches:
+  increase distance or trigger earlier
+
+if many unused prefetches or MSHR drops:
+  reduce degree/distance or throttle
+```
+
+#### Port and Resource Model
+
+Even a simple next-line prefetcher touches many scarce resources:
+
+| Resource | Why it matters |
+| --- | --- |
+| L1D tag lookup | Duplicate check may need a port or delayed lookup |
+| DTLB | Page-crossing prefetches need translation |
+| MSHR | Prefetch misses compete with demand misses |
+| Fill buffer | Returning prefetches compete with demand refills |
+| Cache write port | Installing prefetched lines can conflict with demand fills |
+| Stream-buffer lookup | Demand miss path may need associative compare |
+| Victim buffer lookup | Avoids prefetching a recently evicted line already nearby |
+
+Performance-modeling rule:
+
+```text
+A prefetch request is not free.
+It consumes queue entries, MSHRs, bandwidth, fill slots, and sometimes TLB/cache ports.
+```
+
+#### Why This Baseline Generalizes
+
+More advanced prefetchers mainly improve the prediction function, but the integration problems stay similar.
+
+| Prefetcher | Better prediction | Same integration problems |
+| --- | --- | --- |
+| Next-line | `A + 1` | filters, TLB, MSHR, fill target |
+| Stride | `last_addr + stride` per load PC | same |
+| Stream | detect sequential region stream | same |
+| Delta/correlation | repeating delta pattern | same |
+| Pointer/indirect | target loaded from memory | same, plus dependency on loaded pointer |
+
+For an interview, this baseline is a strong starting point:
+
+```text
+I would first build a conservative access-triggered next-line prefetcher with duplicate filters, page-boundary handling, demand-priority MSHR arbitration, and a stream buffer fill target. Then I would measure coverage, accuracy, timeliness, MSHR pressure, stream-buffer hit rate, and demand delay before adding a more complex predictor.
+```
+
+### 4. Predictor Families
+
+The clean way to think about prefetchers is to separate prediction from integration:
+
+```text
+prediction logic:
+  decide which future address is likely useful
+
+request/fill pipeline:
+  safely turn that predicted address into a memory request
+```
+
+The shared request pipeline is usually similar:
+
+```text
+candidate address
+  -> duplicate filters
+  -> page / TLB check
+  -> prefetch queue
+  -> demand-priority arbitration
+  -> MSHR allocation
+  -> lower cache / memory request
+  -> refill buffer
+  -> stream buffer or cache fill
+  -> usefulness tracking
+```
+
+The main difference between prefetchers is how much history and context the predictor uses.
+
+| Predictor | History/context | Prediction |
+| --- | --- | --- |
+| Next-line | current line | `current + 1 line` |
+| Stride | load PC, last address, stride, confidence | `current + learned_stride` |
+| Stream/region | recent movement inside address region | continue direction |
+| Delta/correlation | recent delta sequence | next delta from pattern |
+| Pointer/indirect | load result value, pointer field, load PC | address stored in memory |
+
+#### Stride Prefetcher
+
+A stride prefetcher is a small stride predictor, usually indexed by load PC:
+
+```text
++------------------------------------------------+
+| PC tag | last_addr | stride | confidence        |
++------------------------------------------------+
+```
+
+Meaning:
+
+```text
+For this load instruction PC,
+the last address was X,
+the likely repeated distance is stride,
+and confidence says whether to trust it.
+```
+
+Update rule:
+
+```text
+new_stride = current_addr - last_addr
+
+if new_stride == stride:
+  confidence = min(confidence + 1, CONF_MAX)
+else:
+  stride = new_stride
+  confidence = CONF_INIT_OR_LOW
+
+last_addr = current_addr
+
+if confidence >= threshold:
+  prefetch current_addr + stride
+```
+
+The confidence reset matters. If the stride changes once, the new stride may be a real new pattern or just noise. A more robust design can keep both a stable stride and a candidate stride, but the baseline rule above is enough for interview discussion.
+
+Concrete trace:
+
+```text
+0x1000
+0x1040   new_stride = +64
+0x1080   +64 repeats, confidence rises
+0x10c0   +64 repeats, prefetch 0x1100
+```
+
+Stride works well for regular array access. It struggles when the address stream alternates or depends on pointer values.
+
+#### Stream / Region Prefetcher
+
+A stream prefetcher is usually address-region based rather than load-PC based. It asks:
+
+```text
+Is this region being traversed forward or backward?
+```
+
+Simple stream entry:
+
+```text
++------------------------------------------------+
+| valid | region tag | direction | next_line | conf |
++------------------------------------------------+
+```
+
+Example:
+
+```text
+demand lines:
+  0x1000 -> 0x1040 -> 0x1080 -> 0x10c0
+
+stream detected:
+  direction = forward
+  prefetch 0x1100, 0x1140
+```
+
+Stream prefetching can work even when multiple load PCs contribute to the same sequential region. The risk is that the stream stops early, leaving unused prefetched lines in the cache or stream buffer.
+
+#### Delta / Correlation Prefetcher
+
+Delta prefetching handles repeating non-constant patterns:
+
+```text
++64, +128, +64, +128
+```
+
+It tracks recent deltas and predicts the next delta:
+
+```text
++-------------------------------+
+| delta history | next delta     |
++-------------------------------+
+| +64, +128     | +64            |
+| +128, +64     | +128           |
++-------------------------------+
+```
+
+Update detail:
+
+```text
+history before access = [+64, +128]
+actual new_delta      = +64
+
+table[+64, +128] should learn -> +64
+then shift new history to [+128, +64]
+```
+
+Delta prefetchers can chain predictions for higher degree, but chained prediction amplifies mistakes. Confidence and throttling matter more than in next-line or stride.
+
+#### Pointer-Chasing / Indirect Prefetcher
+
+Pointer chasing is different because the future address is not arithmetic:
+
+```text
+future_addr = memory[current_addr + pointer_offset]
+```
+
+Example:
+
+```cpp
+struct Node {
+    Node* next;
+    int value;
+};
+
+for (Node* p = head; p; p = p->next) {
+    sum += p->value;
+}
+```
+
+Address stream:
+
+```text
+0x1000 -> 0x7a40 -> 0x2100 -> 0x9340
+```
+
+There is no useful stride. A pointer prefetcher may detect that a load result looks like a valid pointer and prefetch the line containing that returned value:
+
+```text
+load p->next returns 0x7a40
+  -> prefetch line containing 0x7a40
+```
+
+More advanced designs chain:
+
+```text
+node0 returns -> prefetch node1
+node1 returns -> prefetch node2
+node2 returns -> prefetch node3
+```
+
+This is useful for lists, trees, graphs, hash tables, databases, and runtime object traversal. It is dangerous because false pointer detection can create useless TLB lookups, MSHR pressure, and cache pollution.
+
+### 5. Distance, Degree, and Timeliness
+
+Prefetch distance means how far ahead of the current demand stream the prefetch target is. The unit depends on context:
+
+```text
+software loop: often iterations or elements
+hardware prefetcher: often cache lines
+timing model: sometimes cycles ahead
+```
+
+Example:
+
+```cpp
+for (int i = 0; i < N; i++) {
+    __builtin_prefetch(&A[i + 40]);
+    sum += A[i];
+}
+```
+
+Here the software distance is 40 iterations. If `A[i]` is 4B:
+
+```text
+40 elements * 4B = 160B ~= 2.5 cache lines
+```
+
+If `A[i]` is 8B:
+
+```text
+40 elements * 8B = 320B = 5 cache lines
+```
+
+Distance is not "issue 40 requests now." It means:
+
+```text
+when executing iteration i,
+try to have data for iteration i+40 requested or arriving.
+```
+
+Degree is different:
+
+```text
+distance = how far ahead
+degree   = how many prefetch requests per trigger
+```
+
+Back-of-envelope distance:
+
+```text
+distance in iterations ~= memory_latency / cycles_per_iteration
+```
+
+Example:
+
+```text
+memory latency = 200 cycles
+loop body      = 5 cycles/iteration
+distance       ~= 40 iterations
+```
+
+Then convert to cache lines based on element size and line size. If one 64B line covers 8 iterations, 40 iterations is about 5 cache lines ahead.
+
+Timeliness outcomes:
+
+```text
+early/useful:
+  prefetch fills before demand arrives
+
+late:
+  demand arrives while prefetch is still in flight
+
+unused:
+  prefetch fills but demand never uses it before eviction
+```
+
+### 6. Throttling and Control Loop
+
+A prefetcher can be accurate and still harmful if it creates a bigger bottleneck elsewhere. A real design needs a control loop:
+
+```text
+observe usefulness and pressure
+adjust aggressiveness
+```
+
+Main knobs:
+
+| Knob | Effect |
+| --- | --- |
+| Degree | number of requests per trigger |
+| Distance | how far ahead to fetch |
+| Trigger policy | every access, miss only, confidence threshold |
+| Fill target | L1, L2, LLC, stream buffer |
+| Priority | whether prefetch can compete with demand |
+| Enable/disable | kill bad streams or bad PCs |
+
+Simple policy:
+
+```text
+if accuracy high and MSHR pressure low:
+  increase degree or distance
+
+if accuracy low:
+  decrease degree
+
+if many prefetches are late:
+  increase distance or trigger earlier
+
+if MSHR drops or demand delay increases:
+  reduce degree or lower priority
+
+if unused evictions increase:
+  fill into L2/stream buffer instead of L1
+```
+
+Per-stream throttling is better than global throttling:
+
+```text
+stream A useful -> keep aggressive
+stream B useless -> reduce degree or disable
+```
+
+### 7. Fill Target: L1 vs L2 vs Stream Buffer
+
+When a prefetch returns, the fill target is a major design choice.
+
+| Fill target | Benefit | Risk |
+| --- | --- | --- |
+| L1D/L1I | lowest latency if used soon | private-cache pollution, fill-port conflict |
+| L2 | avoids L1 pollution, still reduces long miss latency | demand still pays L1 miss + L2 hit |
+| LLC | reduces DRAM latency for far-ahead prefetch | still far from core |
+| Stream/prefetch buffer | avoids L1 pollution and tracks usefulness | extra lookup/storage, finite buffer |
+
+Baseline decision rule:
+
+```text
+high confidence + near use:
+  fill L1
+
+medium confidence or farther ahead:
+  fill stream buffer or L2
+
+low confidence:
+  drop or fill far away only if bandwidth is free
+```
+
+For the next-line baseline above, filling the stream buffer is conservative:
+
+```text
+prefetch line is nearby
+but it does not evict demand L1D lines until demand actually uses it
+```
+
+### 8. Instruction-Side Prefetching
+
+I-cache and D-cache prefetchers share a similar request pipeline after candidate generation:
+
+```text
+candidate address
+  -> duplicate filter
+  -> ITLB/DTLB page check
+  -> prefetch queue
+  -> demand-priority MSHR arbitration
+  -> refill
+  -> fill target
+```
+
+The candidate generator is different.
+
+D-side:
+
+```text
+load/store address stream
+  -> next-line / stride / stream / delta / pointer predictor
+```
+
+I-side:
+
+```text
+fetch PC / BTB / FTQ predicted path
+  -> next-line / branch target / future fetch blocks
+```
+
+Pure next-line I-prefetch:
+
+```text
+current_fetch_line A -> prefetch A + 64
+```
+
+FTQ-directed I-prefetch:
+
+```text
+FTQ predicted path:
+  0x1000 -> 0x1040 -> 0x8000 -> 0x8040
+
+prefetch:
+  0x1040, 0x8000, 0x8040
+```
+
+This is better than blindly fetching fallthrough because it follows predicted control flow. The prefetcher usually consumes future predicted PCs from the BPU/FTQ pipeline rather than doing an independent BTB lookup.
+
+I-side risks:
+
+```text
+wrong-path pollution
+ITLB pressure
+contention with demand I-cache misses
+self-modifying code / I-cache invalidation interactions
+instruction page faults must not be raised early
+```
+
+### 9. Software Prefetch Instructions
+
+Software prefetch is an explicit hint:
+
+```cpp
+__builtin_prefetch(&A[i + 40], 0, 3);
+```
+
+Meaning:
+
+```text
+address:  &A[i+40]
+rw:       0 = read prefetch
+locality: 3 = high temporal locality hint
+```
+
+Software prefetch still needs address generation. A typical flow:
+
+```text
+decode prefetch instruction
+  -> rename/dispatch/issue as lightweight memory op
+  -> AGU computes effective address
+  -> create prefetch request metadata
+  -> filters / TLB / queue / MSHR / refill
+```
+
+It differs from a real load:
+
+```text
+no destination physical register
+no load result writeback
+no architectural value
+ordinary failures are dropped/suppressed
+can be ignored under pressure
+```
+
+If the prefetch queue is full:
+
+```text
+drop the prefetch
+allow the instruction to complete/retire
+count queue_full_drop
+```
+
+Because a software prefetch is a hint, it should not backpressure the core like a real demand load.
+
+### 10. Coherence, Fences, Atomics, and PFO
+
+A normal prefetch is speculative performance work, not architectural execution.
+
+It can affect microarchitectural cache/coherence state:
+
+```text
+I -> S
+I -> E
+allocate in L1/L2/stream buffer
+consume MSHR/bandwidth
+cause snoop/directory traffic
+```
+
+It must not:
+
+```text
+produce a register value
+count as an architectural load
+satisfy acquire/release
+complete a fence
+create LR reservation
+perform SC/AMO
+raise a visible page fault
+```
+
+Prefetch-for-ownership is a stronger hint for future stores:
+
+```text
+I/S -> exclusive write permission
+```
+
+It can reduce later store upgrade latency, but it can also invalidate other cores unnecessarily and amplify false sharing. For interview baseline, know the idea but treat it as more advanced and higher risk than read prefetch.
+
+### 11. C++ Cycle Simulator Model
+
+Do not model prefetch as magic miss removal:
+
+```cpp
+if (prefetcher.predict(addr)) {
+    cache.insert(predicted_addr); // too optimistic
+}
+```
+
+Model it as a real non-binding request:
+
+```text
+demand access happens
+  -> prefetcher observes access
+  -> candidate generated
+  -> candidate enters queue if space
+  -> queue arbitrates for translation/MSHR/bandwidth
+  -> memory hierarchy returns response after latency
+  -> fill target receives line
+  -> later demand may hit prefetched line
+```
+
+Example structs:
+
+```cpp
+struct PrefetchRequest {
+    uint64_t vaddr;
+    uint64_t paddr;
+    bool has_translation;
+    PrefetchKind kind;
+    FillTarget target;
+    int priority;
+    uint64_t issue_cycle;
+    uint64_t ready_cycle;
+};
+
+struct CacheLine {
+    bool valid;
+    uint64_t tag;
+    bool prefetched;
+    bool used;
+    uint64_t fill_cycle;
+};
+```
+
+Per-cycle scheduling:
+
+```cpp
+void tick() {
+    handle_refills();
+    issue_demand_requests();
+    issue_prefetch_requests();
+    update_prefetcher_state();
+}
+```
+
+Demand priority:
+
+```cpp
+if (demand_miss_waiting && mshr.has_free()) {
+    issue_demand_miss();
+} else if (!prefetch_queue.empty() && mshr.has_free()) {
+    issue_prefetch();
+}
+```
+
+Drop reasons should be separate:
+
+```cpp
+enum class DropReason {
+    QueueFull,
+    MSHRFull,
+    TLBMissDropped,
+    PageBoundary,
+    DuplicateInCache,
+    DuplicateInMSHR,
+    StreamBufferFull,
+    Throttled
+};
+```
+
+This is important because "prefetch dropped" is not one bottleneck. Queue full, MSHR full, page boundary, and throttling imply different design fixes.
+
+### 12. Metrics and Debug Questions
+
+Core counters:
+
+```text
+prefetch_generated
+prefetch_issued
+prefetch_dropped_queue_full
+prefetch_dropped_mshr_full
+prefetch_dropped_duplicate
+prefetch_dropped_page
+prefetch_filled
+prefetch_used
+prefetch_late
+prefetch_unused_evicted
+prefetch_evicted_demand
+prefetch_demand_delay_cycles
+prefetch_mshr_occupancy
+stream_buffer_hit
+stream_buffer_full_drop
+```
+
+Derived metrics:
+
+```text
+accuracy = used prefetches / issued prefetches
+coverage = misses eliminated by prefetch / baseline demand misses
+lateness = late prefetches / useful or requested prefetches
+pollution = useful demand lines evicted by prefetches
+interference = demand delay caused by prefetch resource use
+```
+
+High accuracy but no IPC gain:
+
+```text
+prefetches may be late
+memory latency may not be the bottleneck
+MLP may already hide misses
+prefetches may delay demand via MSHR/bandwidth pressure
+prefetched data may hit L2 but still not solve load-use critical path
+```
+
+Lower MPKI but lower IPC:
+
+```text
+MSHR pressure
+bandwidth saturation
+cache pollution
+TLB pressure
+fill-port conflicts
+coherence traffic
+```
+
+Too aggressive symptoms:
+
+```text
+accuracy drops
+unused evictions increase
+MSHR full cycles increase
+demand miss latency increases
+prefetch queue full drops increase
+IPC decreases despite lower MPKI
+```
+
+Too conservative symptoms:
+
+```text
+accuracy high
+few drops
+few pollution events
+many demand misses remain
+many late prefetches
+MSHR/bandwidth headroom available
+```
+
+Fair comparison requires the same:
+
+```text
+cache sizes
+MSHR counts
+bandwidth limits
+replacement policy
+fill targets
+TLB behavior
+workloads
+warmup and measurement regions
+```
+
+### 13. Interview Summary
+
+Strong answer:
+
+```text
+I separate prefetching into prediction and integration. The predictor can be next-line, stride, stream, delta, pointer-based, or software-directed, but all of them eventually feed the same resource-controlled request pipeline: filtering, translation, prefetch queueing, MSHR allocation, refill, and fill-target selection. I would evaluate not just whether the predicted address is correct, but whether it arrives early enough without causing MSHR pressure, bandwidth contention, TLB pressure, cache pollution, or demand delay.
+```
+
+### 14. Review Questions
 
 - What is the difference between prefetch accuracy and coverage?
 - Why can a highly accurate prefetcher still fail to improve IPC?
-- Why can an inaccurate prefetcher improve IPC in some cases?
+- Why can a prefetcher reduce MPKI but reduce IPC?
 - What is prefetch timeliness?
-- Why is L1 prefetching riskier than L2 prefetching?
+- What is the difference between prefetch distance and degree?
+- Why does `A[i + 40]` not necessarily mean 40 cache-line prefetches?
+- Why is L1 prefetching riskier than L2 or stream-buffer prefetching?
 - How should prefetches be prioritized against demand misses?
 - What happens when prefetches consume all MSHRs?
-- Should prefetchers train on speculative accesses?
 - Why are page boundaries hard for prefetchers?
-- How would I model a stride prefetcher in C++ without overestimating its benefit?
+- Why does a stride prefetcher need confidence?
+- Why should stride confidence reset when the stride changes?
+- How does a stream prefetcher differ from a stride prefetcher?
+- Why is pointer prefetching harder than delta/stride prefetching?
+- How does I-cache prefetch candidate generation differ from D-cache prefetch candidate generation?
+- What does a software prefetch instruction do after address generation?
+- What should happen if the prefetch queue is full?
+- What cache/coherence state can a prefetch change?
+- Why can a prefetch not satisfy a fence, acquire/release, LR/SC, or AMO?
+- How would I model a prefetcher in C++ without overestimating its benefit?
+
+## Part 12 — Mock Interview, Debug Drills, and Evaluation Plans
+
+This section is not another architecture chapter. It is the interview practice framework.
+
+The target style is:
+
+```text
+start broad
+pick one answer thread
+go deeper until real understanding is visible
+ask for tradeoffs
+ask for numbers
+ask for hardware implementation limits
+ask how the performance model would represent it
+ask how to validate it
+```
+
+The interviewer is not only checking whether the concept is known. The interviewer is checking whether the candidate can reason like an architect:
+
+```text
+What is the baseline?
+What is the bottleneck?
+What alternatives were considered?
+Why choose this design?
+What does it cost in timing, area, power, verification, and model complexity?
+What counters prove the claim?
+What corner case breaks it?
+What would you do next if the data disagrees with your hypothesis?
+```
+
+### 1. Mock Interview Philosophy
+
+Strong interviewers often use a few repeated patterns.
+
+1. Ownership check:
+
+```text
+What is the hardest problem you solved?
+What did you personally do?
+What did you learn?
+```
+
+Follow-up style:
+
+```text
+Which module?
+Which protocol?
+Which exact condition triggered the bug?
+What was your first hypothesis?
+Why was it wrong?
+How did you narrow it down?
+What was the fix?
+How did you verify it?
+Why did earlier tests miss it?
+```
+
+2. System thinking:
+
+```text
+Draw the whole system first.
+Then zoom into the block you owned.
+Then explain how the block interacts with frontend/backend/LSU/cache/commit.
+```
+
+3. Tradeoff reasoning:
+
+```text
+Why A instead of B?
+What did A improve?
+What did A make worse?
+What metric changed?
+What hardware structure did A create?
+What timing path did A risk?
+```
+
+4. Quantitative reflex:
+
+```text
+Do a quick back-of-envelope calculation.
+Do not hide behind "depends" before estimating.
+State assumptions, compute, then discuss caveats.
+```
+
+5. Physical intuition:
+
+```text
+What is the critical path?
+How many ports/comparators/mux inputs?
+Is this SRAM, flop array, CAM, mux tree, or priority encoder?
+Does this need banking, pipelining, replay, or arbitration?
+```
+
+6. Debug maturity:
+
+```text
+What evidence did you collect?
+What hypotheses did you reject?
+What changed your mind?
+How did you avoid tuning the model to one workload?
+```
+
+### 2. Standard Mock Interview Flow
+
+Use this for a 45-minute stress mock.
+
+```text
+0-5 min:
+  project intro and ownership
+
+5-12 min:
+  broad microarchitecture flow
+
+12-25 min:
+  one deep technical thread
+
+25-35 min:
+  quantitative / timing / ports drill
+
+35-42 min:
+  open design problem or debug scenario
+
+42-45 min:
+  candidate questions to interviewer
+```
+
+Interviewer behavior:
+
+```text
+interrupt frequently
+ask "why?"
+ask "what if?"
+ask "how would you model this?"
+ask "how would RTL implement this?"
+ask "what counter proves it?"
+ask "what breaks this design?"
+```
+
+Candidate answer shape:
+
+```text
+1. Start with the baseline.
+2. State the bottleneck.
+3. Describe the design.
+4. Give the hardware structure.
+5. Name the tradeoffs.
+6. Give a quick number.
+7. Say how to validate.
+8. Mention one risk or limitation.
+```
+
+### 3. Project Deep-Dive Questions
+
+#### 3.1 RiVAI Cycle-Accurate Model
+
+Opening:
+
+```text
+Walk me through the RiVAI core model at a block level.
+What did you personally implement?
+What part was hardest?
+```
+
+Deep dives:
+
+```text
+How did your model represent frontend/backpressure?
+How did decode/rename/dispatch interact with ROB and issue queues?
+How did you model load/store replay?
+How did you model cache miss timing?
+What did you model cycle-accurately and what did you abstract?
+How did you calibrate against RTL or traces?
+What counters did you add?
+What was one model bug that produced misleading IPC?
+```
+
+Tradeoff probes:
+
+```text
+If the model is too detailed, simulation speed suffers. Where did you draw the line?
+If the model is too abstract, it overestimates IPC. Which abstractions are dangerous?
+How would you model an extra writeback port?
+How would you model a banked L1D?
+How would you model a speculative wakeup/replay design?
+```
+
+Expected answer quality:
+
+```text
+must connect model structures to hardware structures
+must mention counters and validation
+must distinguish functional correctness from timing/resource accuracy
+```
+
+#### 3.2 Victim Buffer / LR/SC / Livelock Debug
+
+Opening:
+
+```text
+Tell me about the hardest cache/LSU/coherence bug you debugged.
+```
+
+Deep dives:
+
+```text
+What exactly was the observed failure?
+Was it wrong value, hang, livelock, retry storm, or memory-ordering violation?
+What was your first hypothesis?
+What evidence contradicted it?
+Which signal/counter/log proved the root cause?
+How did LR/SC reservation interact with victim buffer or cache refill?
+Why did the bug not show up in simpler tests?
+How did you build a directed test?
+What invariant did you add after the fix?
+```
+
+Architectural probes:
+
+```text
+When should LR reservation be cleared?
+Can SC succeed if the line was evicted?
+What does SC return on failure?
+What happens if another core invalidates the line before SC retires?
+How would a performance model represent LR/SC retry behavior?
+```
+
+#### 3.3 Decoupled Frontend / FTQ
+
+Opening:
+
+```text
+Draw your frontend change and explain why the FTQ exists.
+```
+
+Deep dives:
+
+```text
+What metadata is stored in the FTQ?
+How does branch prediction communicate with fetch?
+How do redirects recover frontend state?
+What happens on BTB miss, direction mispredict, target mispredict, and RAS mispredict?
+What is the timing path from prediction to next PC?
+How would an FTQ become full?
+How does FTQ full backpressure fetch?
+```
+
+Tradeoff probes:
+
+```text
+Why decouple prediction and fetch?
+What does the FTQ cost?
+How large should it be?
+How would you evaluate FTQ size?
+What counters prove it helps?
+```
+
+#### 3.4 16nm Physical Design / Timing Closure
+
+Opening:
+
+```text
+What did you learn from the 16nm Innovus flow that changed how you think about architecture?
+```
+
+Deep dives:
+
+```text
+What is the difference between DC STA and post-route STA?
+What does Verdi show that a timing report does not?
+What is setup vs hold?
+What is slew?
+What does SDF do?
+What is the difference between .lib/.db, NDM/LEF, tech file, and TLU+/QRC?
+How do you classify a timing path as logic-depth vs fanout/wire dominated?
+```
+
+Architecture probe:
+
+```text
+If an issue queue wakeup path fails timing, what are architecture-level fixes?
+```
+
+### 4. Basic Microarchitecture Flow Questions
+
+These check whether the whole machine is in the candidate's head.
+
+1. Walk through an integer ALU instruction:
+
+```text
+fetch -> predict -> decode -> rename -> dispatch -> issue -> register read
+-> execute -> writeback -> commit
+```
+
+Follow-ups:
+
+```text
+Where are physical registers allocated?
+When are old physical registers freed?
+Where does bypass happen?
+What can stall each stage?
+What happens on branch mispredict?
+```
+
+2. Walk through a load instruction:
+
+```text
+frontend -> rename -> load queue allocation -> issue -> AGU
+-> DTLB/cache access -> store queue forwarding check
+-> data return -> writeback -> commit
+```
+
+Follow-ups:
+
+```text
+What happens on DTLB miss?
+What happens on L1D miss?
+What happens if an older store has unknown address?
+What happens if store-to-load forwarding partially matches?
+What causes replay?
+```
+
+3. Walk through a store instruction:
+
+```text
+rename -> store queue allocation -> store address/data generation
+-> commit -> store buffer -> cache/coherence write
+```
+
+Follow-ups:
+
+```text
+Where is store data held?
+Why have a store buffer?
+What happens on store miss?
+What happens if store buffer is full?
+How does a fence interact with store buffer?
+```
+
+4. Walk through branch recovery:
+
+```text
+branch executes -> compare actual vs predicted
+-> redirect -> squash younger uops -> restore map/checkpoint
+-> recover frontend/FTQ -> refetch
+```
+
+Follow-ups:
+
+```text
+What state must be recovered?
+What happens if a younger branch resolves before an older branch?
+Why do branch masks exist?
+```
+
+### 5. Deep-Dive Question Bank
+
+#### 5.1 Frontend
+
+```text
+Why does a modern core need a decoupled frontend?
+What is stored in the FTQ?
+What is the difference between BTB, BHT/TAGE, RAS, and ITTAGE?
+Why can frontend redirect timing be critical?
+What is the difference between trace cache and uop cache?
+When would multiple branch units help?
+How does I-cache prefetch differ from D-cache prefetch?
+How would you measure frontend bottlenecks in a performance model?
+```
+
+Counters:
+
+```text
+fetch bubbles
+I-cache miss cycles
+ITLB miss cycles
+BTB miss rate
+direction/target/RAS mispredicts
+FTQ full cycles
+decode starvation cycles
+redirect penalty cycles
+```
+
+#### 5.2 Backend / OoO Engine
+
+```text
+Unified issue queue vs distributed issue queues: tradeoffs?
+Why is wakeup/select timing hard?
+What is speculative wakeup?
+Why use a replay queue instead of writing back into the issue queue?
+How many wakeup comparators are needed for 64 entries, 2 sources, 4 wakeup ports?
+Why are register-file ports expensive?
+How do writeback port conflicts backpressure execution?
+What is local bypass?
+What is clustered execution?
+What does Apple-style retire grouping optimize?
+```
+
+Counters:
+
+```text
+ROB full cycles
+IQ full cycles
+physical register free-list stalls
+wakeup/select stalls
+writeback port conflicts
+replay queue occupancy
+FU utilization
+commit width utilization
+branch recovery cycles
+```
+
+#### 5.3 LSU / L1D
+
+```text
+Why split store address queue and store data queue?
+Does store queue hold actual data or pointers?
+How does store-to-load forwarding work?
+What is partial forwarding?
+When should a load wait vs speculate?
+What is selective replay?
+How does store buffer let ROB commit continue?
+How do MSHRs interact with refill/writeback/cache ports?
+How do L1D banking and load/store port count affect performance?
+```
+
+Counters:
+
+```text
+LQ full cycles
+SQ full cycles
+store buffer full cycles
+load replay count by reason
+STLF hit/partial/miss
+unknown-store wait cycles
+bank conflict cycles
+MSHR full cycles
+fill-port conflict cycles
+DTLB miss cycles
+```
+
+#### 5.4 TLB / MMU / PTW
+
+```text
+What does a TLB entry store?
+Does a TLB fetch the whole 4KB page?
+Why does VIPT require index+offset within page offset?
+What is a page walk cache?
+How does PTW access the cache hierarchy?
+Can PTW requests starve behind demand loads?
+Inclusive vs non-inclusive second-level TLB?
+How would you model multiple outstanding page walks?
+```
+
+Counters:
+
+```text
+ITLB/DTLB/L2TLB hit rates
+PTW request count
+PTW queue full cycles
+PTW cache hit rate
+page walk memory latency
+translation-related frontend/backend stalls
+SFENCE/shootdown cost
+```
+
+#### 5.5 Memory Consistency / Coherence
+
+```text
+What is sequential consistency?
+What does TSO relax?
+Why does a FIFO store buffer preserve store-store order?
+What is a serialization point?
+What do acquire and release guarantee?
+What does FENCE rw,w order?
+Why is coherence different from memory consistency?
+Explain MESI states and why E is useful.
+What does O state add in MOESI?
+Directory vs snooping: tradeoffs?
+What is a snoop filter?
+How does false sharing happen?
+```
+
+Scenario drills:
+
+```text
+Store buffering litmus test: which outcomes are allowed under SC vs TSO?
+Core0 writes data then flag; Core1 waits on flag then reads data. What ordering is required?
+CPU0 has line in M; CPU1 reads it. Walk through MESI/MOESI.
+CPU0 has O and CPU2 wants M. What invalidations are needed?
+```
+
+#### 5.6 Prefetcher
+
+```text
+Define accuracy, coverage, timeliness, pollution.
+Why can lower MPKI reduce IPC?
+Walk through an access-triggered next-line prefetcher with stream buffer.
+Where does TLB translation happen for prefetch?
+What happens if prefetch queue is full?
+What is distance vs degree?
+Why does stride confidence reset when stride changes?
+How does I-cache prefetch candidate generation differ from D-cache?
+What should a software prefetch instruction do after decode/AGU?
+```
+
+Counters:
+
+```text
+prefetch issued/useful/late/useless
+accuracy
+coverage
+MSHR occupancy due to prefetch
+prefetch queue full drops
+stream buffer hits/evictions
+pollution evictions
+demand delayed by prefetch
+TLB pressure from prefetch
+```
+
+#### 5.7 AMO / LR/SC / Fence
+
+```text
+How is AMO different from normal load/store?
+Where can AMO read-modify-write execute?
+Does AMO need exclusive/M state?
+Why might a simple design serialize AMO?
+How is LR implemented?
+Where is reservation state stored?
+How is SC implemented?
+What does SC write to rd on failure?
+When should reservation be cleared?
+How does FENCE execute?
+How does FENCE.I make instruction fetch see prior stores?
+```
+
+#### 5.8 Vector / RVV
+
+```text
+What is the difference between fixed SIMD and RVV?
+What are VLEN, SEW, LMUL, vl, and vtype?
+What is strip mining?
+How do lanes differ from VLEN?
+How do masks/predicates map to hardware?
+Why are gather/scatter hard?
+What is chaining?
+What does vstart do for precise exceptions?
+How would you model vector memory bandwidth?
+```
+
+#### 5.9 Timing / Ports / Cost
+
+```text
+What is FO4?
+Why is practical stage effort around 4 instead of e=2.7?
+What is logical effort g?
+What is slew?
+What is setup vs hold?
+What is SDF?
+What does DC STA tell you before PD?
+What does Verdi gate schematic help you see?
+What is the difference between plain DC and topo DC?
+How do you fix a timing path dominated by fanout?
+How do you fix one dominated by logic depth?
+Why is a 16:1 mux not free?
+How would you reduce bypass mux fan-in architecturally?
+```
+
+### 6. Quantitative Back-of-Envelope Drills
+
+The goal is not exact signoff math. The goal is to build reflexive estimates.
+
+#### 6.1 Wakeup Comparator Count
+
+Question:
+
+```text
+Issue queue has 64 entries, 2 source operands, 4 wakeup ports, 7-bit physical tags.
+How many tag comparators are active per cycle?
+```
+
+Expected:
+
+```text
+64 * 2 * 4 = 512 comparators
+each comparator roughly 7-bit equality compare
+real cost also includes wakeup-tag broadcast, ready-bit update, and select logic
+```
+
+#### 6.2 Flop-Based Register File Read Port
+
+Question:
+
+```text
+128 physical registers, 64-bit each, 16 read ports.
+If implemented as flop array plus muxes, what is the read mux cost?
+```
+
+Expected:
+
+```text
+one read port:
+  64 separate 128:1 muxes
+
+16 read ports:
+  16 * 64 = 1024 separate 128:1 muxes
+```
+
+Follow-up:
+
+```text
+Why does this motivate banking, clustering, or SRAM/custom RF?
+```
+
+#### 6.3 Cache Size
+
+Question:
+
+```text
+L1D has 64 sets, 8 ways, 64B lines. What is data capacity?
+```
+
+Expected:
+
+```text
+64 * 8 * 64B = 32768B = 32KB
+```
+
+Follow-up:
+
+```text
+How many index bits and offset bits?
+offset = log2(64) = 6
+sets = 64 -> index = 6
+index + offset = 12, fits 4KB page offset for VIPT
+```
+
+#### 6.4 AMAT
+
+Question:
+
+```text
+L1 hit 4 cycles, L1 miss rate 5%.
+L2 hit latency 20 cycles after L1 miss, L2 miss rate 30%.
+DRAM latency 200 cycles after L2 miss.
+What is rough AMAT?
+```
+
+Expected:
+
+```text
+AMAT = 4 + 0.05 * (20 + 0.30 * 200)
+     = 4 + 0.05 * (20 + 60)
+     = 4 + 4
+     = 8 cycles
+```
+
+#### 6.5 Branch Mispredict Cost
+
+Question:
+
+```text
+IPC without branch penalty is 4.
+20% of instructions are branches.
+Mispredict rate is 5% among branches.
+Mispredict penalty is 12 cycles.
+Estimate cycles lost per instruction.
+```
+
+Expected:
+
+```text
+mispredicts per instruction = 0.20 * 0.05 = 0.01
+lost cycles per instruction = 0.01 * 12 = 0.12 CPI
+```
+
+Follow-up:
+
+```text
+If baseline CPI at IPC 4 is 0.25, new CPI ~= 0.37, IPC ~= 2.7
+```
+
+#### 6.6 Memory-Level Parallelism
+
+Question:
+
+```text
+Average memory miss latency is 200 cycles.
+Workload generates one independent miss every 20 cycles.
+How many MSHRs are needed to avoid immediate MSHR bottleneck?
+```
+
+Expected:
+
+```text
+Little's law:
+  occupancy ~= arrival_rate * latency
+  arrival_rate = 1/20 miss per cycle
+  latency = 200 cycles
+  occupancy ~= 10 misses
+
+Need at least around 10 MSHRs, plus margin.
+```
+
+#### 6.7 Prefetch Metrics
+
+Question:
+
+```text
+1000 prefetches issued.
+600 were later used by demand accesses.
+Demand misses without prefetch = 1000.
+Demand misses with prefetch = 500.
+What are accuracy and coverage?
+```
+
+Expected:
+
+```text
+accuracy = useful / issued = 600 / 1000 = 60%
+coverage = eliminated misses / original misses = (1000 - 500) / 1000 = 50%
+```
+
+Follow-up:
+
+```text
+Can this still hurt IPC?
+Yes: MSHR pressure, bandwidth, pollution, TLB pressure, fill-port conflicts.
+```
+
+#### 6.8 TAGE Table Storage
+
+Question:
+
+```text
+A predictor table has 1024 entries.
+Each entry stores 1 useful bit, 3-bit counter, 8-bit tag.
+How many bits?
+```
+
+Expected:
+
+```text
+entry bits = 1 + 3 + 8 = 12
+total = 1024 * 12 = 12288 bits = 1.5KB
+```
+
+Follow-up:
+
+```text
+What extra bits are often ignored in rough estimates?
+valid bits, replacement metadata, parity/ECC, banking overhead, read/write ports.
+```
+
+### 7. Open Design Problems
+
+These are not yes/no questions. The answer should show design process.
+
+#### 7.1 Design A Load Replay Buffer
+
+Prompt:
+
+```text
+Design a load replay buffer for loads that miss in L1D, lose a cache port conflict,
+or wake up speculatively but do not receive data.
+```
+
+Expected structure:
+
+```text
+What entries store:
+  load uop id / ROB id
+  physical destination
+  address or partial address
+  replay reason
+  age/order metadata
+  dependency mask if needed
+
+Events:
+  cache refill done
+  store address resolved
+  TLB miss resolved
+  port available
+
+Policy:
+  oldest-first vs reason-priority
+  merge duplicate misses
+  avoid starvation
+```
+
+Tradeoffs:
+
+```text
+larger replay buffer reduces IQ pressure but adds area/control
+precise event wakeup reduces useless retries but adds tracking complexity
+counter retry is simpler but can waste cycles
+```
+
+Counters:
+
+```text
+replay buffer occupancy
+replay reason histogram
+replay success rate
+average replay latency
+starvation cycles
+load-to-use penalty
+```
+
+#### 7.2 Evaluate Selective Store Queue Lookup
+
+Prompt:
+
+```text
+You propose a partial-tag prefilter before full SQ CAM lookup.
+How do you evaluate whether it is worth it?
+```
+
+Expected answer:
+
+```text
+Baseline:
+  full address compare against all older stores
+
+Benefit:
+  fewer full comparators toggled
+  lower power
+  possibly better timing
+
+Risk:
+  false positives still trigger full compare
+  false negatives are not allowed
+  extra prefilter logic may be on timing path
+
+Counters:
+  loads issued
+  SQ entries searched per load
+  prefilter hits
+  full compare count
+  STLF hit/partial/miss
+  replay due to ambiguous store
+  timing path estimate / synthesis result
+```
+
+#### 7.3 Choose L1D Banking And Ports
+
+Prompt:
+
+```text
+Design an L1D for a 2-load + 1-store core.
+How many banks and ports?
+```
+
+Expected reasoning:
+
+```text
+Demand bandwidth target
+bank conflict probability
+load/store/refill/probe contention
+VIPT timing
+area/power of true multiport SRAM
+store buffer decoupling
+replay policy
+```
+
+Possible answer:
+
+```text
+Use multiple banks rather than true 3-port data SRAM.
+Prioritize demand loads over prefetch/refill.
+Use store buffer for committed stores.
+Replay or stall on bank conflicts.
+Track bank conflict counters.
+```
+
+#### 7.4 Add A Prefetcher
+
+Prompt:
+
+```text
+You add an access-triggered next-line/stride prefetcher.
+How do you prove it improves performance instead of just lowering MPKI?
+```
+
+Expected:
+
+```text
+accuracy, coverage, timeliness
+MSHR pressure
+bandwidth pressure
+pollution
+TLB pressure
+demand delay
+IPC by workload class
+throttling policy
+same baseline resources for fair comparison
+```
+
+#### 7.5 Unified vs Distributed Issue Queue
+
+Prompt:
+
+```text
+Would you use one unified issue queue or distributed queues?
+```
+
+Expected:
+
+```text
+Unified:
+  better load balancing
+  easier for any uop to use any compatible unit
+  worse wakeup/select timing
+  larger CAM/select/mux network
+
+Distributed:
+  better timing and physical locality
+  smaller select logic
+  possible imbalance and dispatch steering complexity
+```
+
+Performance model:
+
+```text
+per-queue occupancy
+wrong-queue stalls
+per-port issue constraints
+cluster bypass latency
+wakeup/select latency
+```
+
+### 8. RTL / Control Sketch Prompts
+
+Interviewer may ask for pseudo-code or block-level RTL control, not full compilable SystemVerilog.
+
+#### 8.1 Load Replay Buffer Control
+
+Prompt:
+
+```text
+Sketch control logic for a load replay buffer.
+```
+
+Expected pseudo-code:
+
+```text
+on load_fail:
+  allocate replay entry if space
+  record reason/address/destination/age
+
+on event:
+  mark matching replay entries eligible
+
+each cycle:
+  select oldest eligible entry
+  arbitrate for LSU port
+  reissue load
+
+on success:
+  remove entry
+
+on flush:
+  invalidate younger entries by branch/ROB age
+```
+
+Follow-ups:
+
+```text
+How avoid starvation?
+What if replay buffer full?
+What if reissued load fails again?
+What if branch mispredict flushes the entry?
+```
+
+#### 8.2 Partial STLF Stall Detection
+
+Prompt:
+
+```text
+How would RTL detect that a load has partial store-to-load forwarding and must merge/wait/replay?
+```
+
+Expected logic:
+
+```text
+for older stores:
+  valid && address_match && byte_mask_overlap
+
+classify:
+  full coverage -> forward all bytes
+  partial coverage -> merge with cache data if supported
+  unknown address/data -> wait or speculate/replay
+```
+
+Tradeoff:
+
+```text
+same-cycle merge is more complex
+wait/replay is simpler but loses performance
+```
+
+#### 8.3 FTQ Redirect Control
+
+Prompt:
+
+```text
+Sketch frontend redirect control when a branch mispredict is detected.
+```
+
+Expected:
+
+```text
+receive redirect PC and branch age
+invalidate younger FTQ entries
+flush fetch/decode stages
+restore predictor metadata/checkpoint if needed
+set next PC mux to redirect target
+resume fetch
+```
+
+#### 8.4 Store Buffer Commit
+
+Prompt:
+
+```text
+Sketch how committed stores leave the ROB and enter the store buffer/cache path.
+```
+
+Expected:
+
+```text
+at commit:
+  if store address/data ready and store buffer has space:
+    remove from ROB/SQ commit-visible state
+    enqueue store buffer
+  else:
+    commit stalls
+
+store buffer:
+  arbitrates for D-cache/coherence port
+  handles miss/upgrade/retry
+  drains in memory-model-compliant order if required
+```
+
+### 9. Debug Scenario Drills
+
+#### 9.1 IPC Dropped After Adding Prefetcher
+
+Prompt:
+
+```text
+You added a prefetcher. MPKI dropped, but IPC dropped too. Debug it.
+```
+
+Expected hypothesis tree:
+
+```text
+MSHR pressure
+memory bandwidth saturation
+fill-port conflicts
+L1 pollution
+late prefetches
+TLB pressure
+coherence upgrades from prefetch-for-ownership
+bad throttling
+workload phase behavior
+```
+
+Counters:
+
+```text
+prefetch accuracy/coverage/timeliness
+demand miss latency
+MSHR full cycles
+prefetch queue full/dropped
+demand delayed by prefetch
+evicted-useful lines
+bandwidth utilization
+```
+
+#### 9.2 Store Buffer Causes Wrong Value
+
+Prompt:
+
+```text
+After adding a store buffer, a litmus test fails. Debug it.
+```
+
+Expected:
+
+```text
+Check memory model.
+Check store-store order.
+Check own-store forwarding.
+Check release/fence behavior.
+Check when store becomes globally visible.
+Check invalidation/upgrade completion before exposing later stores.
+```
+
+#### 9.3 Load Replay Storm
+
+Prompt:
+
+```text
+Performance counter shows many load replays. What do you check?
+```
+
+Expected:
+
+```text
+replay reason histogram
+DTLB miss replay
+L1D miss replay
+store address unknown
+STLF partial/failed
+bank conflict
+MSHR merge/allocate conflict
+wakeup speculation failure
+coherence invalidation before retire
+```
+
+#### 9.4 Timing Failure In Issue Select
+
+Prompt:
+
+```text
+DC STA shows issue select path fails. What do you do?
+```
+
+Expected:
+
+```text
+verify constraints
+open Verdi gate cone
+classify logic: ready vector, priority encoder, grant mux
+check cell vs net delay
+estimate fan-in/fan-out
+try bank/distribute/pipeline/speculative wakeup
+update model with select latency or queue partitioning
+```
+
+### 10. Performance Model Evaluation Plan Template
+
+Use this template for any proposed feature.
+
+```text
+Feature:
+  What are we adding?
+
+Baseline:
+  What is the current behavior?
+
+Motivation:
+  Which bottleneck does the feature target?
+
+Hypothesis:
+  What metric should improve and why?
+
+Hardware cost:
+  storage
+  ports
+  CAM/comparator count
+  mux width
+  timing path
+  area/power risk
+
+Model abstraction:
+  latency
+  bandwidth
+  queue size
+  arbitration
+  bank conflicts
+  replay
+  prediction accuracy
+
+Counters:
+  feature usage
+  success/failure breakdown
+  resource pressure
+  stall cycles
+  secondary harm
+
+Experiments:
+  workload set
+  sensitivity sweep
+  ablation study
+  stress microbenchmarks
+  warmup/measurement method
+
+Decision:
+  keep / tune / reject
+  explain tradeoff
+```
+
+Example feature questions:
+
+```text
+Should we add one more L1D MSHR?
+Should we make L1D 4 banks instead of 2?
+Should we increase ROB from 256 to 384?
+Should we add a second branch unit?
+Should we use a replay queue for loads?
+Should prefetch fill L1, L2, or stream buffer?
+Should SQ forwarding search all entries or only a window?
+Should vector gather have more MSHRs?
+```
+
+### 11. Questions To Ask The Interviewer
+
+Good questions are technical and show curiosity.
+
+```text
+For this performance modeling role, which part of the core model is most actively changing: frontend, scheduler, LSU, memory system, or vector?
+
+How closely is the performance model calibrated to RTL or silicon counters?
+
+When model and RTL disagree, what is the usual debug workflow?
+
+Does the team expect the model to include timing-driven constraints such as ports, banking, replay, and arbitration?
+
+How are proposed microarchitecture changes evaluated: IPC only, or also power/area/timing/verification cost?
+
+What are examples of recent performance-model changes that changed an actual design decision?
+
+How does the team handle features where the model can be more detailed than available RTL information?
+```
+
+Avoid only asking generic questions. The best questions connect to the work:
+
+```text
+model accuracy
+calibration
+microarchitecture tradeoffs
+RTL collaboration
+hardware counters
+design decision process
+```
+
+### 12. Mock Interview Scoring Rubric
+
+Score each answer from 1 to 5.
+
+1. Concept:
+
+```text
+Does the candidate understand the basic mechanism?
+```
+
+2. System integration:
+
+```text
+Can the candidate connect the block to the rest of the core?
+```
+
+3. Tradeoff:
+
+```text
+Can the candidate explain why this design instead of alternatives?
+```
+
+4. Quantitative reasoning:
+
+```text
+Can the candidate estimate sizes, ports, rates, or penalties?
+```
+
+5. Hardware realism:
+
+```text
+Does the candidate mention ports, timing, fanout, muxes, CAMs, SRAMs, banking, and arbitration?
+```
+
+6. Debug/evaluation:
+
+```text
+Can the candidate propose counters, experiments, and hypotheses?
+```
+
+7. Communication:
+
+```text
+Can the candidate explain clearly, admit uncertainty, and recover when interrupted?
+```
+
+Strong answer signature:
+
+```text
+clear baseline
+clear bottleneck
+reasonable design
+explicit tradeoffs
+one quick number
+hardware implementation awareness
+counters and validation plan
+one limitation or risk
+```
