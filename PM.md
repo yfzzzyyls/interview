@@ -3361,6 +3361,46 @@ Recommended location:
 
 - `interview/c++/qualcomm_final_round/03_microarchitecture_coding/`
 
+Status:
+
+- C++ coding implementation phase is complete for interview preparation.
+- The completed set covers the core C++ and microarchitecture-modeling patterns most likely to be useful in the Qualcomm final round.
+- Remaining files such as `event_queue.cpp`, `rob_active_list.cpp`, and `simple_pipeline_simulator.cpp` are optional review/extension items, not required before switching to review mode.
+
+Completed coding files:
+
+- `interview/c++/qualcomm_final_round/01_basics_coding/01_compile_io_types.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/02_control_flow_functions.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/03_arrays_vectors_strings.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/04_pointers_references_const.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/05_structs_classes_constructors.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/06_memory_lifetime_raii.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/07_stl_container_basics.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/08_iterators_and_invalidations.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/09_bit_manipulation_address_decode.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/10_small_test_harness.cpp`
+- `interview/c++/qualcomm_final_round/01_basics_coding/11_inheritance_polymorphism.cpp`
+- `interview/c++/qualcomm_final_round/02_fluency_bridge/01_unsigned_address_math.cpp`
+- `interview/c++/qualcomm_final_round/02_fluency_bridge/02_struct_state_update.cpp`
+- `interview/c++/qualcomm_final_round/02_fluency_bridge/03_container_lookup_update.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/ring_buffer.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/lru_cache.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/direct_mapped_cache.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/set_associative_cache.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/mshr_table.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/load_replay_buffer.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/store_queue_forwarding.cpp`
+- `interview/c++/qualcomm_final_round/03_microarchitecture_coding/branch_predictor.cpp`
+
+Review mode checklist:
+
+- For each file, be able to state the model contract in 2-3 sentences.
+- For each class, identify the stored state, public API, invariant, and main edge case.
+- For each microarchitecture model, explain what hardware behavior is modeled and what timing/detail is intentionally omitted.
+- For each container choice, explain why that STL structure fits the model.
+- Re-run selected files with `g++ -std=c++17 -Wall -Wextra -pedantic` if any edits are made during review.
+- Prioritize oral explanation over adding more code: the next goal is to explain these models clearly under interview pressure.
+
 Do these in this order:
 
 1. `ring_buffer.cpp`
